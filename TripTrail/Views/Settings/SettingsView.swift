@@ -18,6 +18,7 @@ struct SettingsView: View {
     @State private var pendingSharedJourneyURL: URL?
     @State private var pendingSharedJourneySummary: SharedJourneySummary?
     @State private var isConfirmingSharedJourney = false
+    @State private var showsCreatorReward = false
 
     var body: some View {
         List {
@@ -39,7 +40,7 @@ struct SettingsView: View {
             }
 
             Section("开始体验") {
-                Button { addSampleTrip() } label: { Label("添加杭州示例行程", systemImage: "wand.and.stars") }
+                Button { addSampleTrip() } label: { Label("添加杭州示例旅程", systemImage: "wand.and.stars") }
             }
 
             Section {
@@ -62,7 +63,7 @@ struct SettingsView: View {
 
             Section {
                 Button { importRequest = DocumentImportRequest(kind: .sharedJourney) } label: {
-                    Label("收藏别人分享的行程或足迹", systemImage: "square.and.arrow.down.on.square")
+                    Label("收藏别人分享的旅程或足迹", systemImage: "square.and.arrow.down.on.square")
                 }
             } header: {
                 Text("接收分享")
@@ -77,6 +78,21 @@ struct SettingsView: View {
 
             Section("关于") {
                 LabeledContent("App", value: "旅迹")
+                Button {
+                    showsCreatorReward = true
+                } label: {
+                    HStack {
+                        Text("创作者")
+                        Spacer()
+                        Text("黄逸轩")
+                            .foregroundStyle(.secondary)
+                        Image(systemName: "chevron.right")
+                            .font(.caption.bold())
+                            .foregroundStyle(.tertiary)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
                 LabeledContent("版本", value: "0.1.0 MVP")
                 LabeledContent("系统要求", value: "iOS 17 或更高")
             }
@@ -125,6 +141,9 @@ struct SettingsView: View {
                     }
                 }
             }
+        }
+        .sheet(isPresented: $showsCreatorReward) {
+            CreatorRewardView()
         }
     }
 
@@ -202,7 +221,7 @@ struct SettingsView: View {
 
     private var restoreConfirmationText: String {
         guard let summary = pendingRestoreSummary else { return "将替换本机当前数据。" }
-        return "备份包含\(summary.restoreDescription)。恢复后将替换本机当前的所有行程和足迹，此操作不可撤销。"
+        return "备份包含\(summary.restoreDescription)。恢复后将替换本机当前的所有旅程和足迹，此操作不可撤销。"
     }
 
     private func restorePendingBackup() {
@@ -270,10 +289,10 @@ struct SettingsView: View {
         let start = calendar.startOfDay(for: Date())
         let trip = Trip(title: "西湖慢游三日", destination: "杭州", startDate: start, endDate: calendar.date(byAdding: .day, value: 2, to: start)!, note: "沿着湖边慢慢走，给好吃的和晚霞留出时间。")
         modelContext.insert(trip)
-        let samples: [[(String, PlaceCategory, Double, Double, String)]] = [
-            [("断桥残雪", .attraction, 30.2590, 120.1484, "从白堤东端开始散步，早晨光线更柔和。"), ("孤山公园", .attraction, 30.2530, 120.1396, "沿湖慢慢走，顺路看看荷花与林间小路。")],
-            [("灵隐寺", .attraction, 30.2409, 120.1022, "建议早点到达，避开午后人流。"), ("龙井村", .restaurant, 30.2239, 120.1103, "找一家茶室休息，尝尝当地家常菜。")],
-            [("九溪烟树", .attraction, 30.1952, 120.1137, "穿舒适的鞋，沿溪流慢慢走到林间。")]
+        let samples: [[(String, PlaceCategory, String)]] = [
+            [("断桥残雪", .attraction, "从白堤东端开始散步，早晨光线更柔和。"), ("孤山公园", .attraction, "沿湖慢慢走，顺路看看荷花与林间小路。")],
+            [("灵隐寺", .attraction, "建议早点到达，避开午后人流。"), ("龙井村", .restaurant, "找一家茶室休息，尝尝当地家常菜。")],
+            [("九溪烟树", .attraction, "穿舒适的鞋，沿溪流慢慢走到林间。")]
         ]
         for dayIndex in samples.indices {
             let date = calendar.date(byAdding: .day, value: dayIndex, to: start)!
@@ -282,16 +301,42 @@ struct SettingsView: View {
             for (itemIndex, sample) in samples[dayIndex].enumerated() {
                 let time = calendar.date(bySettingHour: 9 + itemIndex * 4, minute: 0, second: 0, of: date)!
                 let item = ItineraryItem(title: sample.0, category: sample.1, startTime: time, endTime: calendar.date(byAdding: .hour, value: 2, to: time)!, sortOrder: itemIndex)
-                item.address = sample.4
-                item.latitude = sample.2
-                item.longitude = sample.3
+                item.address = sample.2
                 item.distanceText = itemIndex == 0 ? "从当前位置出发" : "约 4.5 km · 20 分钟"
                 item.note = "到达后可以补充照片、视频和当时的感受。"
                 item.day = day
                 day.items.append(item)
             }
         }
-        message = "示例行程已添加，可从“行程”页开始体验。"
+        message = "示例旅程已添加，可从“旅程”页开始体验。"
+    }
+}
+
+private struct CreatorRewardView: View {
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            VStack {
+                Spacer(minLength: 20)
+                Image("CreatorReward")
+                    .resizable()
+                    .scaledToFit()
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.08), radius: 16, y: 7)
+                Spacer(minLength: 20)
+            }
+            .padding()
+            .background(Color.tripCanvas.ignoresSafeArea())
+            .navigationTitle("创作者")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.large])
     }
 }
 

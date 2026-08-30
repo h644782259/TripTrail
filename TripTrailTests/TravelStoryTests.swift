@@ -61,14 +61,14 @@ final class TravelStoryTests: XCTestCase {
     func testHierarchyDeletionCopyUsesOneConfirmationPattern() {
         XCTAssertEqual(HierarchyDeletionCopy.confirmationButtonTitle, "确认删除")
         XCTAssertEqual(HierarchyDeletionCopy.cancelButtonTitle, "取消")
-        XCTAssertEqual(HierarchyDeletionCopy.tripTitle, "删除行程？")
+        XCTAssertEqual(HierarchyDeletionCopy.tripTitle, "删除旅程？")
         XCTAssertEqual(HierarchyDeletionCopy.tripDayTitle, "删除当天？")
         XCTAssertEqual(HierarchyDeletionCopy.itineraryItemTitle, "删除安排？")
         XCTAssertEqual(HierarchyDeletionCopy.storyTitle, "删除足迹？")
         XCTAssertEqual(HierarchyDeletionCopy.storyDayTitle, "删除当天？")
         XCTAssertEqual(HierarchyDeletionCopy.storyEntryTitle, "删除足迹安排？")
-        XCTAssertTrue(HierarchyDeletionCopy.tripMessage(title: "杭州").contains("当天行程、具体安排"))
-        XCTAssertTrue(HierarchyDeletionCopy.storyMessage(title: "杭州").contains("原行程不会受到影响"))
+        XCTAssertTrue(HierarchyDeletionCopy.tripMessage(title: "杭州").contains("每日安排"))
+        XCTAssertTrue(HierarchyDeletionCopy.storyMessage(title: "杭州").contains("原旅程不会受到影响"))
     }
 
     func testDeletingStoryCascadesToDaysEntriesAndMedia() throws {
@@ -535,6 +535,26 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(third.startTime, fourteen)
     }
 
+    func testAppendingDayExtendsTripEndDateOnlyWhenNewDayExceedsRange() {
+        let calendar = Calendar(identifier: .gregorian)
+        let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 6))!
+        let originalEnd = calendar.date(byAdding: .day, value: 2, to: start)!
+        let trip = Trip(title: "三日旅程", destination: "上海", startDate: start, endDate: originalEnd)
+        trip.days = [TripDay(date: start, title: "第 1 天", sortOrder: 0)]
+
+        let secondDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+        XCTAssertEqual(secondDay.date, calendar.date(byAdding: .day, value: 1, to: start))
+        XCTAssertEqual(trip.endDate, originalEnd)
+
+        _ = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+        XCTAssertEqual(trip.endDate, originalEnd)
+
+        let extraDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+        let extendedEnd = calendar.date(byAdding: .day, value: 3, to: start)!
+        XCTAssertEqual(extraDay.date, extendedEnd)
+        XCTAssertEqual(trip.endDate, extendedEnd)
+    }
+
     func testDraggingEqualDurationItemsReordersAndExchangesTimeSlots() {
         let calendar = Calendar(identifier: .gregorian)
         let date = calendar.date(from: DateComponents(year: 2026, month: 8, day: 29))!
@@ -684,8 +704,11 @@ final class TravelStoryTests: XCTestCase {
         let day = TripDay(date: start, title: "园林与老城", sortOrder: 0, trip: trip)
         let first = ItineraryItem(title: "拙政园", category: .attraction, startTime: start, endTime: start, sortOrder: 0)
         let second = ItineraryItem(title: "平江路", category: .attraction, startTime: start, endTime: start, sortOrder: 1)
-        first.address = "行程里的地址不应复制"
-        first.note = "行程里的预约备注不应复制"
+        first.address = "东北街178号"
+        first.note = "提前十分钟到入口。"
+        first.transport = .walk
+        first.distanceText = "1.2 公里 · 18 分钟"
+        first.cost = 80
         first.day = day
         second.day = day
         day.items = [first, second]
@@ -723,8 +746,19 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(firstArchive.story.id, secondArchive.story.id)
         XCTAssertEqual(stories[0].sortedDays.count, 1)
         XCTAssertEqual(stories[0].sortedEntries.map(\.title), ["拙政园", "平江路"])
-        XCTAssertEqual(stories[0].sortedEntries[0].address, "")
-        XCTAssertEqual(stories[0].sortedEntries[0].note, "")
+        let archivedEntry = stories[0].sortedEntries[0]
+        XCTAssertEqual(archivedEntry.address, "")
+        XCTAssertEqual(archivedEntry.supplementalInfo, "")
+        XCTAssertEqual(archivedEntry.transport, .car)
+        XCTAssertEqual(archivedEntry.distanceText, "")
+        XCTAssertEqual(archivedEntry.cost, 0)
+        XCTAssertEqual(archivedEntry.startTime, first.startTime)
+        XCTAssertEqual(archivedEntry.endTime, first.endTime)
+        XCTAssertEqual(archivedEntry.timeLabel, "\(first.startTime.timeText)～\(first.endTime.timeText)")
+        XCTAssertEqual(
+            archivedEntry.note,
+            "类型：景点；说明：东北街178号；步行前往，路程 1.2 公里 · 18 分钟；花费：¥80；补充：提前十分钟到入口。"
+        )
         XCTAssertEqual(stories[0].syncScope, .item)
         XCTAssertEqual(stories[0].sourceSelectionIDs, [first.id, second.id])
     }
@@ -844,7 +878,11 @@ final class TravelStoryTests: XCTestCase {
         savedEntry.media.append(photo)
 
         first.title = "西湖断桥"
-        first.address = "同步时不应覆盖的计划地址"
+        first.address = "北山街入口"
+        first.note = "带好雨伞"
+        first.transport = .walk
+        first.distanceText = "2.6 公里 · 35 分钟"
+        first.cost = 20
         let second = ItineraryItem(title: "雷峰塔", category: .attraction, startTime: start, endTime: start, sortOrder: 1)
         second.day = day
         day.items.append(second)
@@ -853,8 +891,12 @@ final class TravelStoryTests: XCTestCase {
 
         XCTAssertEqual(result.story.sortedEntries.map(\.title), ["西湖断桥", "雷峰塔"])
         XCTAssertEqual(savedEntry.note, "傍晚的风很好")
-        XCTAssertEqual(savedEntry.address, "用户补充的实际入口")
-        XCTAssertEqual(savedEntry.routeInfo, "实际步行 4 公里")
+        XCTAssertEqual(savedEntry.address, "")
+        XCTAssertEqual(savedEntry.supplementalInfo, "")
+        XCTAssertEqual(savedEntry.transport, .car)
+        XCTAssertEqual(savedEntry.routeInfo, "")
+        XCTAssertEqual(savedEntry.cost, 0)
+        XCTAssertEqual(result.story.sortedEntries[1].note, "类型：景点；前往方式：驾车。")
         XCTAssertEqual(savedEntry.media.map(\.localIdentifier), ["user-photo"])
         XCTAssertEqual(savedDay.note, "西湖边的一天")
         XCTAssertEqual(savedDay.details, "上午沿着北山街散步，傍晚在断桥看落日。")
@@ -946,8 +988,6 @@ final class TravelStoryTests: XCTestCase {
         day.note = "早起"
         let item = ItineraryItem(title: "拙政园", category: .attraction, startTime: start, endTime: start.addingTimeInterval(7_200), sortOrder: 0)
         item.address = "东北街178号"
-        item.latitude = 31.324
-        item.longitude = 120.629
         item.transport = .walk
         item.cost = 80
         item.isCompleted = true
@@ -969,7 +1009,13 @@ final class TravelStoryTests: XCTestCase {
         storyDay.details = "天气晴"
         let entry = StoryEntry(title: "拙政园", category: .attraction, sortOrder: 0)
         entry.sourceItemID = item.id
+        entry.startTime = start
+        entry.endTime = start.addingTimeInterval(7_200)
         entry.address = "东北街178号"
+        entry.supplementalInfo = "提前预约"
+        entry.transport = .walk
+        entry.distanceText = "1.2 公里 · 18 分钟"
+        entry.cost = 80
         entry.note = "值得再来"
         entry.story = story
         entry.storyDay = storyDay
@@ -1021,6 +1067,13 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedStoryDay.sourceDayID, savedTrip.sortedDays.first?.id)
         XCTAssertEqual(savedStoryDay.details, "天气晴")
         XCTAssertEqual(savedEntry.sourceItemID, savedItem.id)
+        XCTAssertEqual(savedEntry.startTime, start)
+        XCTAssertEqual(savedEntry.endTime, start.addingTimeInterval(7_200))
+        XCTAssertEqual(savedEntry.address, "东北街178号")
+        XCTAssertEqual(savedEntry.supplementalInfo, "提前预约")
+        XCTAssertEqual(savedEntry.transport, .walk)
+        XCTAssertEqual(savedEntry.distanceText, "1.2 公里 · 18 分钟")
+        XCTAssertEqual(savedEntry.cost, 80)
         XCTAssertEqual(savedEntry.note, "值得再来")
         XCTAssertEqual(savedEntry.media.first?.localIdentifier, "story-video")
         XCTAssertEqual(savedEntry.media.first?.storyEntry?.id, savedEntry.id)
@@ -1044,11 +1097,11 @@ final class TravelStoryTests: XCTestCase {
         let whole = ShareCardData(trip: trip)
         let singleDay = ShareCardData(trip: trip, day: secondDay)
 
-        XCTAssertEqual(whole.scopeLabel, "整段行程")
+        XCTAssertEqual(whole.scopeLabel, "整段旅程")
         XCTAssertEqual(whole.sections.map(\.title), ["园林", "古城"])
         XCTAssertEqual(whole.sections.flatMap(\.items).map(\.title), ["拙政园", "平江路"])
         XCTAssertEqual(singleDay.scopeID, secondDay.id)
-        XCTAssertEqual(singleDay.scopeLabel, "单日行程")
+        XCTAssertEqual(singleDay.scopeLabel, "单日旅程")
         XCTAssertEqual(singleDay.sections.count, 1)
         XCTAssertEqual(singleDay.sections.first?.items.map(\.title), ["平江路"])
         let renderedImage = ShareCardImageRenderer.render(data: whole, coverImage: nil, scale: 1)
@@ -1066,9 +1119,13 @@ final class TravelStoryTests: XCTestCase {
         let entry = StoryEntry(title: "东方明珠", category: .attraction, sortOrder: 0)
         entry.story = story
         entry.storyDay = day
-        let media = MediaReference(localIdentifier: "cover-photo", kind: .image)
+        let video = MediaReference(localIdentifier: "story-video", kind: .video, sortOrder: 0)
+        let media = MediaReference(localIdentifier: "cover-photo", kind: .image, sortOrder: 1)
+        let secondPhoto = MediaReference(localIdentifier: "second-photo", kind: .image, sortOrder: 2)
+        video.storyEntry = entry
         media.storyEntry = entry
-        entry.media = [media]
+        secondPhoto.storyEntry = entry
+        entry.media = [secondPhoto, media, video]
         day.entries = [entry]
         story.days = [day]
         story.entries = [entry]
@@ -1079,6 +1136,8 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(data.summary, "登高看城市")
         XCTAssertEqual(data.sections.first?.narrative, "傍晚灯光很好看")
         XCTAssertEqual(data.coverAssetIdentifier, "cover-photo")
+        XCTAssertEqual(data.sections.first?.items.first?.photoAssetIdentifiers, ["cover-photo", "second-photo"])
+        XCTAssertEqual(data.photoAssetIdentifiers, ["cover-photo", "second-photo"])
     }
 
     func testSharedTripImportsAsAdditiveIdempotentCopyWithoutLocalMedia() throws {

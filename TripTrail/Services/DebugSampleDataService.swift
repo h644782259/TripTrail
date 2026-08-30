@@ -122,7 +122,7 @@ enum DebugSampleDataService {
             destination: "杭州",
             startDate: day(-1),
             endDate: day(1),
-            note: "覆盖路线、预约、费用、导航、照片和视频的完整测试行程。"
+            note: "覆盖路线、预约、费用、导航、照片和视频的完整测试旅程。"
         )
         currentTrip.id = markerTripID
         currentTrip.createdAt = day(-20)
@@ -139,7 +139,6 @@ enum DebugSampleDataService {
             end: time(9, 40, on: arrivalDay.date),
             order: 0,
             address: "抵达后从东广场出站，乘地铁前往酒店。",
-            coordinate: (30.2921, 120.2120),
             note: "从东广场出站，乘地铁前往酒店。",
             transport: .train,
             distance: "高铁 1 小时 5 分",
@@ -157,7 +156,6 @@ enum DebugSampleDataService {
             end: time(11, 0, on: arrivalDay.date),
             order: 1,
             address: "先寄存行李，下午两点后办理入住。",
-            coordinate: (30.2550, 120.1610),
             note: "先寄存行李，下午两点后领取房卡。",
             transport: .bus,
             distance: "地铁 6 站",
@@ -175,7 +173,6 @@ enum DebugSampleDataService {
             end: time(11, 25, on: arrivalDay.date),
             order: 2,
             address: "补充防晒与雨具，并检查充电宝、纸巾和备用电池。",
-            coordinate: nil,
             note: "检查充电宝、纸巾和备用电池。",
             transport: .walk,
             distance: "步行 350 米",
@@ -195,7 +192,6 @@ enum DebugSampleDataService {
             end: time(9, 30, on: todayDay.date),
             order: 0,
             address: "从北山街入口慢慢走到平湖秋月，适合拍湖面晨光。",
-            coordinate: (30.2636, 120.1488),
             note: "从北山街慢慢走到平湖秋月，拍一段湖面晨光。",
             transport: .walk,
             distance: "步行 1.8 公里",
@@ -216,7 +212,6 @@ enum DebugSampleDataService {
             end: time(13, 0, on: todayDay.date),
             order: 1,
             address: "预留临窗位，尝试西湖醋鱼与龙井虾仁。",
-            coordinate: (30.2525, 120.1421),
             note: "预留临窗位，尝试西湖醋鱼与龙井虾仁。",
             transport: .walk,
             distance: "步行 900 米",
@@ -234,7 +229,6 @@ enum DebugSampleDataService {
             end: time(17, 0, on: todayDay.date),
             order: 2,
             address: "挑选茶叶和桂花糕，控制在一个手提袋内。",
-            coordinate: (30.2417, 120.1761),
             note: "茶叶和桂花糕控制在一个手提袋内。",
             transport: .ride,
             distance: "骑行 3.2 公里",
@@ -254,7 +248,6 @@ enum DebugSampleDataService {
             end: time(11, 30, on: teaDay.date),
             order: 0,
             address: "天气合适就沿十里琅珰走一小段。",
-            coordinate: (30.2242, 120.1017),
             note: "天气合适就沿十里琅珰走一小段。",
             transport: .car,
             distance: "驾车约 11 公里",
@@ -272,7 +265,6 @@ enum DebugSampleDataService {
             end: time(18, 10, on: teaDay.date),
             order: 1,
             address: "提前四十分钟到站，乘坐返程高铁。",
-            coordinate: (30.2921, 120.2120),
             note: "提前四十分钟到站。",
             transport: .train,
             distance: "高铁 1 小时 5 分",
@@ -290,7 +282,7 @@ enum DebugSampleDataService {
             destination: "上海",
             startDate: day(7),
             endDate: day(8),
-            note: "用于查看即将出发状态、城市坐标与跨系统分享效果。"
+            note: "用于查看即将出发状态与跨系统分享效果。"
         )
         upcomingTrip.id = fixedID(2)
         upcomingTrip.createdAt = day(-10)
@@ -303,7 +295,6 @@ enum DebugSampleDataService {
             end: time(9, 0, on: shanghaiDay.date),
             order: 0,
             address: "在出发层集合，留意登机口变更。",
-            coordinate: (31.1968, 121.3363),
             note: "测试飞机交通方式与预约信息。",
             transport: .flight,
             distance: "机场线",
@@ -321,7 +312,6 @@ enum DebugSampleDataService {
             end: time(20, 30, on: shanghaiDay.date),
             order: 1,
             address: "蓝调时刻前到达，沿中山东一路慢慢散步。",
-            coordinate: (31.2400, 121.4900),
             note: "蓝调时刻前到达，测试城市照片展示。",
             transport: .bus,
             distance: "公交约 25 分钟",
@@ -340,7 +330,7 @@ enum DebugSampleDataService {
             destination: "厦门",
             startDate: day(-45),
             endDate: day(-42),
-            note: "用于查看历史行程、全部完成进度与归档入口。"
+            note: "用于查看历史旅程、全部完成进度与归档入口。"
         )
         historyTrip.id = fixedID(3)
         historyTrip.createdAt = day(-60)
@@ -353,7 +343,6 @@ enum DebugSampleDataService {
             end: time(8, 35, on: xiamenDay.date),
             order: 0,
             address: "刷身份证登船，提前留意候船区提示。",
-            coordinate: (24.4895, 118.0686),
             note: "刷身份证登船。",
             transport: .car,
             distance: "轮渡约 25 分钟",
@@ -371,8 +360,7 @@ enum DebugSampleDataService {
             end: time(11, 40, on: xiamenDay.date),
             order: 1,
             address: "从菽庄花园入园，顺路参观钢琴博物馆。",
-            coordinate: (24.4376, 118.0603),
-            note: "旧行程全部完成。",
+            note: "旧旅程全部完成。",
             transport: .walk,
             distance: "步行 1.4 公里",
             duration: 140,
@@ -389,7 +377,7 @@ enum DebugSampleDataService {
             destination: "杭州",
             startDate: currentTrip.startDate,
             endDate: currentTrip.endDate,
-            summary: "从测试行程同步而来的足迹，用于验证源行程同步、照片视频和逐日记录。"
+            summary: "从测试旅程同步而来的足迹，用于验证源旅程同步、照片视频和逐日记录。"
         )
         linkedStory.id = fixedID(500)
         linkedStory.createdAt = day(0)
@@ -405,7 +393,6 @@ enum DebugSampleDataService {
             category: .attraction,
             time: "08:00–09:30",
             address: brokenBridge.address,
-            coordinate: (brokenBridge.latitude, brokenBridge.longitude),
             note: "风不大，适合慢慢走，也拍下了一段动态素材。",
             route: "沿北山街步行 1.8 公里",
             order: 0,
@@ -424,7 +411,7 @@ enum DebugSampleDataService {
             destination: "上海",
             startDate: day(-12),
             endDate: day(-11),
-            summary: "独立创建的足迹，不关联任何行程，用于验证收藏导入后的编辑体验。"
+            summary: "独立创建的足迹，不关联任何旅程，用于验证收藏导入后的编辑体验。"
         )
         cityStory.id = fixedID(600)
         cityStory.createdAt = day(-9)
@@ -436,7 +423,6 @@ enum DebugSampleDataService {
             category: .attraction,
             time: "18:42",
             address: "蓝调时刻前到达，沿江记录城市夜色。",
-            coordinate: (31.2400, 121.4900),
             note: "这张图用于检查足迹卡片封面、轮播与跨设备媒体恢复。",
             route: "地铁 2 号线后步行 700 米",
             order: 0,
@@ -467,7 +453,6 @@ enum DebugSampleDataService {
             category: .attraction,
             time: "09:20–11:40",
             address: "从菽庄花园入园，顺路参观钢琴博物馆。",
-            coordinate: (24.4376, 118.0603),
             note: "没有照片也能完整保留文字、说明与路线。",
             route: "从三丘田码头步行约 20 分钟",
             order: 0,
@@ -499,7 +484,6 @@ enum DebugSampleDataService {
         end: Date,
         order: Int,
         address: String,
-        coordinate: (Double, Double)?,
         note: String,
         transport: TransportMode,
         distance: String,
@@ -512,8 +496,6 @@ enum DebugSampleDataService {
         let result = ItineraryItem(title: title, category: category, startTime: start, endTime: end, sortOrder: order)
         result.id = fixedID(id)
         result.address = address
-        result.latitude = coordinate?.0
-        result.longitude = coordinate?.1
         result.note = note
         result.transport = transport
         result.distanceText = distance
@@ -559,7 +541,6 @@ enum DebugSampleDataService {
         category: PlaceCategory,
         time: String,
         address: String,
-        coordinate: (Double?, Double?),
         note: String,
         route: String,
         order: Int,
@@ -571,8 +552,6 @@ enum DebugSampleDataService {
         result.id = fixedID(id)
         result.timeLabel = time
         result.address = address
-        result.latitude = coordinate.0
-        result.longitude = coordinate.1
         result.note = note
         result.routeInfo = route
         result.sourceItemID = sourceItemID

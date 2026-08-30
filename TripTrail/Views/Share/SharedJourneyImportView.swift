@@ -145,7 +145,7 @@ struct SharedJourneyImportView: View {
                 isImported = true
                 message = result.wasAlreadyPresent
                     ? "这份\(result.summary.kind.displayName)已经在你的旅迹中。"
-                    : "已添加\(result.summary.importDescription)，现在可以在\(result.summary.kind == .trip ? "行程" : "足迹")页继续编辑。"
+                    : "已添加\(result.summary.importDescription)，现在可以在\(result.summary.kind == .trip ? "旅程" : "足迹")页继续编辑。"
             } catch {
                 message = error.localizedDescription
             }

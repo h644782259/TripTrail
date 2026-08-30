@@ -10,7 +10,7 @@ struct PickedAsset: Identifiable, Hashable {
 }
 
 enum FootprintMediaPolicy {
-    static let maximumCount = 9
+    static let maximumCount = 6
 
     static func remainingSlots(existingCount: Int, pendingCount: Int = 0) -> Int {
         max(0, maximumCount - existingCount - pendingCount)

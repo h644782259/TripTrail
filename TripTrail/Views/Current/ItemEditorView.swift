@@ -110,12 +110,6 @@ struct ItemEditorView: View {
                     Text("路程")
                 }
 
-                Section("补充信息") {
-                    TextField("记录提醒或补充说明", text: $note, axis: .vertical)
-                        .lineLimit(4...10)
-                        .accessibilityLabel("补充信息")
-                }
-
                 Section("照片与视频") {
                     let visibleMedia = (item?.media ?? [])
                         .filter { !removedMediaIDs.contains($0.id) }
@@ -188,11 +182,10 @@ struct ItemEditorView: View {
         if title.isEmpty, !draft.address.isEmpty { title = draft.address }
         transport = draft.transport
         if !draft.distanceText.isEmpty { distanceText = draft.distanceText }
-        if !draft.reservationInfo.isEmpty, !note.contains(draft.reservationInfo) {
-            note = [note, draft.reservationInfo].filter { !$0.isEmpty }.joined(separator: "\n")
-        }
         if draft.cost > 0 { costText = String(draft.cost) }
-        if !draft.note.isEmpty { note = draft.note }
+        for detail in [draft.reservationInfo, draft.note] where !detail.isEmpty && !address.contains(detail) {
+            address = [address, detail].filter { !$0.isEmpty }.joined(separator: "\n")
+        }
         let existingIDs = Set(pickedAssets.map(\.id))
         pickedAssets.append(contentsOf: draft.sourceAssetIdentifiers
             .filter { !existingIDs.contains($0) }

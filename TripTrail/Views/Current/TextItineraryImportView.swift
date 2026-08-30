@@ -29,7 +29,7 @@ struct TextItineraryImportView: View {
                 Section {
                     ZStack(alignment: .topLeading) {
                         if inputText.isEmpty {
-                            Text("粘贴一整段行程文本\n支持 Day 1、Day 2…或第1天、第2天…\n也可以只输入一段安排")
+                            Text("粘贴一整段旅程文本\n支持 Day 1、Day 2…或第1天、第2天…\n也可以只输入一段安排")
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 8)
@@ -50,7 +50,7 @@ struct TextItineraryImportView: View {
                 } header: {
                     Text("粘贴或输入")
                 } footer: {
-                    Text("多天内容会按顺序创建并追加到当前行程末尾。")
+                    Text("多天内容会按顺序创建并追加到当前旅程末尾。")
                 }
             }
             .scrollDismissesKeyboard(.interactively)

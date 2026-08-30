@@ -12,6 +12,7 @@ struct UnifiedTimeRangePicker: View {
     @Binding var startTime: Date
     @Binding var endTime: Date
     let displayStyle: TimeRangePickerDisplayStyle
+    let separator: String
 
     @State private var isPresented = false
     @State private var draftStartTime: Date
@@ -23,7 +24,8 @@ struct UnifiedTimeRangePicker: View {
         endTitle: String = "结束",
         startTime: Binding<Date>,
         endTime: Binding<Date>,
-        displayStyle: TimeRangePickerDisplayStyle = .form
+        displayStyle: TimeRangePickerDisplayStyle = .form,
+        separator: String = "–"
     ) {
         self.title = title
         self.startTitle = startTitle
@@ -31,6 +33,7 @@ struct UnifiedTimeRangePicker: View {
         _startTime = startTime
         _endTime = endTime
         self.displayStyle = displayStyle
+        self.separator = separator
         _draftStartTime = State(initialValue: startTime.wrappedValue)
         _draftEndTime = State(initialValue: endTime.wrappedValue)
     }
@@ -94,7 +97,8 @@ struct UnifiedTimeRangePicker: View {
                 startTitle: startTitle,
                 endTitle: endTitle,
                 startTime: $draftStartTime,
-                endTime: $draftEndTime
+                endTime: $draftEndTime,
+                separator: separator
             )
             .padding(.horizontal, 4)
 
@@ -146,7 +150,7 @@ struct UnifiedTimeRangePicker: View {
     }
 
     private func rangeText(startTime: Date, endTime: Date) -> String {
-        "\(startTime.timeText)–\(endTime.timeText)"
+        "\(startTime.timeText)\(separator)\(endTime.timeText)"
     }
 }
 
@@ -155,15 +159,23 @@ struct TimeRangeWheelSelector: View {
     let endTitle: String
     @Binding var startTime: Date
     @Binding var endTime: Date
+    var separator: String? = nil
 
     private var calendar: Calendar { .current }
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
             endpoint(title: startTitle, selection: $startTime)
-            Divider()
-                .frame(height: 168)
-                .padding(.horizontal, 2)
+            if let separator {
+                Text(separator)
+                    .font(.title3.bold())
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
+            } else {
+                Divider()
+                    .frame(height: 168)
+                    .padding(.horizontal, 2)
+            }
             endpoint(title: endTitle, selection: $endTime)
         }
         .frame(maxWidth: .infinity)

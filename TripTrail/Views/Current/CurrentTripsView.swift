@@ -33,7 +33,6 @@ struct CurrentTripsView: View {
             .padding()
         }
         .background(Color.tripCanvas)
-        .navigationTitle("当前行程")
         .navigationDestination(for: Trip.self) { TripDetailView(trip: $0) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -109,7 +108,7 @@ struct CurrentTripsView: View {
             .accessibilityHint("打开这段旅程")
 
             Menu {
-                Button("删除行程", systemImage: "trash", role: .destructive) {
+                Button("删除旅程", systemImage: "trash", role: .destructive) {
                     tripToDelete = trip
                 }
             } label: {
@@ -122,11 +121,6 @@ struct CurrentTripsView: View {
             .foregroundStyle(Color.tripInk.opacity(0.72))
             .padding(12)
             .accessibilityLabel("\(trip.title)更多操作")
-        }
-        .contextMenu {
-            Button("删除行程", systemImage: "trash", role: .destructive) {
-                tripToDelete = trip
-            }
         }
     }
 

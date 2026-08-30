@@ -20,6 +20,13 @@ extension Color {
                 : UIColor(red: 0.995, green: 0.99, blue: 0.975, alpha: 1)
         }
     )
+    static let tripItemSurface = Color(
+        uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark
+                ? UIColor.secondarySystemGroupedBackground
+                : UIColor(red: 0.965, green: 0.955, blue: 0.925, alpha: 1)
+        }
+    )
 }
 
 struct CardSurface: ViewModifier {

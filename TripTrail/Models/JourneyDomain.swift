@@ -19,8 +19,8 @@ enum JourneyModuleKind {
             JourneyCapabilities(
                 supportsCompletion: false,
                 supportsReservation: false,
-                supportsPlannedTransport: false,
-                supportsBudget: false,
+                supportsPlannedTransport: true,
+                supportsBudget: true,
                 supportsSourceSync: true,
                 supportsPostTripNarrative: true
             )
@@ -58,8 +58,6 @@ protocol JourneyPointNode: AnyObject, Identifiable {
     var title: String { get set }
     var category: PlaceCategory { get set }
     var address: String { get set }
-    var latitude: Double? { get set }
-    var longitude: Double? { get set }
     var note: String { get set }
     var sortOrder: Int { get set }
     var media: [MediaReference] { get set }
@@ -75,8 +73,58 @@ struct JourneyPointSkeleton {
     let sourceID: UUID
     let title: String
     let category: PlaceCategory
-    let timeLabel: String
+    let startTime: Date
+    let endTime: Date
+    let address: String
+    let supplementalInfo: String
+    let transport: TransportMode
+    let distanceText: String
+    let cost: Double
     let sortOrder: Int
+
+    var defaultFootprintMemory: String {
+        var parts = ["类型：\(category.rawValue)"]
+
+        let trimmedAddress = Self.cleanedPhrase(address)
+        if !trimmedAddress.isEmpty {
+            parts.append("说明：\(trimmedAddress)")
+        }
+
+        let trimmedDistance = Self.cleanedPhrase(distanceText)
+        if trimmedDistance.isEmpty {
+            parts.append("前往方式：\(transport.rawValue)")
+        } else {
+            parts.append("\(transport.rawValue)前往，路程 \(trimmedDistance)")
+        }
+
+        if cost > 0 {
+            parts.append("花费：¥\(Self.costText(cost))")
+        }
+
+        let trimmedSupplement = Self.cleanedPhrase(supplementalInfo)
+        if !trimmedSupplement.isEmpty {
+            parts.append("补充：\(trimmedSupplement)")
+        }
+
+        return parts.joined(separator: "；") + "。"
+    }
+
+    private static func costText(_ value: Double) -> String {
+        var text = String(format: "%.2f", value)
+        while text.last == "0" { text.removeLast() }
+        if text.last == "." { text.removeLast() }
+        return text
+    }
+
+    private static func cleanedPhrase(_ value: String) -> String {
+        var result = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trailingPunctuation = CharacterSet(charactersIn: "。；; ，,.！？!?")
+        while let scalar = result.unicodeScalars.last,
+              trailingPunctuation.contains(scalar) {
+            result.removeLast()
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 struct ItineraryTimeAdjustment: Identifiable {
@@ -518,6 +566,21 @@ enum JourneyHierarchyService {
         return JourneyDaySeed(date: date, title: "第 \(days.count + 1) 天", sortOrder: days.count)
     }
 
+    @discardableResult
+    static func appendDay(
+        to trip: Trip,
+        calendar: Calendar = .current
+    ) -> TripDay {
+        let seed = nextDaySeed(after: trip.days, fallbackDate: trip.startDate, calendar: calendar)
+        let day = TripDay(date: seed.date, title: seed.title, sortOrder: seed.sortOrder, trip: trip)
+        trip.days.append(day)
+
+        if calendar.startOfDay(for: seed.date) > calendar.startOfDay(for: trip.endDate) {
+            trip.endDate = calendar.startOfDay(for: seed.date)
+        }
+        return day
+    }
+
     static func daySeeds(
         from startDate: Date,
         through endDate: Date,
@@ -603,8 +666,7 @@ enum JourneyHierarchyService {
     }
 
     static func hasUserContent<P: JourneyPointNode>(_ point: P) -> Bool {
-        !point.address.isEmpty || point.latitude != nil || point.longitude != nil ||
-        !point.note.isEmpty || !point.media.isEmpty
+        !point.address.isEmpty || !point.note.isEmpty || !point.media.isEmpty
     }
 }
 
@@ -627,7 +689,13 @@ extension ItineraryItem {
             sourceID: id,
             title: title,
             category: category,
-            timeLabel: startTime.timeText,
+            startTime: startTime,
+            endTime: endTime,
+            address: address,
+            supplementalInfo: note,
+            transport: transport,
+            distanceText: distanceText,
+            cost: cost,
             sortOrder: sortOrder
         )
     }
@@ -638,7 +706,22 @@ extension StoryEntry {
         sourceItemID = skeleton.sourceID
         title = skeleton.title
         category = skeleton.category
-        timeLabel = skeleton.timeLabel
+        startTime = skeleton.startTime
+        endTime = skeleton.endTime
+        timeLabel = "\(skeleton.startTime.timeText)～\(skeleton.endTime.timeText)"
+        if !didPrefillSourceMemory {
+            if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let prefill = skeleton.defaultFootprintMemory
+                note = prefill
+                sourceMemoryPrefill = prefill
+            }
+            didPrefillSourceMemory = true
+        }
+        address = ""
+        supplementalInfo = ""
+        transport = .car
+        distanceText = ""
+        cost = 0
         sortOrder = skeleton.sortOrder
     }
 }

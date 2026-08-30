@@ -4,15 +4,6 @@ import UIKit
 struct AmapStop: Equatable {
     let name: String
     let address: String
-    let latitude: Double?
-    let longitude: Double?
-
-    var hasCoordinate: Bool { latitude != nil && longitude != nil }
-
-    var uriValue: String? {
-        guard let latitude, let longitude else { return nil }
-        return "\(longitude),\(latitude),\(name)"
-    }
 }
 
 @MainActor
@@ -22,11 +13,9 @@ enum AmapService {
     static func openPlace(
         name: String,
         address: String,
-        latitude: Double?,
-        longitude: Double?,
         mode: TransportMode = .car
     ) async -> Bool {
-        let stop = AmapStop(name: name, address: address, latitude: latitude, longitude: longitude)
+        let stop = AmapStop(name: name, address: address)
         guard let url = navigationURL(to: stop, mode: mode) else { return false }
         return await openNative(url)
     }
@@ -41,22 +30,16 @@ enum AmapService {
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
             .joined(separator: " ")
-        guard !destinationName.isEmpty || stop.hasCoordinate else { return nil }
+        guard !destinationName.isEmpty else { return nil }
 
         var components = URLComponents()
         components.scheme = "iosamap"
         components.host = "path"
-        var queryItems = [
+        let queryItems = [
             URLQueryItem(name: "sourceApplication", value: source),
-            URLQueryItem(name: "dname", value: destinationName.isEmpty ? "目的地" : destinationName),
-            // App 内保存的是已经转换过的 GCJ-02（高德）坐标。
-            URLQueryItem(name: "dev", value: "0"),
+            URLQueryItem(name: "dname", value: destinationName),
             URLQueryItem(name: "t", value: routeType(for: mode))
         ]
-        if let latitude = stop.latitude, let longitude = stop.longitude {
-            queryItems.append(URLQueryItem(name: "dlat", value: String(latitude)))
-            queryItems.append(URLQueryItem(name: "dlon", value: String(longitude)))
-        }
         components.queryItems = queryItems
         return components.url
     }

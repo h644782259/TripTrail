@@ -15,6 +15,7 @@
 		4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */; };
 		48CD50F05734D58631115DF6 /* ScreenshotItineraryImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */; };
 		4F127EF7F408B2AAA86963C1 /* TextItineraryImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD69576E4A06805FDBF344E /* TextItineraryImportView.swift */; };
+		57203203297050F1596165BF /* TripStatisticsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D679D62BA565EC54A738EEE3 /* TripStatisticsView.swift */; };
 		5A6CB91A3122ECFC26368810 /* StoryArchiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5593766E035479FC9AD9B62B /* StoryArchiveService.swift */; };
 		5BF4B8F978303BE3A87D3A86 /* PortablePackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E7663F72D5795B76E48D7A /* PortablePackageService.swift */; };
 		5C46741176D3E7645FE5493B /* AmapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C130F7997D27B0DF7C2C6029 /* AmapService.swift */; };
@@ -24,10 +25,12 @@
 		69413A5A86DCA5E84B6D1537 /* TravelStoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E22A12FED4342670D429325B /* TravelStoryTests.swift */; };
 		6ED662ED6483F822024CD5DA /* Photos.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 892B99220A479956D1D35546 /* Photos.framework */; };
 		8015610FECA3B55543CCBD6C /* ItemEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4695359D187A433D01F49AC8 /* ItemEditorView.swift */; };
+		82483304E22BD23587DCD279 /* TripExpenseSummaryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1C585F5A59D59E59D084684 /* TripExpenseSummaryTests.swift */; };
 		825CFC4F010549FDC1B53F75 /* PlaceSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8571999BB199650CE66F7C /* PlaceSearchView.swift */; };
 		847FCF5F16E71214F5A6B1C5 /* CurrentTripsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1A0EF83E8A5CBC256E20C3 /* CurrentTripsView.swift */; };
 		84969E49E616A42FDB6A873E /* ScreenshotItineraryImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BADD36F6B99845B1645B551B /* ScreenshotItineraryImportView.swift */; };
 		8F6EE5B3FB6CF32241E96965 /* PhotosUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EE57628CA9ABF95781B16DAC /* PhotosUI.framework */; };
+		92AD27DB8AF2A75A2C295602 /* TripExpenseSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B66E3C7CC9BCC7B4F429B8 /* TripExpenseSummary.swift */; };
 		97B33712D75EBB7D5DD07A2E /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 57956152DE4064F02042A9D5 /* MapKit.framework */; };
 		A9B27CF77F06A7A02105DBF4 /* TwoTapDateRangePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 579B403F4A3664D9BF52C811 /* TwoTapDateRangePicker.swift */; };
 		AA42792EAB868370BBD5E14D /* StoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB06BFD99F589D4C8E6AD1E7 /* StoryDetailView.swift */; };
@@ -69,6 +72,7 @@
 		20646DC28A9AE62C452F03CF /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
 		30C0B1BD33C42DDCE05696BB /* triptrail-demo-motion.mov */ = {isa = PBXFileReference; lastKnownFileType = video.quicktime; path = "triptrail-demo-motion.mov"; sourceTree = "<group>"; };
 		34CF97F064A3CA45C61954FE /* JourneyDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyDomain.swift; sourceTree = "<group>"; };
+		38B66E3C7CC9BCC7B4F429B8 /* TripExpenseSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripExpenseSummary.swift; sourceTree = "<group>"; };
 		3E20280323486DC4612F93DA /* AmapServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmapServiceTests.swift; sourceTree = "<group>"; };
 		4581B2CC3AADDA1844AB02C3 /* TripTrailTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TripTrailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4695359D187A433D01F49AC8 /* ItemEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditorView.swift; sourceTree = "<group>"; };
@@ -88,6 +92,7 @@
 		A3615EFC09F8CA8E95684470 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelModels.swift; sourceTree = "<group>"; };
 		AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySyncService.swift; sourceTree = "<group>"; };
+		B1C585F5A59D59E59D084684 /* TripExpenseSummaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripExpenseSummaryTests.swift; sourceTree = "<group>"; };
 		B3E7663F72D5795B76E48D7A /* PortablePackageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortablePackageService.swift; sourceTree = "<group>"; };
 		BADD36F6B99845B1645B551B /* ScreenshotItineraryImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotItineraryImportView.swift; sourceTree = "<group>"; };
 		C130F7997D27B0DF7C2C6029 /* AmapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmapService.swift; sourceTree = "<group>"; };
@@ -97,6 +102,7 @@
 		CA2F2471000070D5EE980E58 /* TripTrailApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripTrailApp.swift; sourceTree = "<group>"; };
 		D5B39EE1290528F9152F437F /* SharedJourneyImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedJourneyImportView.swift; sourceTree = "<group>"; };
 		D632197719FD441799E3A292 /* StoryMediaCarousel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryMediaCarousel.swift; sourceTree = "<group>"; };
+		D679D62BA565EC54A738EEE3 /* TripStatisticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripStatisticsView.swift; sourceTree = "<group>"; };
 		DED36EA4063EAFC80F693B57 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		DF9B69579A7AA3900D7C09DB /* ShareExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExportView.swift; sourceTree = "<group>"; };
 		E22A12FED4342670D429325B /* TravelStoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelStoryTests.swift; sourceTree = "<group>"; };
@@ -150,6 +156,7 @@
 				6634C73CB10E4A9523201687 /* MediaPresentationTests.swift */,
 				1E26BB6191A7922EBD5499C3 /* ScreenshotItineraryImportTests.swift */,
 				E22A12FED4342670D429325B /* TravelStoryTests.swift */,
+				B1C585F5A59D59E59D084684 /* TripExpenseSummaryTests.swift */,
 			);
 			path = TripTrailTests;
 			sourceTree = "<group>";
@@ -234,6 +241,7 @@
 				9FADE30A07B8EDB6CA989AAE /* Current */,
 				841418E69AA03A0B0E961BFF /* Settings */,
 				95FE9ED8B77C3D1DC2074C3C /* Share */,
+				F50B8F47B52BA7228E77FECC /* Statistics */,
 				03D60FC124B29E3213BAFE0B /* Stories */,
 			);
 			path = Views;
@@ -274,6 +282,7 @@
 			children = (
 				34CF97F064A3CA45C61954FE /* JourneyDomain.swift */,
 				A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */,
+				38B66E3C7CC9BCC7B4F429B8 /* TripExpenseSummary.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -294,6 +303,14 @@
 				CA2F2471000070D5EE980E58 /* TripTrailApp.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		F50B8F47B52BA7228E77FECC /* Statistics */ = {
+			isa = PBXGroup;
+			children = (
+				D679D62BA565EC54A738EEE3 /* TripStatisticsView.swift */,
+			);
+			path = Statistics;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -346,7 +363,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					932F715CAF237FD4A904D6A1 = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = 9RRH48X8ZP;
 						ProvisioningStyle = Automatic;
 					};
 					99916C960D6A5437855CC367 = {
@@ -418,6 +435,8 @@
 				4F127EF7F408B2AAA86963C1 /* TextItineraryImportView.swift in Sources */,
 				4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */,
 				ABD819B34864FAEEAFC8C1EF /* TripDetailView.swift in Sources */,
+				92AD27DB8AF2A75A2C295602 /* TripExpenseSummary.swift in Sources */,
+				57203203297050F1596165BF /* TripStatisticsView.swift in Sources */,
 				B9FC35233CF31334D5BA4E58 /* TripTheme.swift in Sources */,
 				AAA29CA2125777E3F084FFE1 /* TripTrailApp.swift in Sources */,
 				A9B27CF77F06A7A02105DBF4 /* TwoTapDateRangePicker.swift in Sources */,
@@ -433,6 +452,7 @@
 				B8A02B61B78B1C54F18F1DFB /* MediaPresentationTests.swift in Sources */,
 				D61E20736D09EB1DAEA1976E /* ScreenshotItineraryImportTests.swift in Sources */,
 				69413A5A86DCA5E84B6D1537 /* TravelStoryTests.swift in Sources */,
+				82483304E22BD23587DCD279 /* TripExpenseSummaryTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -613,6 +633,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9RRH48X8ZP;
 				INFOPLIST_FILE = TripTrail/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -634,6 +655,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 9RRH48X8ZP;
 				INFOPLIST_FILE = TripTrail/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

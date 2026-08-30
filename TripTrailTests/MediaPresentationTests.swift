@@ -2,10 +2,10 @@ import XCTest
 @testable import TripTrail
 
 final class MediaPresentationTests: XCTestCase {
-    func testFootprintMediaLimitHasAtMostNineSlots() {
-        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 0), 9)
-        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 7, pendingCount: 1), 1)
-        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 9), 0)
+    func testFootprintMediaLimitHasAtMostSixSlots() {
+        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 0), 6)
+        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 4, pendingCount: 1), 1)
+        XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 6), 0)
         XCTAssertEqual(FootprintMediaPolicy.remainingSlots(existingCount: 12), 0)
     }
 

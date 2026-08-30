@@ -8,7 +8,7 @@ struct StorySyncReport {
     var detachedEntries = 0
 
     var message: String {
-        "已同步最新骨架：新增 \(addedDays) 天、\(addedEntries) 个行程点，更新 \(updatedEntries) 个；保留 \(detachedEntries) 个已有补充内容的旧片段。"
+        "已同步最新骨架：新增 \(addedDays) 天、\(addedEntries) 个旅程安排，更新 \(updatedEntries) 个；保留 \(detachedEntries) 个已有补充内容的旧片段。"
     }
 }
 
@@ -141,7 +141,13 @@ enum StorySyncService {
             sourceID: skeleton.sourceID,
             title: skeleton.title,
             category: skeleton.category,
-            timeLabel: skeleton.timeLabel,
+            startTime: skeleton.startTime,
+            endTime: skeleton.endTime,
+            address: skeleton.address,
+            supplementalInfo: skeleton.supplementalInfo,
+            transport: skeleton.transport,
+            distanceText: skeleton.distanceText,
+            cost: skeleton.cost,
             sortOrder: sortOrder
         )
         entry.apply(skeleton)
@@ -164,6 +170,10 @@ enum StorySyncService {
     }
 
     private static func hasUserContent(_ entry: StoryEntry) -> Bool {
-        JourneyHierarchyService.hasUserContent(entry) || !entry.routeInfo.isEmpty
+        let memory = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let automaticPrefill = entry.sourceMemoryPrefill?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasEditedMemory = !memory.isEmpty && memory != automaticPrefill
+        return hasEditedMemory || !entry.media.isEmpty
     }
 }

@@ -8,10 +8,13 @@ struct RootTabView: View {
     var body: some View {
         TabView {
             NavigationStack { CurrentTripsView() }
-                .tabItem { Label("行程", systemImage: "map.fill") }
+                .tabItem { Label("旅程", systemImage: "map.fill") }
 
             NavigationStack { StoriesView() }
                 .tabItem { Label("足迹", systemImage: "book.closed.fill") }
+
+            NavigationStack { TripStatisticsView() }
+                .tabItem { Label("统计", systemImage: "chart.bar.fill") }
 
             NavigationStack { SettingsView() }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }

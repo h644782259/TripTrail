@@ -118,7 +118,7 @@ enum StoryArchiveService {
                     storyDay.entries.append(entry)
                 }
 
-                // 这里只同步框架，不从行程复制地址、备注、路线或媒体。
+                // 同步行程与足迹共用的表单字段；足迹独有的回忆和媒体保持独立。
                 entry.apply(sourceItem.footprintSkeleton)
             }
         }

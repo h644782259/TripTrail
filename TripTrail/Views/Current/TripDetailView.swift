@@ -29,6 +29,7 @@ struct TripDetailView: View {
     @State private var isReadingScreenshot = false
     @State private var dayExpansionOverrides: [UUID: Bool] = [:]
     @State private var itineraryDrag: ItineraryDragState?
+    @State private var itineraryDragRevision = 0
     @State private var dayDrag: TripDayDragState?
     @State private var progressReferenceDate = Date()
     private let completionTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -52,11 +53,11 @@ struct TripDetailView: View {
                 Menu {
                     Button("编辑旅程", systemImage: "pencil") { editingTrip = true }
                     Button("收进足迹", systemImage: "book.closed") { archiveWholeTrip() }
-                    Button("分享行程", systemImage: "square.and.arrow.up") {
+                    Button("分享旅程", systemImage: "square.and.arrow.up") {
                         shareRequest = TripShareRequest(scopeID: trip.id)
                     }
                     Divider()
-                    Button("删除行程", systemImage: "trash", role: .destructive) {
+                    Button("删除旅程", systemImage: "trash", role: .destructive) {
                         isConfirmingTripDeletion = true
                     }
                 } label: { Image(systemName: "ellipsis.circle") }
@@ -228,7 +229,7 @@ struct TripDetailView: View {
                 }
                 .frame(width: 74, height: 74)
                 .accessibilityElement(children: .ignore)
-                .accessibilityLabel("行程进度，\(dayProgress.statusText)，\(dayProgress.currentDay) / \(dayProgress.totalDays) 天")
+                .accessibilityLabel("旅程进度，\(dayProgress.statusText)，\(dayProgress.currentDay) / \(dayProgress.totalDays) 天")
             }
             if !trip.note.isEmpty {
                 Text(trip.note).font(.subheadline).foregroundStyle(.white.opacity(0.9))
@@ -339,6 +340,7 @@ struct TripDetailView: View {
 
     private func daySection(_ day: TripDay, index: Int) -> some View {
         let isExpanded = isDayExpanded(day)
+        let displayedItems = day.displayItems
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack {
@@ -401,7 +403,7 @@ struct TripDetailView: View {
             }
 
             if isExpanded {
-                if day.displayItems.isEmpty {
+                if displayedItems.isEmpty {
                     Button { dayForNewItem = day } label: {
                         Label("添加安排", systemImage: "plus.circle")
                             .font(.subheadline.weight(.semibold))
@@ -413,7 +415,7 @@ struct TripDetailView: View {
                     .buttonStyle(.plain)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                 } else {
-                    ForEach(day.displayItems) { item in
+                    ForEach(displayedItems) { item in
                         ItemSwipeActionContainer {
                             itemToEdit = item
                         } onDelete: {
@@ -451,7 +453,8 @@ struct TripDetailView: View {
                             )
                         }
                     }
-                    .animation(.snappy(duration: 0.22), value: day.displayItems.map(\.id))
+                    .animation(.snappy(duration: 0.22), value: displayedItems.map(\.id))
+                    .animation(.snappy(duration: 0.22), value: itineraryDragRevision)
                     Button { dayForNewItem = day } label: {
                         Label("添加安排", systemImage: "plus")
                     }
@@ -620,6 +623,7 @@ struct TripDetailView: View {
         guard didMove else { return }
         itineraryDrag.destination = destination
         self.itineraryDrag = itineraryDrag
+        itineraryDragRevision &+= 1
     }
 
     private func previewItineraryDrag(toEndOf day: TripDay) {
@@ -638,6 +642,7 @@ struct TripDetailView: View {
         guard didMove else { return }
         itineraryDrag.destination = destination
         self.itineraryDrag = itineraryDrag
+        itineraryDragRevision &+= 1
     }
 
     private func finishItineraryDrag(at destination: ItineraryDropDestination) -> Bool {
@@ -663,6 +668,7 @@ struct TripDetailView: View {
             }
         }
         self.itineraryDrag = nil
+        itineraryDragRevision &+= 1
         return handleMove(result)
     }
 
@@ -701,9 +707,7 @@ struct TripDetailView: View {
         let item = request.item
         let stop = AmapStop(
             name: item.title,
-            address: "",
-            latitude: item.latitude,
-            longitude: item.longitude
+            address: item.address
         )
         Task {
             let opened: Bool
@@ -711,9 +715,7 @@ struct TripDetailView: View {
             case .place:
                 opened = await AmapService.openPlace(
                     name: item.title,
-                    address: "",
-                    latitude: item.latitude,
-                    longitude: item.longitude,
+                    address: item.address,
                     mode: item.transport
                 )
             case .nextPlace:
@@ -735,7 +737,7 @@ struct TripDetailView: View {
             let opened = await PlaceDiscoveryService.open(
                 platform,
                 name: item.title,
-                address: ""
+                address: item.address
             )
             if !opened {
                 placeMessage = "暂时无法打开\(platform.displayName)，请检查网络或稍后重试。"
@@ -744,9 +746,7 @@ struct TripDetailView: View {
     }
 
     private func addDay() {
-        let seed = JourneyHierarchyService.nextDaySeed(after: trip.days, fallbackDate: trip.startDate)
-        let day = TripDay(date: seed.date, title: seed.title, sortOrder: seed.sortOrder, trip: trip)
-        trip.days.append(day)
+        JourneyHierarchyService.appendDay(to: trip)
     }
 
     private func archiveWholeTrip() {
@@ -860,7 +860,7 @@ private struct ItineraryTimeReviewView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("调整行程时间")
+            .navigationTitle("调整旅程时间")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -972,16 +972,22 @@ private struct ItineraryCard: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .opacity(item.isCompleted ? 0.72 : 1)
+        .padding(12)
+        .background(
+            Color.tripItemSurface,
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.tripSand.opacity(0.34), lineWidth: 0.8)
+        }
+        .shadow(color: Color.tripInk.opacity(0.055), radius: 7, y: 3)
         .contentShape(Rectangle())
+        .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
         .onTapGesture(perform: onEdit)
         .onDrag {
             onDragStart()
             return NSItemProvider(object: item.id.uuidString as NSString)
-        } preview: {
-            Label(item.title, systemImage: item.category.symbol)
-                .font(.headline)
-                .padding(12)
-                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
         }
         .accessibilityHint("长按并拖动可调整顺序")
         .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
@@ -1006,7 +1012,7 @@ private struct ItineraryCard: View {
 
 }
 
-private struct NavigationOptionsSheet: View {
+struct NavigationOptionsSheet: View {
     @Environment(\.dismiss) private var dismiss
     let onAmap: () -> Void
     let onXiaohongshu: () -> Void

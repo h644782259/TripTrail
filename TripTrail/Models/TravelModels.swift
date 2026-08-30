@@ -77,7 +77,7 @@ enum HierarchyDeletionCopy {
     static let confirmationButtonTitle = "确认删除"
     static let cancelButtonTitle = "取消"
 
-    static let tripTitle = "删除行程？"
+    static let tripTitle = "删除旅程？"
     static let tripDayTitle = "删除当天？"
     static let itineraryItemTitle = "删除安排？"
     static let storyTitle = "删除足迹？"
@@ -85,7 +85,7 @@ enum HierarchyDeletionCopy {
     static let storyEntryTitle = "删除足迹安排？"
 
     static func tripMessage(title: String) -> String {
-        "“\(title)”及其中的当天行程、具体安排和媒体引用将被永久删除。"
+        "“\(title)”及其中的每日安排和媒体引用将被永久删除。"
     }
 
     static func tripDayMessage(title: String) -> String {
@@ -97,7 +97,7 @@ enum HierarchyDeletionCopy {
     }
 
     static func storyMessage(title: String) -> String {
-        "“\(title)”及其中的当天足迹、具体安排和媒体引用将被永久删除，原行程不会受到影响。"
+        "“\(title)”及其中的当天足迹、具体安排和媒体引用将被永久删除，原旅程不会受到影响。"
     }
 
     static func storyDayMessage(title: String) -> String {
@@ -341,8 +341,6 @@ final class ItineraryItem {
     var startTime: Date = Date()
     var endTime: Date = Date()
     var address: String = ""
-    var latitude: Double?
-    var longitude: Double?
     var note: String = ""
     var transportRaw: String = TransportMode.car.rawValue
     var distanceText: String = ""
@@ -374,8 +372,6 @@ final class ItineraryItem {
         get { TransportMode(rawValue: transportRaw) ?? .car }
         set { transportRaw = newValue.rawValue }
     }
-
-    var hasCoordinate: Bool { latitude != nil && longitude != nil }
 
     func hasElapsed(relativeTo date: Date = Date()) -> Bool {
         endTime <= date
@@ -521,12 +517,17 @@ final class StoryEntry {
     var id: UUID = UUID()
     var title: String = ""
     var categoryRaw: String = PlaceCategory.attraction.rawValue
+    var startTime: Date?
+    var endTime: Date?
     var timeLabel: String = ""
     var address: String = ""
-    var latitude: Double?
-    var longitude: Double?
+    var supplementalInfo: String = ""
     var note: String = ""
+    var transportRaw: String = TransportMode.car.rawValue
     var routeInfo: String = ""
+    var cost: Double = 0
+    var didPrefillSourceMemory: Bool = false
+    var sourceMemoryPrefill: String?
     var sortOrder: Int = 0
     var sourceItemID: UUID?
     var story: TravelStory?
@@ -544,6 +545,16 @@ final class StoryEntry {
     var category: PlaceCategory {
         get { PlaceCategory.resolved(rawValue: categoryRaw) }
         set { categoryRaw = newValue.rawValue }
+    }
+
+    var transport: TransportMode {
+        get { TransportMode(rawValue: transportRaw) ?? .car }
+        set { transportRaw = newValue.rawValue }
+    }
+
+    var distanceText: String {
+        get { routeInfo }
+        set { routeInfo = newValue }
     }
 
     var sortedMedia: [MediaReference] {

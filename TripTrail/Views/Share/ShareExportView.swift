@@ -18,6 +18,7 @@ struct ShareCardItem: Identifiable {
     let title: String
     let detail: String
     let completed: Bool
+    let photoAssetIdentifiers: [String]
 }
 
 struct ShareCardSection: Identifiable {
@@ -44,8 +45,8 @@ struct ShareCardData {
         let days = selectedDay.map { [$0] } ?? trip.sortedDays
         id = trip.id
         scopeID = selectedDay?.id ?? trip.id
-        scopeLabel = selectedDay == nil ? "整段行程" : "单日行程"
-        eyebrow = "TRIP PLAN · 行程计划"
+        scopeLabel = selectedDay == nil ? "整段旅程" : "单日旅程"
+        eyebrow = "TRIP PLAN · 旅程计划"
         title = trip.title
         destination = trip.destination
         dateRange = selectedDay?.date.chineseDateText
@@ -69,7 +70,11 @@ struct ShareCardData {
                         detail: [$0.category.rawValue, $0.address, $0.distanceText]
                             .filter { !$0.isEmpty }
                             .joined(separator: " · "),
-                        completed: $0.isCompleted
+                        completed: $0.isCompleted,
+                        photoAssetIdentifiers: $0.media
+                            .sorted { $0.sortOrder < $1.sortOrder }
+                            .filter { $0.kind == .image }
+                            .map(\.localIdentifier)
                     )
                 }
             )
@@ -77,7 +82,7 @@ struct ShareCardData {
         coverAssetIdentifier = days
             .flatMap(\.sortedItems)
             .flatMap { $0.media.sorted { $0.sortOrder < $1.sortOrder } }
-            .first?
+            .first { $0.kind == .image }?
             .localIdentifier
     }
 
@@ -109,10 +114,11 @@ struct ShareCardData {
                         id: $0.id,
                         time: $0.timeLabel,
                         title: $0.title,
-                        detail: [$0.category.rawValue, $0.address, $0.note]
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " · "),
-                        completed: true
+                        detail: $0.note,
+                        completed: true,
+                        photoAssetIdentifiers: $0.sortedMedia
+                            .filter { $0.kind == .image }
+                            .map(\.localIdentifier)
                     )
                 }
             )
@@ -120,8 +126,16 @@ struct ShareCardData {
         coverAssetIdentifier = days
             .flatMap(\.sortedEntries)
             .flatMap(\.sortedMedia)
-            .first?
+            .first { $0.kind == .image }?
             .localIdentifier
+    }
+
+    var photoAssetIdentifiers: [String] {
+        var seen = Set<String>()
+        return sections
+            .flatMap(\.items)
+            .flatMap(\.photoAssetIdentifiers)
+            .filter { seen.insert($0).inserted }
     }
 }
 
@@ -138,7 +152,7 @@ private enum ShareExportSource {
     var options: [ShareScopeOption] {
         switch self {
         case .trip(let trip):
-            return [ShareScopeOption(id: trip.id, title: "整段行程", subtitle: "\(trip.sortedDays.count) 天 · \(trip.totalCount) 段安排")] +
+            return [ShareScopeOption(id: trip.id, title: "整段旅程", subtitle: "\(trip.sortedDays.count) 天 · \(trip.totalCount) 段安排")] +
                 trip.sortedDays.enumerated().map { index, day in
                     ShareScopeOption(
                         id: day.id,
@@ -216,6 +230,7 @@ struct ShareExportView: View {
     private let source: ShareExportSource
     @State private var selectedScopeID: UUID
     @State private var coverImage: UIImage?
+    @State private var photoImages: [String: UIImage] = [:]
     @State private var renderedImage: UIImage?
     @State private var fileURL: URL?
     @State private var portableFileURL: URL?
@@ -242,7 +257,7 @@ struct ShareExportView: View {
                 VStack(spacing: 18) {
                     scopePicker
 
-                    ShareCard(data: data, coverImage: coverImage)
+                    ShareCard(data: data, coverImage: coverImage, photoImages: photoImages)
                         .frame(width: 360)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
@@ -263,9 +278,12 @@ struct ShareExportView: View {
                         }
                         if includeMedia {
                             Text("将读取相簿原件，文件可能较大。")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text("仅影响下方的可导入文件；精美长图始终展示照片，不包含视频。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        }
                     }
                     .cardSurface()
 
@@ -295,7 +313,8 @@ struct ShareExportView: View {
             .navigationTitle("分享预览")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-            .task(id: "\(selectedScopeID.uuidString)-\(includeMedia)") { await render() }
+            .task(id: selectedScopeID) { await renderLongImage() }
+            .task(id: "\(selectedScopeID.uuidString)-\(includeMedia)") { await preparePortableFile() }
             .alert("分享提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好", role: .cancel) { message = nil }
             } message: { Text(message ?? "") }
@@ -318,9 +337,7 @@ struct ShareExportView: View {
     }
 
     @MainActor
-    private func render() async {
-        renderedImage = nil
-        fileURL = nil
+    private func preparePortableFile() async {
         portableFileURL = nil
         portableMediaCount = 0
         isPreparingPortableFile = true
@@ -345,9 +362,32 @@ struct ShareExportView: View {
             guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
             portableFileURL = generatedURL
         } catch {
+            guard !Task.isCancelled else { return }
             message = "可收藏文件生成失败：\(error.localizedDescription)"
         }
+        guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
         isPreparingPortableFile = false
+    }
+
+    @MainActor
+    private func renderLongImage() async {
+        renderedImage = nil
+        fileURL = nil
+        coverImage = nil
+        photoImages = [:]
+        let currentData = data
+
+        var loadedPhotos: [String: UIImage] = [:]
+        for identifier in currentData.photoAssetIdentifiers {
+            guard !Task.isCancelled else { return }
+            if let image = await PhotoLibraryService.shareImage(
+                identifier: identifier,
+                targetSize: CGSize(width: 600, height: 600)
+            ) {
+                loadedPhotos[identifier] = image
+            }
+        }
+
         let loadedCover: UIImage?
         if let identifier = currentData.coverAssetIdentifier {
             loadedCover = await PhotoLibraryService.shareImage(identifier: identifier)
@@ -356,9 +396,14 @@ struct ShareExportView: View {
         }
         guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
         coverImage = loadedCover
+        photoImages = loadedPhotos
 
         guard
-            let image = ShareCardImageRenderer.render(data: currentData, coverImage: loadedCover),
+            let image = ShareCardImageRenderer.render(
+                data: currentData,
+                coverImage: loadedCover,
+                photoImages: loadedPhotos
+            ),
             let png = image.pngData()
         else {
             message = "分享图生成失败，请稍后重试。"
@@ -380,8 +425,13 @@ struct ShareExportView: View {
 
 @MainActor
 enum ShareCardImageRenderer {
-    static func render(data: ShareCardData, coverImage: UIImage?, scale: CGFloat = 2) -> UIImage? {
-        let content = ShareCard(data: data, coverImage: coverImage)
+    static func render(
+        data: ShareCardData,
+        coverImage: UIImage?,
+        photoImages: [String: UIImage] = [:],
+        scale: CGFloat = 2
+    ) -> UIImage? {
+        let content = ShareCard(data: data, coverImage: coverImage, photoImages: photoImages)
             .frame(width: 360)
             .fixedSize(horizontal: false, vertical: true)
         let renderer = ImageRenderer(content: content)
@@ -393,6 +443,7 @@ enum ShareCardImageRenderer {
 private struct ShareCard: View {
     let data: ShareCardData
     let coverImage: UIImage?
+    let photoImages: [String: UIImage]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -410,15 +461,7 @@ private struct ShareCard: View {
                     endPoint: .bottomTrailing
                 )
                 VStack(alignment: .leading, spacing: 10) {
-                    HStack {
-                        Text(data.eyebrow).font(.caption.bold()).tracking(1.4).foregroundStyle(Color.tripSand)
-                        Spacer()
-                        Text(data.scopeLabel)
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
-                            .background(.white.opacity(0.16), in: Capsule())
-                    }
+                    Text(data.eyebrow).font(.caption.bold()).tracking(1.4).foregroundStyle(Color.tripSand)
                     Spacer()
                     Text(data.title)
                         .font(.system(size: 30, weight: .bold, design: .rounded))
@@ -491,6 +534,10 @@ private struct ShareCard: View {
                                                 .foregroundStyle(.secondary)
                                                 .fixedSize(horizontal: false, vertical: true)
                                         }
+                                        SharePhotoGrid(
+                                            identifiers: item.photoAssetIdentifiers,
+                                            images: photoImages
+                                        )
                                     }
                                 }
                             }
@@ -512,5 +559,38 @@ private struct ShareCard: View {
             .background(Color(uiColor: .systemBackground))
         }
         .environment(\.colorScheme, .light)
+    }
+}
+
+private struct SharePhotoGrid: View {
+    let identifiers: [String]
+    let images: [String: UIImage]
+
+    private var availableIdentifiers: [String] {
+        identifiers.filter { images[$0] != nil }
+    }
+
+    private var columns: [GridItem] {
+        let count = availableIdentifiers.count == 1 ? 1 : min(3, availableIdentifiers.count)
+        return Array(repeating: GridItem(.flexible(), spacing: 5), count: count)
+    }
+
+    var body: some View {
+        if !availableIdentifiers.isEmpty {
+            LazyVGrid(columns: columns, spacing: 5) {
+                ForEach(availableIdentifiers, id: \.self) { identifier in
+                    if let image = images[identifier] {
+                        Image(uiImage: image)
+                            .resizable()
+                            .scaledToFill()
+                            .aspectRatio(availableIdentifiers.count == 1 ? 1.65 : 1, contentMode: .fit)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    }
+                }
+            }
+            .padding(.top, 5)
+        }
     }
 }

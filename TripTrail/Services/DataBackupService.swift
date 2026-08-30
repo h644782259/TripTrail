@@ -10,7 +10,7 @@ struct TripTrailBackupSummary: Equatable {
     let mediaReferenceCount: Int
 
     var restoreDescription: String {
-        "\(tripCount) 段行程、\(storyCount) 篇足迹、\(dayCount) 天记录、\(placeCount) 个地点、\(mediaReferenceCount) 个媒体文件"
+        "\(tripCount) 段旅程、\(storyCount) 篇足迹、\(dayCount) 天记录、\(placeCount) 个地点、\(mediaReferenceCount) 个媒体文件"
     }
 }
 
@@ -173,7 +173,7 @@ enum SharedJourneyKind: String, Codable {
 
     var displayName: String {
         switch self {
-        case .trip: "行程"
+        case .trip: "旅程"
         case .footprint: "足迹"
         }
     }
@@ -236,7 +236,7 @@ enum SharedJourneyError: LocalizedError {
         case .unsupportedVersion(let version):
             "该分享文件版本为 \(version)，当前 App 暂不支持导入。"
         case .invalidContent:
-            "分享文件没有包含可导入的行程或足迹。"
+            "分享文件没有包含可导入的旅程或足迹。"
         case .importFailed(let reason):
             "导入失败，本机原有数据未受影响。\(reason)"
         }
@@ -657,8 +657,6 @@ private struct ItineraryItemRecord: Codable {
     let startTime: Date
     let endTime: Date
     let address: String
-    let latitude: Double?
-    let longitude: Double?
     let note: String
     let transportRaw: String
     let distanceText: String
@@ -677,8 +675,6 @@ private struct ItineraryItemRecord: Codable {
         startTime = item.startTime
         endTime = item.endTime
         address = item.address
-        latitude = item.latitude
-        longitude = item.longitude
         note = item.note
         transportRaw = item.transportRaw
         distanceText = item.distanceText
@@ -701,8 +697,6 @@ private struct ItineraryItemRecord: Codable {
         item.id = id
         item.categoryRaw = category.rawValue
         item.address = address
-        item.latitude = latitude
-        item.longitude = longitude
         item.note = note
         item.transportRaw = transportRaw
         item.distanceText = distanceText
@@ -848,12 +842,17 @@ private struct StoryEntryRecord: Codable {
     let id: UUID
     let title: String
     let categoryRaw: String
+    let startTime: Date?
+    let endTime: Date?
     let timeLabel: String
     let address: String
-    let latitude: Double?
-    let longitude: Double?
+    let supplementalInfo: String?
     let note: String
+    let transportRaw: String?
     let routeInfo: String
+    let cost: Double?
+    let didPrefillSourceMemory: Bool?
+    let sourceMemoryPrefill: String?
     let sortOrder: Int
     let sourceItemID: UUID?
     let storyDayID: UUID?
@@ -868,12 +867,17 @@ private struct StoryEntryRecord: Codable {
         id = entry.id
         title = entry.title
         categoryRaw = entry.categoryRaw
+        startTime = entry.startTime
+        endTime = entry.endTime
         timeLabel = entry.timeLabel
         address = entry.address
-        latitude = entry.latitude
-        longitude = entry.longitude
+        supplementalInfo = entry.supplementalInfo
         note = entry.note
+        transportRaw = entry.transportRaw
         routeInfo = entry.routeInfo
+        cost = entry.cost
+        didPrefillSourceMemory = entry.didPrefillSourceMemory
+        sourceMemoryPrefill = entry.sourceMemoryPrefill
         sortOrder = entry.sortOrder
         sourceItemID = includeSourceLinks ? entry.sourceItemID : nil
         storyDayID = entry.storyDay?.id
@@ -887,12 +891,17 @@ private struct StoryEntryRecord: Codable {
         let entry = StoryEntry(title: title, category: category, sortOrder: sortOrder)
         entry.id = id
         entry.categoryRaw = category.rawValue
+        entry.startTime = startTime
+        entry.endTime = endTime
         entry.timeLabel = timeLabel
         entry.address = address
-        entry.latitude = latitude
-        entry.longitude = longitude
+        entry.supplementalInfo = supplementalInfo ?? ""
         entry.note = note
+        entry.transportRaw = transportRaw ?? TransportMode.car.rawValue
         entry.routeInfo = routeInfo
+        entry.cost = cost ?? 0
+        entry.didPrefillSourceMemory = didPrefillSourceMemory ?? false
+        entry.sourceMemoryPrefill = sourceMemoryPrefill
         entry.sourceItemID = preserveSourceLinks ? sourceItemID : nil
         entry.story = story
         for mediaRecord in media {

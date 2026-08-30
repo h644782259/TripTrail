@@ -4,9 +4,12 @@ import SwiftUI
 struct StoriesView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TravelStory.startDate, order: .reverse) private var stories: [TravelStory]
+    @Query(sort: \Trip.startDate, order: .forward) private var trips: [Trip]
     @State private var storyToEdit: TravelStory?
+    @State private var storyToShare: TravelStory?
     @State private var storyToDelete: TravelStory?
     @State private var creatingStory = false
+    @State private var syncMessage: String?
 
     var body: some View {
         ScrollView {
@@ -15,7 +18,7 @@ struct StoriesView: View {
                     ContentUnavailableView {
                         Label("足迹还空着", systemImage: "book.closed")
                     } description: {
-                        Text("新建足迹，或从行程中收录。")
+                        Text("新建足迹，或从旅程中收录。")
                     } actions: {
                         Button("新建足迹", systemImage: "plus") { creatingStory = true }
                             .buttonStyle(.borderedProminent)
@@ -26,11 +29,19 @@ struct StoriesView: View {
                     ForEach(stories) { story in
                         StoryCard(
                             story: story,
+                            canSync: sourceTrip(for: story) != nil,
+                            onSync: { sync(story) },
                             onEdit: { storyToEdit = story },
+                            onShare: { storyToShare = story },
                             onDelete: { storyToDelete = story }
                         )
                             .contextMenu {
+                                if sourceTrip(for: story) != nil {
+                                    Button("同步足迹", systemImage: "arrow.triangle.2.circlepath") { sync(story) }
+                                }
                                 Button("编辑足迹", systemImage: "pencil") { storyToEdit = story }
+                                Button("分享足迹", systemImage: "square.and.arrow.up") { storyToShare = story }
+                                Divider()
                                 Button("删除足迹", systemImage: "trash", role: .destructive) { storyToDelete = story }
                             }
                     }
@@ -48,6 +59,15 @@ struct StoriesView: View {
         .navigationDestination(for: TravelStory.self) { StoryDetailView(story: $0) }
         .sheet(isPresented: $creatingStory) { NewFootprintView() }
         .sheet(item: $storyToEdit) { StoryEditorView(story: $0) }
+        .sheet(item: $storyToShare) { ShareExportView(story: $0) }
+        .alert("足迹同步", isPresented: Binding(
+            get: { syncMessage != nil },
+            set: { if !$0 { syncMessage = nil } }
+        )) {
+            Button("好", role: .cancel) { syncMessage = nil }
+        } message: {
+            Text(syncMessage ?? "")
+        }
         .alert(
             HierarchyDeletionCopy.storyTitle,
             isPresented: Binding(
@@ -68,6 +88,16 @@ struct StoriesView: View {
         if storyToEdit?.id == story.id { storyToEdit = nil }
         modelContext.delete(story)
         storyToDelete = nil
+    }
+
+    private func sourceTrip(for story: TravelStory) -> Trip? {
+        guard let sourceTripID = story.sourceTripID else { return nil }
+        return trips.first { $0.id == sourceTripID }
+    }
+
+    private func sync(_ story: TravelStory) {
+        guard let trip = sourceTrip(for: story) else { return }
+        syncMessage = StorySyncService.sync(story: story, from: trip, modelContext: modelContext).message
     }
 
     private var header: some View {
@@ -141,7 +171,10 @@ private struct NewFootprintView: View {
 
 private struct StoryCard: View {
     let story: TravelStory
+    let canSync: Bool
+    let onSync: () -> Void
     let onEdit: () -> Void
+    let onShare: () -> Void
     let onDelete: () -> Void
     @State private var mediaPreview: AssetMediaPreviewRequest?
 
@@ -166,18 +199,12 @@ private struct StoryCard: View {
             HStack(alignment: .top) {
                 NavigationLink(value: story) {
                     VStack(alignment: .leading, spacing: 8) {
-                        HStack(alignment: .top) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(story.title).font(.title3.bold()).foregroundStyle(.primary)
-                                if !story.destination.isEmpty {
-                                    Label(story.destination, systemImage: "mappin.and.ellipse")
-                                        .font(.subheadline).foregroundStyle(.secondary)
-                                }
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(story.title).font(.title3.bold()).foregroundStyle(.primary)
+                            if !story.destination.isEmpty {
+                                Label(story.destination, systemImage: "mappin.and.ellipse")
+                                    .font(.subheadline).foregroundStyle(.secondary)
                             }
-                            Spacer()
-                            Text("\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个安排")
-                                .font(.caption.bold())
-                                .foregroundStyle(Color.tripLake)
                         }
                         if !story.summary.isEmpty {
                             Text(story.summary)
@@ -185,9 +212,15 @@ private struct StoryCard: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(3)
                         }
-                        Text("\(story.startDate.compactDayText) — \(story.endDate.compactDayText)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            Text("\(story.startDate.compactDayText) — \(story.endDate.compactDayText)")
+                                .foregroundStyle(.secondary)
+                            Spacer(minLength: 8)
+                            Text("\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个安排")
+                                .fontWeight(.bold)
+                                .foregroundStyle(Color.tripLake)
+                        }
+                        .font(.caption)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())
@@ -196,7 +229,11 @@ private struct StoryCard: View {
                 .accessibilityHint("进入足迹详情")
 
                 Menu {
+                    if canSync {
+                        Button("同步足迹", systemImage: "arrow.triangle.2.circlepath", action: onSync)
+                    }
                     Button("编辑足迹", systemImage: "pencil", action: onEdit)
+                    Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
                     Divider()
                     Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
                 } label: {

@@ -1,0 +1,684 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		03D6499BA24BECFC5DA9BF81 /* triptrail-demo-lake.png in Resources */ = {isa = PBXBuildFile; fileRef = C628644B7C152C95A04262DC /* triptrail-demo-lake.png */; };
+		07CEE1462D3673EA05937681 /* JourneyDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CF97F064A3CA45C61954FE /* JourneyDomain.swift */; };
+		2CD2D59C1F74F4BC1171A31E /* FootprintCreationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8224CD459B1F1F369B3E6C55 /* FootprintCreationService.swift */; };
+		359549B07E89CF34A77CB651 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 19D9C6694875B0587674D68C /* AVKit.framework */; };
+		3A4FE4C1B113FF0F6A6FE6B4 /* ShareExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9B69579A7AA3900D7C09DB /* ShareExportView.swift */; };
+		4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */; };
+		48CD50F05734D58631115DF6 /* ScreenshotItineraryImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */; };
+		4F127EF7F408B2AAA86963C1 /* TextItineraryImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DD69576E4A06805FDBF344E /* TextItineraryImportView.swift */; };
+		5A6CB91A3122ECFC26368810 /* StoryArchiveService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5593766E035479FC9AD9B62B /* StoryArchiveService.swift */; };
+		5BF4B8F978303BE3A87D3A86 /* PortablePackageService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3E7663F72D5795B76E48D7A /* PortablePackageService.swift */; };
+		5C46741176D3E7645FE5493B /* AmapService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C130F7997D27B0DF7C2C6029 /* AmapService.swift */; };
+		60BF127EF9A9503B25EE9600 /* StoryMediaCarousel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D632197719FD441799E3A292 /* StoryMediaCarousel.swift */; };
+		62D35E6EAFA68ABF9D0CD2C8 /* Vision.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 20646DC28A9AE62C452F03CF /* Vision.framework */; };
+		68DE76DD16E0298078CCB7DB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 179AB45A745D3007F05360CE /* Assets.xcassets */; };
+		69413A5A86DCA5E84B6D1537 /* TravelStoryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E22A12FED4342670D429325B /* TravelStoryTests.swift */; };
+		6ED662ED6483F822024CD5DA /* Photos.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 892B99220A479956D1D35546 /* Photos.framework */; };
+		8015610FECA3B55543CCBD6C /* ItemEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4695359D187A433D01F49AC8 /* ItemEditorView.swift */; };
+		825CFC4F010549FDC1B53F75 /* PlaceSearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB8571999BB199650CE66F7C /* PlaceSearchView.swift */; };
+		847FCF5F16E71214F5A6B1C5 /* CurrentTripsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F1A0EF83E8A5CBC256E20C3 /* CurrentTripsView.swift */; };
+		84969E49E616A42FDB6A873E /* ScreenshotItineraryImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BADD36F6B99845B1645B551B /* ScreenshotItineraryImportView.swift */; };
+		8F6EE5B3FB6CF32241E96965 /* PhotosUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EE57628CA9ABF95781B16DAC /* PhotosUI.framework */; };
+		97B33712D75EBB7D5DD07A2E /* MapKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 57956152DE4064F02042A9D5 /* MapKit.framework */; };
+		A9B27CF77F06A7A02105DBF4 /* TwoTapDateRangePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 579B403F4A3664D9BF52C811 /* TwoTapDateRangePicker.swift */; };
+		AA42792EAB868370BBD5E14D /* StoryDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB06BFD99F589D4C8E6AD1E7 /* StoryDetailView.swift */; };
+		AAA29CA2125777E3F084FFE1 /* TripTrailApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CA2F2471000070D5EE980E58 /* TripTrailApp.swift */; };
+		ABC3047704920FC124E9F392 /* SharedJourneyImportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5B39EE1290528F9152F437F /* SharedJourneyImportView.swift */; };
+		ABD819B34864FAEEAFC8C1EF /* TripDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F2BFA0468BB93FF47365D904 /* TripDetailView.swift */; };
+		B8A02B61B78B1C54F18F1DFB /* MediaPresentationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6634C73CB10E4A9523201687 /* MediaPresentationTests.swift */; };
+		B9FC35233CF31334D5BA4E58 /* TripTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B81623CC191BC05FF3E25D7 /* TripTheme.swift */; };
+		BF9BBE183A6236B0877C3C1C /* PhotoLibraryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C1929311E6E9067068037F00 /* PhotoLibraryService.swift */; };
+		C003ABD07AA05EA25D3B71F5 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DED36EA4063EAFC80F693B57 /* SettingsView.swift */; };
+		C23FD5CE5E255C702574C9CE /* DebugSampleDataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = C62586EF64A92B0254D80F17 /* DebugSampleDataService.swift */; };
+		C40B1F8AEA91573525C701E0 /* UnifiedTimeRangePicker.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6640C092A6B70FF947D42209 /* UnifiedTimeRangePicker.swift */; };
+		CB55E1C3DDE2DDD9EDFB1177 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEC4E23E402E8D0212D5DE34 /* RootTabView.swift */; };
+		D1032FC43E2316F0A3B0BD31 /* AmapServiceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E20280323486DC4612F93DA /* AmapServiceTests.swift */; };
+		D61E20736D09EB1DAEA1976E /* ScreenshotItineraryImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E26BB6191A7922EBD5499C3 /* ScreenshotItineraryImportTests.swift */; };
+		D691C397A936473BE286C000 /* triptrail-demo-motion.mov in Resources */ = {isa = PBXBuildFile; fileRef = 30C0B1BD33C42DDCE05696BB /* triptrail-demo-motion.mov */; };
+		DC9DA9D60EACD3EC4E34DCEB /* triptrail-demo-city.png in Resources */ = {isa = PBXBuildFile; fileRef = E7DA2F653EEF108E04CCFAC1 /* triptrail-demo-city.png */; };
+		E06A743A45334F73E357F00A /* DataBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0AF68083D4B0B5E0D157885 /* DataBackupService.swift */; };
+		F167C2007BA75ACB9D37F92F /* PlaceSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CADCD30ED9A0EB8F7032D4 /* PlaceSearchService.swift */; };
+		F50045B01C57421A01183F33 /* StorySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */; };
+		FB5D84315EF5D566E1EFA3D8 /* StoriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7EDFA17443EA9DE5213B5C /* StoriesView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		B472DBE8C804672F448576C1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5E24BCE64AFBE59646146BC7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 932F715CAF237FD4A904D6A1;
+			remoteInfo = TripTrail;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotItineraryImportService.swift; sourceTree = "<group>"; };
+		179AB45A745D3007F05360CE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		19D9C6694875B0587674D68C /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
+		1E26BB6191A7922EBD5499C3 /* ScreenshotItineraryImportTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotItineraryImportTests.swift; sourceTree = "<group>"; };
+		20646DC28A9AE62C452F03CF /* Vision.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Vision.framework; path = System/Library/Frameworks/Vision.framework; sourceTree = SDKROOT; };
+		30C0B1BD33C42DDCE05696BB /* triptrail-demo-motion.mov */ = {isa = PBXFileReference; lastKnownFileType = video.quicktime; path = "triptrail-demo-motion.mov"; sourceTree = "<group>"; };
+		34CF97F064A3CA45C61954FE /* JourneyDomain.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JourneyDomain.swift; sourceTree = "<group>"; };
+		3E20280323486DC4612F93DA /* AmapServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmapServiceTests.swift; sourceTree = "<group>"; };
+		4581B2CC3AADDA1844AB02C3 /* TripTrailTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TripTrailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		4695359D187A433D01F49AC8 /* ItemEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditorView.swift; sourceTree = "<group>"; };
+		4F1A0EF83E8A5CBC256E20C3 /* CurrentTripsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentTripsView.swift; sourceTree = "<group>"; };
+		5593766E035479FC9AD9B62B /* StoryArchiveService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryArchiveService.swift; sourceTree = "<group>"; };
+		57956152DE4064F02042A9D5 /* MapKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MapKit.framework; path = System/Library/Frameworks/MapKit.framework; sourceTree = SDKROOT; };
+		579B403F4A3664D9BF52C811 /* TwoTapDateRangePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TwoTapDateRangePicker.swift; sourceTree = "<group>"; };
+		6634C73CB10E4A9523201687 /* MediaPresentationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPresentationTests.swift; sourceTree = "<group>"; };
+		6640C092A6B70FF947D42209 /* UnifiedTimeRangePicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedTimeRangePicker.swift; sourceTree = "<group>"; };
+		6B81623CC191BC05FF3E25D7 /* TripTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripTheme.swift; sourceTree = "<group>"; };
+		6DD69576E4A06805FDBF344E /* TextItineraryImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextItineraryImportView.swift; sourceTree = "<group>"; };
+		707D9917E7B4FAF29E55426E /* TripTrail.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TripTrail.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		8224CD459B1F1F369B3E6C55 /* FootprintCreationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintCreationService.swift; sourceTree = "<group>"; };
+		892B99220A479956D1D35546 /* Photos.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Photos.framework; path = System/Library/Frameworks/Photos.framework; sourceTree = SDKROOT; };
+		99CADCD30ED9A0EB8F7032D4 /* PlaceSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSearchService.swift; sourceTree = "<group>"; };
+		9D7EDFA17443EA9DE5213B5C /* StoriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoriesView.swift; sourceTree = "<group>"; };
+		A3615EFC09F8CA8E95684470 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelModels.swift; sourceTree = "<group>"; };
+		AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySyncService.swift; sourceTree = "<group>"; };
+		B3E7663F72D5795B76E48D7A /* PortablePackageService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PortablePackageService.swift; sourceTree = "<group>"; };
+		BADD36F6B99845B1645B551B /* ScreenshotItineraryImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotItineraryImportView.swift; sourceTree = "<group>"; };
+		C130F7997D27B0DF7C2C6029 /* AmapService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmapService.swift; sourceTree = "<group>"; };
+		C1929311E6E9067068037F00 /* PhotoLibraryService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoLibraryService.swift; sourceTree = "<group>"; };
+		C62586EF64A92B0254D80F17 /* DebugSampleDataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DebugSampleDataService.swift; sourceTree = "<group>"; };
+		C628644B7C152C95A04262DC /* triptrail-demo-lake.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "triptrail-demo-lake.png"; sourceTree = "<group>"; };
+		CA2F2471000070D5EE980E58 /* TripTrailApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripTrailApp.swift; sourceTree = "<group>"; };
+		D5B39EE1290528F9152F437F /* SharedJourneyImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SharedJourneyImportView.swift; sourceTree = "<group>"; };
+		D632197719FD441799E3A292 /* StoryMediaCarousel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryMediaCarousel.swift; sourceTree = "<group>"; };
+		DED36EA4063EAFC80F693B57 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		DF9B69579A7AA3900D7C09DB /* ShareExportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareExportView.swift; sourceTree = "<group>"; };
+		E22A12FED4342670D429325B /* TravelStoryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelStoryTests.swift; sourceTree = "<group>"; };
+		E7DA2F653EEF108E04CCFAC1 /* triptrail-demo-city.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; path = "triptrail-demo-city.png"; sourceTree = "<group>"; };
+		EE57628CA9ABF95781B16DAC /* PhotosUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = PhotosUI.framework; path = System/Library/Frameworks/PhotosUI.framework; sourceTree = SDKROOT; };
+		EEC4E23E402E8D0212D5DE34 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		F0AF68083D4B0B5E0D157885 /* DataBackupService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataBackupService.swift; sourceTree = "<group>"; };
+		F2BFA0468BB93FF47365D904 /* TripDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripDetailView.swift; sourceTree = "<group>"; };
+		FB06BFD99F589D4C8E6AD1E7 /* StoryDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoryDetailView.swift; sourceTree = "<group>"; };
+		FB8571999BB199650CE66F7C /* PlaceSearchView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSearchView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EBD9E1CFA93DAD6621C3068E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6ED662ED6483F822024CD5DA /* Photos.framework in Frameworks */,
+				8F6EE5B3FB6CF32241E96965 /* PhotosUI.framework in Frameworks */,
+				359549B07E89CF34A77CB651 /* AVKit.framework in Frameworks */,
+				97B33712D75EBB7D5DD07A2E /* MapKit.framework in Frameworks */,
+				62D35E6EAFA68ABF9D0CD2C8 /* Vision.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		03D60FC124B29E3213BAFE0B /* Stories */ = {
+			isa = PBXGroup;
+			children = (
+				9D7EDFA17443EA9DE5213B5C /* StoriesView.swift */,
+				FB06BFD99F589D4C8E6AD1E7 /* StoryDetailView.swift */,
+				D632197719FD441799E3A292 /* StoryMediaCarousel.swift */,
+			);
+			path = Stories;
+			sourceTree = "<group>";
+		};
+		1C6CE97819B166461DD01C11 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				6B81623CC191BC05FF3E25D7 /* TripTheme.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
+		2F1B77D2742AA229876A8A0F /* TripTrailTests */ = {
+			isa = PBXGroup;
+			children = (
+				3E20280323486DC4612F93DA /* AmapServiceTests.swift */,
+				6634C73CB10E4A9523201687 /* MediaPresentationTests.swift */,
+				1E26BB6191A7922EBD5499C3 /* ScreenshotItineraryImportTests.swift */,
+				E22A12FED4342670D429325B /* TravelStoryTests.swift */,
+			);
+			path = TripTrailTests;
+			sourceTree = "<group>";
+		};
+		42C679F8AF91867F79C53CB6 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				19D9C6694875B0587674D68C /* AVKit.framework */,
+				57956152DE4064F02042A9D5 /* MapKit.framework */,
+				892B99220A479956D1D35546 /* Photos.framework */,
+				EE57628CA9ABF95781B16DAC /* PhotosUI.framework */,
+				20646DC28A9AE62C452F03CF /* Vision.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		4D1D9AB02D4A42DE94A11E35 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				C130F7997D27B0DF7C2C6029 /* AmapService.swift */,
+				F0AF68083D4B0B5E0D157885 /* DataBackupService.swift */,
+				C62586EF64A92B0254D80F17 /* DebugSampleDataService.swift */,
+				8224CD459B1F1F369B3E6C55 /* FootprintCreationService.swift */,
+				C1929311E6E9067068037F00 /* PhotoLibraryService.swift */,
+				99CADCD30ED9A0EB8F7032D4 /* PlaceSearchService.swift */,
+				B3E7663F72D5795B76E48D7A /* PortablePackageService.swift */,
+				04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */,
+				5593766E035479FC9AD9B62B /* StoryArchiveService.swift */,
+				AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		63C00230BA282A76D2D770A9 /* DemoAssets */ = {
+			isa = PBXGroup;
+			children = (
+				E7DA2F653EEF108E04CCFAC1 /* triptrail-demo-city.png */,
+				C628644B7C152C95A04262DC /* triptrail-demo-lake.png */,
+				30C0B1BD33C42DDCE05696BB /* triptrail-demo-motion.mov */,
+			);
+			path = DemoAssets;
+			sourceTree = "<group>";
+		};
+		6B72D4B4C4C514D4D6FF7453 = {
+			isa = PBXGroup;
+			children = (
+				77DAA278DB4C2462A07D8E76 /* TripTrail */,
+				2F1B77D2742AA229876A8A0F /* TripTrailTests */,
+				42C679F8AF91867F79C53CB6 /* Frameworks */,
+				BB294BFD074E1CEAE7FFFB12 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		72FAAD69E4187D73CA942C5C /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				179AB45A745D3007F05360CE /* Assets.xcassets */,
+				A3615EFC09F8CA8E95684470 /* Info.plist */,
+				63C00230BA282A76D2D770A9 /* DemoAssets */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
+		77DAA278DB4C2462A07D8E76 /* TripTrail */ = {
+			isa = PBXGroup;
+			children = (
+				E2C43A27333333A1523B1CA2 /* App */,
+				AD3025DA33891E43D69FC28B /* Models */,
+				72FAAD69E4187D73CA942C5C /* Resources */,
+				4D1D9AB02D4A42DE94A11E35 /* Services */,
+				1C6CE97819B166461DD01C11 /* Theme */,
+				7F42130848CA82B37959132E /* Views */,
+			);
+			path = TripTrail;
+			sourceTree = "<group>";
+		};
+		7F42130848CA82B37959132E /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				579B403F4A3664D9BF52C811 /* TwoTapDateRangePicker.swift */,
+				6640C092A6B70FF947D42209 /* UnifiedTimeRangePicker.swift */,
+				9FADE30A07B8EDB6CA989AAE /* Current */,
+				841418E69AA03A0B0E961BFF /* Settings */,
+				95FE9ED8B77C3D1DC2074C3C /* Share */,
+				03D60FC124B29E3213BAFE0B /* Stories */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		841418E69AA03A0B0E961BFF /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				DED36EA4063EAFC80F693B57 /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+		95FE9ED8B77C3D1DC2074C3C /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				D5B39EE1290528F9152F437F /* SharedJourneyImportView.swift */,
+				DF9B69579A7AA3900D7C09DB /* ShareExportView.swift */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
+		9FADE30A07B8EDB6CA989AAE /* Current */ = {
+			isa = PBXGroup;
+			children = (
+				4F1A0EF83E8A5CBC256E20C3 /* CurrentTripsView.swift */,
+				4695359D187A433D01F49AC8 /* ItemEditorView.swift */,
+				FB8571999BB199650CE66F7C /* PlaceSearchView.swift */,
+				BADD36F6B99845B1645B551B /* ScreenshotItineraryImportView.swift */,
+				6DD69576E4A06805FDBF344E /* TextItineraryImportView.swift */,
+				F2BFA0468BB93FF47365D904 /* TripDetailView.swift */,
+			);
+			path = Current;
+			sourceTree = "<group>";
+		};
+		AD3025DA33891E43D69FC28B /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				34CF97F064A3CA45C61954FE /* JourneyDomain.swift */,
+				A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		BB294BFD074E1CEAE7FFFB12 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				707D9917E7B4FAF29E55426E /* TripTrail.app */,
+				4581B2CC3AADDA1844AB02C3 /* TripTrailTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		E2C43A27333333A1523B1CA2 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				EEC4E23E402E8D0212D5DE34 /* RootTabView.swift */,
+				CA2F2471000070D5EE980E58 /* TripTrailApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		932F715CAF237FD4A904D6A1 /* TripTrail */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 76E7CBFA9EF97895763DE78F /* Build configuration list for PBXNativeTarget "TripTrail" */;
+			buildPhases = (
+				131A943029344075F0A72CC3 /* Sources */,
+				D1E91237FDE605740823F2B5 /* Resources */,
+				EBD9E1CFA93DAD6621C3068E /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TripTrail;
+			packageProductDependencies = (
+			);
+			productName = TripTrail;
+			productReference = 707D9917E7B4FAF29E55426E /* TripTrail.app */;
+			productType = "com.apple.product-type.application";
+		};
+		99916C960D6A5437855CC367 /* TripTrailTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BEEA58E5E95D8A8CECD92C9A /* Build configuration list for PBXNativeTarget "TripTrailTests" */;
+			buildPhases = (
+				4D9E3460B788002F7264B42B /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				852C6D9921C086C45EE60D8D /* PBXTargetDependency */,
+			);
+			name = TripTrailTests;
+			packageProductDependencies = (
+			);
+			productName = TripTrailTests;
+			productReference = 4581B2CC3AADDA1844AB02C3 /* TripTrailTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5E24BCE64AFBE59646146BC7 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					932F715CAF237FD4A904D6A1 = {
+						DevelopmentTeam = "";
+						ProvisioningStyle = Automatic;
+					};
+					99916C960D6A5437855CC367 = {
+						DevelopmentTeam = "";
+					};
+				};
+			};
+			buildConfigurationList = BDA54D6F65E099AE177E157C /* Build configuration list for PBXProject "TripTrail" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 6B72D4B4C4C514D4D6FF7453;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = BB294BFD074E1CEAE7FFFB12 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				932F715CAF237FD4A904D6A1 /* TripTrail */,
+				99916C960D6A5437855CC367 /* TripTrailTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		D1E91237FDE605740823F2B5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				68DE76DD16E0298078CCB7DB /* Assets.xcassets in Resources */,
+				DC9DA9D60EACD3EC4E34DCEB /* triptrail-demo-city.png in Resources */,
+				03D6499BA24BECFC5DA9BF81 /* triptrail-demo-lake.png in Resources */,
+				D691C397A936473BE286C000 /* triptrail-demo-motion.mov in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		131A943029344075F0A72CC3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C46741176D3E7645FE5493B /* AmapService.swift in Sources */,
+				847FCF5F16E71214F5A6B1C5 /* CurrentTripsView.swift in Sources */,
+				E06A743A45334F73E357F00A /* DataBackupService.swift in Sources */,
+				C23FD5CE5E255C702574C9CE /* DebugSampleDataService.swift in Sources */,
+				2CD2D59C1F74F4BC1171A31E /* FootprintCreationService.swift in Sources */,
+				8015610FECA3B55543CCBD6C /* ItemEditorView.swift in Sources */,
+				07CEE1462D3673EA05937681 /* JourneyDomain.swift in Sources */,
+				BF9BBE183A6236B0877C3C1C /* PhotoLibraryService.swift in Sources */,
+				F167C2007BA75ACB9D37F92F /* PlaceSearchService.swift in Sources */,
+				825CFC4F010549FDC1B53F75 /* PlaceSearchView.swift in Sources */,
+				5BF4B8F978303BE3A87D3A86 /* PortablePackageService.swift in Sources */,
+				CB55E1C3DDE2DDD9EDFB1177 /* RootTabView.swift in Sources */,
+				48CD50F05734D58631115DF6 /* ScreenshotItineraryImportService.swift in Sources */,
+				84969E49E616A42FDB6A873E /* ScreenshotItineraryImportView.swift in Sources */,
+				C003ABD07AA05EA25D3B71F5 /* SettingsView.swift in Sources */,
+				3A4FE4C1B113FF0F6A6FE6B4 /* ShareExportView.swift in Sources */,
+				ABC3047704920FC124E9F392 /* SharedJourneyImportView.swift in Sources */,
+				FB5D84315EF5D566E1EFA3D8 /* StoriesView.swift in Sources */,
+				5A6CB91A3122ECFC26368810 /* StoryArchiveService.swift in Sources */,
+				AA42792EAB868370BBD5E14D /* StoryDetailView.swift in Sources */,
+				60BF127EF9A9503B25EE9600 /* StoryMediaCarousel.swift in Sources */,
+				F50045B01C57421A01183F33 /* StorySyncService.swift in Sources */,
+				4F127EF7F408B2AAA86963C1 /* TextItineraryImportView.swift in Sources */,
+				4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */,
+				ABD819B34864FAEEAFC8C1EF /* TripDetailView.swift in Sources */,
+				B9FC35233CF31334D5BA4E58 /* TripTheme.swift in Sources */,
+				AAA29CA2125777E3F084FFE1 /* TripTrailApp.swift in Sources */,
+				A9B27CF77F06A7A02105DBF4 /* TwoTapDateRangePicker.swift in Sources */,
+				C40B1F8AEA91573525C701E0 /* UnifiedTimeRangePicker.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		4D9E3460B788002F7264B42B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D1032FC43E2316F0A3B0BD31 /* AmapServiceTests.swift in Sources */,
+				B8A02B61B78B1C54F18F1DFB /* MediaPresentationTests.swift in Sources */,
+				D61E20736D09EB1DAEA1976E /* ScreenshotItineraryImportTests.swift in Sources */,
+				69413A5A86DCA5E84B6D1537 /* TravelStoryTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		852C6D9921C086C45EE60D8D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 932F715CAF237FD4A904D6A1 /* TripTrail */;
+			targetProxy = B472DBE8C804672F448576C1 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		5969A7B60385B079AEECE7A7 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = "";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		97E6C1314970F6991FAD6030 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.personal.TripTrailTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TripTrail.app/TripTrail";
+			};
+			name = Release;
+		};
+		A3B28D994142AAC6976F123A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.personal.TripTrailTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/TripTrail.app/TripTrail";
+			};
+			name = Debug;
+		};
+		A6488BA8A7D7F24ACFB28813 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = "";
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		E140D4DB36FB5B3EEB17F134 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = TripTrail/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.personal.TripTrail;
+				PRODUCT_MODULE_NAME = TripTrail;
+				PRODUCT_NAME = TripTrail;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		E8894A20112EC7E771D670DC /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				INFOPLIST_FILE = TripTrail/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = com.personal.TripTrail;
+				PRODUCT_MODULE_NAME = TripTrail;
+				PRODUCT_NAME = TripTrail;
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		76E7CBFA9EF97895763DE78F /* Build configuration list for PBXNativeTarget "TripTrail" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E140D4DB36FB5B3EEB17F134 /* Debug */,
+				E8894A20112EC7E771D670DC /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BDA54D6F65E099AE177E157C /* Build configuration list for PBXProject "TripTrail" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A6488BA8A7D7F24ACFB28813 /* Debug */,
+				5969A7B60385B079AEECE7A7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BEEA58E5E95D8A8CECD92C9A /* Build configuration list for PBXNativeTarget "TripTrailTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A3B28D994142AAC6976F123A /* Debug */,
+				97E6C1314970F6991FAD6030 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 5E24BCE64AFBE59646146BC7 /* Project object */;
+}

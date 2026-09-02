@@ -3,6 +3,24 @@ import Security
 
 enum EnhancedRecognitionSettings {
     static let enabledDefaultsKey = "enhancedItineraryRecognitionEnabled"
+    static let providerDefaultsKey = "enhancedItineraryRecognitionProvider"
+
+    enum Provider: String, CaseIterable, Identifiable {
+        case zhipu
+        case deepseek
+        var id: String { rawValue }
+        var displayName: String { self == .zhipu ? "智谱" : "DeepSeek" }
+        var apiKeyLabel: String { "\(displayName) API Key" }
+    }
+
+    static var provider: Provider {
+        get { Provider(rawValue: UserDefaults.standard.string(forKey: providerDefaultsKey) ?? "") ?? .zhipu }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: providerDefaultsKey) }
+    }
+
+    static var activeAPIKey: String? {
+        provider == .zhipu ? ZhipuAPIKeyStore.load() : DeepSeekAPIKeyStore.load()
+    }
 
     static var isEnabled: Bool {
         get {
@@ -12,7 +30,7 @@ enum EnhancedRecognitionSettings {
                 : defaults.bool(forKey: enabledDefaultsKey)
             return resolvedIsEnabled(
                 storedPreference: storedPreference,
-                hasAPIKey: ZhipuAPIKeyStore.hasAPIKey
+                hasAPIKey: activeAPIKey?.isEmpty == false
             )
         }
         set { UserDefaults.standard.set(newValue, forKey: enabledDefaultsKey) }
@@ -153,5 +171,66 @@ enum ZhipuAPIKeyStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account
         ]
+    }
+}
+
+enum DeepSeekAPIKeyStore {
+    private static let service = "com.personal.TripTrail.deepseek"
+    private static let account = "api-key"
+    static var hasAPIKey: Bool { load()?.isEmpty == false }
+    #if targetEnvironment(simulator)
+    private static let fallbackKey = "deepseekAPIKey.simulatorFallback"
+    #endif
+    static func load() -> String? {
+        let value = RecognitionAPIKeyStore.load(service: service, account: account)
+        #if targetEnvironment(simulator)
+        return value ?? UserDefaults.standard.string(forKey: fallbackKey)
+        #else
+        return value
+        #endif
+    }
+    static func save(_ key: String) throws {
+        do { try RecognitionAPIKeyStore.save(key, service: service, account: account, error: { .keychain($0) }); clearFallback() }
+        catch ZhipuAPIKeyStoreError.keychain(let status) where status == errSecMissingEntitlement {
+            #if targetEnvironment(simulator)
+            UserDefaults.standard.set(key, forKey: fallbackKey)
+            #else
+            throw ZhipuAPIKeyStoreError.keychain(status)
+            #endif
+        }
+    }
+    static func delete() throws { try RecognitionAPIKeyStore.delete(service: service, account: account, error: { .keychain($0) }); clearFallback() }
+    private static func clearFallback() {
+        #if targetEnvironment(simulator)
+        UserDefaults.standard.removeObject(forKey: fallbackKey)
+        #endif
+    }
+}
+
+private enum RecognitionAPIKeyStore {
+    static func load(service: String, account: String) -> String? {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ] as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+    static func save(_ key: String, service: String, account: String, error: (OSStatus) -> ZhipuAPIKeyStoreError) throws {
+        let data = Data(key.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account]
+        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if update == errSecSuccess { return }
+        guard update == errSecItemNotFound else { throw error(update) }
+        let add = SecItemAdd(query.merging([kSecValueData as String: data, kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]) { _, new in new } as CFDictionary, nil)
+        guard add == errSecSuccess else { throw error(add) }
+    }
+    static func delete(service: String, account: String, error: (OSStatus) -> ZhipuAPIKeyStoreError) throws {
+        let status = SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service, kSecAttrAccount as String: account] as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { throw error(status) }
     }
 }

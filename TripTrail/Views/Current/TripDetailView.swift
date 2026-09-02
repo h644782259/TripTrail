@@ -161,6 +161,9 @@ struct TripDetailView: View {
             matching: .images,
             photoLibrary: .shared()
         )
+        .overlay {
+            screenshotRecognitionOverlay
+        }
         .alert("地点提示", isPresented: Binding(get: { placeMessage != nil }, set: { if !$0 { placeMessage = nil } })) {
             Button("知道了", role: .cancel) { placeMessage = nil }
         } message: {
@@ -455,10 +458,55 @@ struct TripDetailView: View {
                 sourceAssetIdentifiers: assetIdentifiers
             )
             retryScreenshotPickerItems = recognizedDraft.recognitionNotice == nil ? [] : items
-            screenshotDraft = recognizedDraft
+            presentScreenshotDraft(recognizedDraft)
         } catch {
             retryScreenshotPickerItems = items
-            screenshotImportMessage = error.localizedDescription
+            presentScreenshotImportMessage(error.localizedDescription)
+        }
+    }
+
+    private var screenshotRecognitionOverlay: some View {
+        Group {
+            if isReadingScreenshot {
+                ZStack {
+                    Color.black.opacity(0.08)
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("正在识别截图…")
+                            .font(.headline)
+                            .foregroundStyle(Color.tripInk)
+                        Text("识别完成后会先展示结果，确认后才会保存。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+                }
+                .allowsHitTesting(true)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func presentScreenshotDraft(_ draft: ItineraryJourneyDraft) {
+        Task { @MainActor in
+            // PhotosPicker is itself a sheet. Wait for it to finish dismissing
+            // before presenting the editable recognition result sheet.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            screenshotDraft = draft
+        }
+    }
+
+    private func presentScreenshotImportMessage(_ message: String) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            screenshotImportMessage = message
         }
     }
 

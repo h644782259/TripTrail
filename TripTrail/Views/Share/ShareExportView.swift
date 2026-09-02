@@ -541,11 +541,13 @@ private struct ShareCard: View {
                 ForEach(Array(data.sections.enumerated()), id: \.element.id) { sectionIndex, section in
                     VStack(alignment: .leading, spacing: 14) {
                         HStack(alignment: .center, spacing: 11) {
-                            Text("D\(sectionIndex + 1)")
-                                .font(.caption.bold())
-                                .foregroundStyle(.white)
-                                .frame(width: 36, height: 36)
-                                .background(Color.tripLake, in: Circle())
+                            if data.sections.count > 1 {
+                                Text("D\(sectionIndex + 1)")
+                                    .font(.caption.bold())
+                                    .foregroundStyle(.white)
+                                    .frame(width: 36, height: 36)
+                                    .background(Color.tripLake, in: Circle())
+                            }
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(section.title)
                                     .font(.headline.bold())

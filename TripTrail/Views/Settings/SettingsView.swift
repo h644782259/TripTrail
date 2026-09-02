@@ -20,6 +20,8 @@ struct SettingsView: View {
     @State private var isConfirmingSharedJourney = false
     @State private var showsCreatorReward = false
     @State private var zhipuAPIKeyInput = ZhipuAPIKeyStore.load() ?? ""
+    @State private var deepSeekAPIKeyInput = DeepSeekAPIKeyStore.load() ?? ""
+    @AppStorage(EnhancedRecognitionSettings.providerDefaultsKey) private var recognitionProvider = EnhancedRecognitionSettings.Provider.zhipu.rawValue
     @State private var isZhipuAPIKeyVisible = false
     @State private var hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
     @State private var isZhipuAPIKeyDirty = false
@@ -51,12 +53,21 @@ struct SettingsView: View {
                 )
 
                 if enhancedRecognitionEnabled {
+                    Picker("模型", selection: $recognitionProvider) {
+                        ForEach(EnhancedRecognitionSettings.Provider.allCases) { provider in
+                            Text(provider.displayName).tag(provider.rawValue)
+                        }
+                    }
+                    .onChange(of: recognitionProvider) { _, _ in
+                        finishEditingAPIKeys()
+                        hasZhipuAPIKey = !activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    }
                     HStack(spacing: 10) {
                         Group {
                             if isZhipuAPIKeyVisible {
-                                TextField("智谱 API Key", text: $zhipuAPIKeyInput)
+                                TextField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding)
                             } else {
-                                SecureField("智谱 API Key", text: $zhipuAPIKeyInput)
+                                SecureField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding)
                             }
                         }
                         .textInputAutocapitalization(.never)
@@ -135,7 +146,7 @@ struct SettingsView: View {
         }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
-            hasZhipuAPIKey = !zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            hasZhipuAPIKey = !activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             if !hasZhipuAPIKey {
                 enhancedRecognitionEnabled = false
             }
@@ -219,8 +230,8 @@ struct SettingsView: View {
         apiKeySaveTask = Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled else { return }
-            guard candidate == zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            if persistZhipuAPIKey(candidate) {
+            guard candidate == activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            if persistAPIKey(candidate) {
                 isZhipuAPIKeyDirty = false
                 apiKeySaveTask = nil
             }
@@ -243,6 +254,23 @@ struct SettingsView: View {
         }
     }
 
+    private var activeProvider: EnhancedRecognitionSettings.Provider { EnhancedRecognitionSettings.Provider(rawValue: recognitionProvider) ?? .zhipu }
+    private var activeAPIKeyInput: String { activeProvider == .zhipu ? zhipuAPIKeyInput : deepSeekAPIKeyInput }
+    private var activeAPIKeyBinding: Binding<String> {
+        Binding(get: { activeAPIKeyInput }, set: { value in
+            if activeProvider == .zhipu { zhipuAPIKeyInput = value } else { deepSeekAPIKeyInput = value }
+            handleAPIKeyInputChange(value)
+        })
+    }
+    private func persistAPIKey(_ key: String) -> Bool {
+        do {
+            if activeProvider == .zhipu { try key.isEmpty ? ZhipuAPIKeyStore.delete() : ZhipuAPIKeyStore.save(key) }
+            else { try key.isEmpty ? DeepSeekAPIKeyStore.delete() : DeepSeekAPIKeyStore.save(key) }
+            return true
+        } catch { message = error.localizedDescription; return false }
+    }
+    private func finishEditingAPIKeys() { flushPendingZhipuAPIKeyChange() }
+
     private func finishEditingZhipuAPIKey() {
         let candidate = flushPendingZhipuAPIKeyChange()
         if candidate.isEmpty {
@@ -254,9 +282,9 @@ struct SettingsView: View {
     private func flushPendingZhipuAPIKeyChange() -> String {
         apiKeySaveTask?.cancel()
         apiKeySaveTask = nil
-        let candidate = zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
         hasZhipuAPIKey = !candidate.isEmpty
-        if isZhipuAPIKeyDirty, persistZhipuAPIKey(candidate) {
+        if isZhipuAPIKeyDirty, persistAPIKey(candidate) {
             isZhipuAPIKeyDirty = false
         }
         return candidate

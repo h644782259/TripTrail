@@ -102,6 +102,9 @@ struct CurrentTripsView: View {
             matching: .images,
             photoLibrary: .shared()
         )
+        .overlay {
+            wholeTripRecognitionOverlay
+        }
         .alert(
             HierarchyDeletionCopy.tripTitle,
             isPresented: Binding(
@@ -361,10 +364,55 @@ struct CurrentTripsView: View {
                 sourceAssetIdentifiers: assetIdentifiers
             )
             wholeTripRetryPickerItems = draft.recognitionNotice == nil ? [] : items
-            wholeTripDraftRequest = WholeTripDraftRequest(trip: trip, draft: draft)
+            presentWholeTripDraft(WholeTripDraftRequest(trip: trip, draft: draft))
         } catch {
             wholeTripRetryPickerItems = items
-            wholeTripImportMessage = error.localizedDescription
+            presentWholeTripImportMessage(error.localizedDescription)
+        }
+    }
+
+    private var wholeTripRecognitionOverlay: some View {
+        Group {
+            if isReadingWholeTripScreenshots {
+                ZStack {
+                    Color.black.opacity(0.08)
+                        .ignoresSafeArea()
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .controlSize(.large)
+                        Text("正在识别截图…")
+                            .font(.headline)
+                            .foregroundStyle(Color.tripInk)
+                        Text("识别完成后会先展示结果，确认后才会保存。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(24)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .shadow(color: .black.opacity(0.12), radius: 18, y: 8)
+                }
+                .allowsHitTesting(true)
+                .transition(.opacity)
+            }
+        }
+    }
+
+    private func presentWholeTripDraft(_ request: WholeTripDraftRequest) {
+        Task { @MainActor in
+            // PhotosPicker is itself a sheet. Let its dismissal animation finish
+            // before presenting the editable recognition result sheet.
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            wholeTripDraftRequest = request
+        }
+    }
+
+    private func presentWholeTripImportMessage(_ message: String) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            wholeTripImportMessage = message
         }
     }
 

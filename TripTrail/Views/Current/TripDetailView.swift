@@ -5,44 +5,54 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct TripDetailView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var trip: Trip
-    @State private var editingTrip = false
     @State private var dayForNewItem: TripDay?
+    @State private var dayForTextItemImport: TripDay?
+    @State private var dayForImageItemImport: TripDay?
+    @State private var dayForFavoriteImport: TripDay?
     @State private var itemToEdit: ItineraryItem?
     @State private var dayToEdit: TripDay?
     @State private var dayToDelete: TripDay?
     @State private var itemToDelete: ItineraryItem?
-    @State private var isConfirmingTripDeletion = false
-    @State private var showsArchive = false
     @State private var shareRequest: TripShareRequest?
+    @State private var routePlanningRequest: ItineraryRoutePlanningRequest?
     @State private var placeMessage: String?
     @State private var navigationRequest: ItineraryNavigationRequest?
     @State private var timeReviewRequest: ItineraryTimeReviewRequest?
     @State private var showsScreenshotPicker = false
     @State private var screenshotPickerItems: [PhotosPickerItem] = []
+    @State private var retryScreenshotPickerItems: [PhotosPickerItem] = []
     @State private var screenshotDraft: ItineraryJourneyDraft?
     @State private var showsTextImport = false
     @State private var screenshotImportMessage: String?
+    @State private var offersPhotoSettingsForScreenshot = false
     @State private var isReadingScreenshot = false
-    @State private var dayExpansionOverrides: [UUID: Bool] = [:]
+    @State private var selectedDayID: UUID?
     @State private var itineraryDrag: ItineraryDragState?
     @State private var itineraryDragRevision = 0
     @State private var dayDrag: TripDayDragState?
+    @State private var dayDragRevision = 0
+    @State private var dragCleanupTask: Task<Void, Never>?
     @State private var progressReferenceDate = Date()
     private let completionTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     var body: some View {
+        lifecycleContent
+    }
+
+    private var mainContent: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
-                summaryCard
-                quickActions
+                selectedDayHeader
                 itineraryDays
-                addDayButton
             }
             .padding()
+            .padding(.bottom, 84)
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            dayNavigator
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color.tripCanvas)
@@ -51,28 +61,86 @@ struct TripDetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
-                    Button("编辑旅程", systemImage: "pencil") { editingTrip = true }
-                    Button("收进足迹", systemImage: "book.closed") { archiveWholeTrip() }
-                    Button("分享旅程", systemImage: "square.and.arrow.up") {
-                        shareRequest = TripShareRequest(scopeID: trip.id)
-                    }
-                    Divider()
-                    Button("删除旅程", systemImage: "trash", role: .destructive) {
-                        isConfirmingTripDeletion = true
+                    if let selection = selectedDaySelection {
+                        let day = selection.day
+                        Button("编辑当天", systemImage: "pencil") {
+                            dayToEdit = day
+                        }
+                        Menu("录入当天", systemImage: "calendar.badge.plus") {
+                            Button("文字录入", systemImage: "text.badge.plus") {
+                                showsTextImport = true
+                            }
+                            Button("图片录入", systemImage: "photo.stack") {
+                                requestScreenshotSelection()
+                            }
+                        }
+                        .disabled(isReadingScreenshot)
+                        Button("分享当天", systemImage: "square.and.arrow.up") {
+                            shareRequest = TripShareRequest(scopeID: day.id)
+                        }
+                        Button("规划当天路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                            requestRoutePlanning(
+                                for: [day],
+                                title: "\(displayTitle(for: day))路线"
+                            )
+                        }
+                        Divider()
+                        Button("删除当天", systemImage: "trash", role: .destructive) {
+                            dayToDelete = day
+                        }
                     }
                 } label: { Image(systemName: "ellipsis.circle") }
+                .accessibilityLabel("当天更多操作")
             }
         }
-        .sheet(isPresented: $editingTrip) { TripEditorView(trip: trip) }
+    }
+
+    private var sheetContent: some View {
+        mainContent
         .sheet(item: $dayForNewItem) { ItemEditorView(day: $0) }
+        .sheet(item: $dayForTextItemImport) {
+            ItemEditorView(
+                day: $0,
+                startsWithSmartImport: true,
+                initialSmartImportMode: .text
+            )
+        }
+        .sheet(item: $dayForImageItemImport) {
+            ItemEditorView(
+                day: $0,
+                startsWithSmartImport: true,
+                initialSmartImportMode: .image
+            )
+        }
+        .sheet(item: $dayForFavoriteImport) { FavoriteImportSelectionView(day: $0) }
         .sheet(item: $itemToEdit) { ItemEditorView(day: $0.day, item: $0) }
-        .sheet(item: $dayToEdit, onDismiss: { completeElapsedItems() }) { DayEditorView(day: $0) }
+        .sheet(item: $dayToEdit, onDismiss: {
+            JourneyHierarchyService.normalizeTripDaySchedule(trip)
+            completeElapsedItems()
+        }) { DayEditorView(day: $0) }
         .sheet(item: $timeReviewRequest) { ItineraryTimeReviewView(request: $0) }
-        .sheet(item: $screenshotDraft) { ScreenshotItineraryImportView(trip: trip, draft: $0) }
-        .sheet(isPresented: $showsTextImport) { TextItineraryImportView(trip: trip) }
-        .sheet(isPresented: $showsArchive) { ArchiveTripView(trip: trip) }
+        .sheet(item: $screenshotDraft) { draft in
+            ScreenshotItineraryImportView(
+                trip: trip,
+                draft: draft,
+                targetDay: selectedDaySelection?.day,
+                onRetryRecognition: draft.recognitionNotice == nil ? nil : {
+                    retryScreenshotRecognition()
+                }
+            )
+        }
+        .sheet(isPresented: $showsTextImport) {
+            TextItineraryImportView(
+                trip: trip,
+                referenceDate: selectedDaySelection?.day.date ?? trip.startDate,
+                targetDay: selectedDaySelection?.day
+            )
+        }
         .sheet(item: $shareRequest) { request in
             ShareExportView(trip: trip, initialScopeID: request.scopeID)
+        }
+        .sheet(item: $routePlanningRequest) { request in
+            AmapRoutePlanningView(request: request)
         }
         .sheet(item: $navigationRequest) { request in
             NavigationOptionsSheet(
@@ -81,6 +149,10 @@ struct TripDetailView: View {
                 onDouyin: { openDiscovery(.douyin, for: request) }
             )
         }
+    }
+
+    private var recognitionFeedbackContent: some View {
+        sheetContent
         .photosPicker(
             isPresented: $showsScreenshotPicker,
             selection: $screenshotPickerItems,
@@ -96,21 +168,37 @@ struct TripDetailView: View {
         }
         .alert("截图识别", isPresented: Binding(
             get: { screenshotImportMessage != nil },
-            set: { if !$0 { screenshotImportMessage = nil } }
+            set: {
+                if !$0 {
+                    screenshotImportMessage = nil
+                    offersPhotoSettingsForScreenshot = false
+                }
+            }
         )) {
-            Button("知道了", role: .cancel) { screenshotImportMessage = nil }
+            if !offersPhotoSettingsForScreenshot, !retryScreenshotPickerItems.isEmpty {
+                Button("重试") {
+                    retryScreenshotRecognition()
+                }
+            }
+            Button("知道了", role: .cancel) {
+                screenshotImportMessage = nil
+                offersPhotoSettingsForScreenshot = false
+            }
+            if offersPhotoSettingsForScreenshot {
+                Button("去设置") {
+                    screenshotImportMessage = nil
+                    offersPhotoSettingsForScreenshot = false
+                    guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                    UIApplication.shared.open(url)
+                }
+            }
         } message: {
             Text(screenshotImportMessage ?? "")
         }
-        .alert(HierarchyDeletionCopy.tripTitle, isPresented: $isConfirmingTripDeletion) {
-            Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
-                modelContext.delete(trip)
-                dismiss()
-            }
-            Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) {}
-        } message: {
-            Text(HierarchyDeletionCopy.tripMessage(title: trip.title))
-        }
+    }
+
+    private var deletionConfirmationContent: some View {
+        recognitionFeedbackContent
         .alert(
             HierarchyDeletionCopy.tripDayTitle,
             isPresented: Binding(
@@ -120,7 +208,7 @@ struct TripDetailView: View {
             presenting: dayToDelete
         ) { day in
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
-                modelContext.delete(day)
+                deleteDay(day)
                 dayToDelete = nil
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) { dayToDelete = nil }
@@ -143,14 +231,27 @@ struct TripDetailView: View {
         } message: { item in
             Text(HierarchyDeletionCopy.itineraryItemMessage(title: item.title))
         }
+    }
+
+    private var lifecycleContent: some View {
+        deletionConfirmationContent
         .onChange(of: screenshotPickerItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await recognizeScreenshots(items) }
         }
-        .onAppear { completeElapsedItems() }
+        .onAppear {
+            JourneyHierarchyService.normalizeTripDaySchedule(trip)
+            progressReferenceDate = Date()
+            completeElapsedItems(relativeTo: progressReferenceDate)
+            ensureSelectedDay()
+        }
+        .onChange(of: trip.sortedDays.map(\.id)) { _, _ in
+            ensureSelectedDay()
+        }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
-                completeElapsedItems()
+                progressReferenceDate = Date()
+                completeElapsedItems(relativeTo: progressReferenceDate)
             }
         }
         .onChange(of: dayDateSignature) { _, _ in
@@ -163,6 +264,7 @@ struct TripDetailView: View {
             progressReferenceDate = date
             completeElapsedItems(relativeTo: date)
         }
+        .onDisappear { cancelActiveDragIfNeeded() }
     }
 
     @ViewBuilder
@@ -170,9 +272,140 @@ struct TripDetailView: View {
         if trip.sortedDays.isEmpty {
             ContentUnavailableView("还没有日程", systemImage: "calendar.badge.plus", description: Text("先添加一天。"))
                 .frame(height: 260)
-        } else {
-            ForEach(Array(trip.sortedDays.enumerated()), id: \.element.id) { index, day in
-                daySection(day, index: index)
+        } else if let selection = selectedDaySelection {
+            daySection(selection.day)
+                .id(selection.day.id)
+        }
+    }
+
+    private var selectedDaySelection: (index: Int, day: TripDay)? {
+        let days = trip.sortedDays
+        guard !days.isEmpty else { return nil }
+        if let selectedDayID,
+           let index = days.firstIndex(where: { $0.id == selectedDayID }) {
+            return (index, days[index])
+        }
+        return (0, days[0])
+    }
+
+    @ViewBuilder
+    private var selectedDayHeader: some View {
+        if let selection = selectedDaySelection {
+            Text(selection.day.title.isEmpty ? "第 \(selection.index + 1) 天" : selection.day.title)
+                .font(.title2.bold())
+                .foregroundStyle(Color.tripInk)
+                .lineLimit(2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var dayNavigator: some View {
+        HStack(spacing: 8) {
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Array(trip.sortedDays.enumerated()), id: \.element.id) { index, day in
+                            dayNavigatorItem(index: index, day: day)
+                        }
+                    }
+                    .padding(.leading, 16)
+                    .padding(.vertical, 8)
+                    .animation(.snappy(duration: 0.22), value: trip.sortedDays.map(\.id))
+                    .animation(.snappy(duration: 0.22), value: dayDragRevision)
+                }
+                .onChange(of: selectedDayID) { _, newID in
+                    guard let newID else { return }
+                    withAnimation(.snappy(duration: 0.22)) {
+                        proxy.scrollTo(newID, anchor: .center)
+                    }
+                }
+            }
+
+            Button {
+                addDay()
+            } label: {
+                Image(systemName: "plus")
+                    .font(.headline.bold())
+                    .foregroundStyle(Color.tripLake)
+                    .frame(width: 42, height: 42)
+                    .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.tripLake.opacity(0.22), lineWidth: 0.8)
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("添加一天")
+            .padding(.trailing, 16)
+        }
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) {
+            Divider().opacity(0.45)
+        }
+    }
+
+    private func dayNavigatorItem(index: Int, day: TripDay) -> some View {
+        let isSelected = selectedDaySelection?.day.id == day.id
+        let isDragging = dayDrag?.dayID == day.id
+
+        return Button {
+            selectDay(day)
+        } label: {
+            dayNavigatorPill(index: index, day: day, isSelected: isSelected)
+        }
+        .buttonStyle(.plain)
+        .id(day.id)
+        // Keep the drag source alive inside the horizontal ScrollView.
+        // opacity(0) makes SwiftUI drop its hit-testing during the session.
+        .mask {
+            Rectangle()
+                .fill(isDragging ? Color.clear : Color.white)
+        }
+        .overlay {
+            if isDragging {
+                DayNavigatorPlacementPlaceholder()
+            }
+        }
+        .contentShape(Capsule())
+        .onDrag {
+            beginDayDrag(day)
+            return dragItemProvider(payload: "trip-day:\(day.id.uuidString)") {
+                cancelDayDragIfNeeded(dayID: day.id)
+            }
+        } preview: {
+            dayNavigatorPill(index: index, day: day, isSelected: true)
+                .fixedSize()
+        }
+        .onDrop(
+            of: [UTType.plainText],
+            delegate: ItineraryReorderDropDelegate(
+                onEntered: {
+                    cancelPendingDragCleanup()
+                    previewDayDrag(over: day)
+                },
+                onExited: { scheduleDragCleanup() },
+                onDrop: { finishDayDrag(over: day) }
+            )
+        )
+        .accessibilityLabel("第 \(index + 1) 天，\(day.date.chineseDateText)")
+        .accessibilityValue(isSelected ? "当前选择" : "")
+        .accessibilityHint("长按并左右拖动可调整日期顺序")
+    }
+
+    private func dayNavigatorPill(index: Int, day: TripDay, isSelected: Bool) -> some View {
+        VStack(spacing: 2) {
+            Text("第 \(index + 1) 天")
+                .font(.caption2.bold())
+            Text(day.date.formatted(.dateTime.month().day()))
+                .font(.caption.bold())
+        }
+        .foregroundStyle(isSelected ? .white : Color.tripInk)
+        .padding(.horizontal, 13)
+        .padding(.vertical, 8)
+        .background(isSelected ? Color.tripLake : Color.tripSurface, in: Capsule())
+        .overlay {
+            if !isSelected {
+                Capsule().stroke(Color.tripLake.opacity(0.18), lineWidth: 0.8)
             }
         }
     }
@@ -185,128 +418,16 @@ struct TripDetailView: View {
         trip.allItems.map(\.endTime)
     }
 
-    private var addDayButton: some View {
-        Button { addDay() } label: {
-            Label("继续添加一天", systemImage: "calendar.badge.plus")
-                .frame(maxWidth: .infinity)
-        }
-        .buttonStyle(.bordered)
-        .padding(.bottom, 20)
-    }
-
-    private var summaryCard: some View {
-        let dayProgress = TripCalendarProgress.make(for: trip, relativeTo: progressReferenceDate)
-
-        return VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(trip.destination.isEmpty ? "目的地待定" : trip.destination)
-                        .font(.title.bold())
-                    TwoTapDateRangePicker(
-                        title: "旅行日期",
-                        startTitle: "出发",
-                        endTitle: "返程",
-                        startDate: tripStartDateSelection,
-                        endDate: tripEndDateSelection,
-                        displayStyle: .compactOnColor
-                    )
-                }
-                Spacer()
-                ZStack {
-                    Circle().stroke(.white.opacity(0.25), lineWidth: 7)
-                    Circle()
-                        .trim(from: 0, to: dayProgress.fraction)
-                        .stroke(.white, style: StrokeStyle(lineWidth: 7, lineCap: .round))
-                        .rotationEffect(.degrees(-90))
-                    VStack(spacing: 1) {
-                        Text(dayProgress.statusText)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.82))
-                        Text("\(dayProgress.currentDay) / \(dayProgress.totalDays)")
-                            .font(.headline.bold())
-                            .monospacedDigit()
-                    }
-                }
-                .frame(width: 74, height: 74)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("旅程进度，\(dayProgress.statusText)，\(dayProgress.currentDay) / \(dayProgress.totalDays) 天")
-            }
-            if !trip.note.isEmpty {
-                Text(trip.note).font(.subheadline).foregroundStyle(.white.opacity(0.9))
+    private func requestScreenshotSelection() {
+        Task { @MainActor in
+            let authorization = await PhotoLibraryService.requestReadWriteAccessIfNeeded()
+            if authorization == .authorized || authorization == .limited {
+                showsScreenshotPicker = true
+            } else {
+                offersPhotoSettingsForScreenshot = authorization == .denied || authorization == .restricted
+                screenshotImportMessage = PhotoLibraryService.permissionGuidance
             }
         }
-        .foregroundStyle(.white)
-        .padding(22)
-        .background(
-            LinearGradient(colors: [.tripInk, .tripLake], startPoint: .topLeading, endPoint: .bottomTrailing),
-            in: RoundedRectangle(cornerRadius: 26, style: .continuous)
-        )
-    }
-
-    private var tripStartDateSelection: Binding<Date> {
-        Binding(
-            get: { trip.startDate },
-            set: { newStartDate in
-                let shiftedEndDate = JourneyHierarchyService.shiftedDate(
-                    trip.endDate,
-                    whenTripStartMovesFrom: trip.startDate,
-                    to: newStartDate
-                )
-                JourneyHierarchyService.updateTripDateRange(
-                    trip,
-                    startDate: newStartDate,
-                    endDate: shiftedEndDate
-                )
-            }
-        )
-    }
-
-    private var tripEndDateSelection: Binding<Date> {
-        Binding(
-            get: { trip.endDate },
-            set: { newEndDate in
-                JourneyHierarchyService.updateTripDateRange(
-                    trip,
-                    startDate: trip.startDate,
-                    endDate: newEndDate
-                )
-            }
-        )
-    }
-
-    private var quickActions: some View {
-        HStack(spacing: 12) {
-            Button { requestNextPlaceNavigation() } label: {
-                Label("下一个地点", systemImage: "location.circle.fill")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(trip.nextUnfinishedItem == nil)
-
-            Menu {
-                Button { showsScreenshotPicker = true } label: {
-                    Label("选择截图", systemImage: "photo.stack")
-                }
-
-                Button { showsTextImport = true } label: {
-                    Label("输入文本", systemImage: "text.badge.plus")
-                }
-            } label: {
-                HStack(spacing: 7) {
-                    if isReadingScreenshot {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Image(systemName: "wand.and.stars")
-                    }
-                    Text(isReadingScreenshot ? "识别中…" : "智能录入")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .frame(maxWidth: .infinity)
-            .buttonStyle(.bordered)
-            .disabled(isReadingScreenshot)
-        }
-        .controlSize(.large)
     }
 
     @MainActor
@@ -328,162 +449,127 @@ struct TripDetailView: View {
             guard !imageDatas.isEmpty else {
                 throw ScreenshotItineraryImportError.unreadableImage
             }
-            screenshotDraft = try await ScreenshotItineraryImportService.recognizeJourney(
+            let recognizedDraft = try await SmartItineraryRecognitionService.recognizeJourney(
                 imageDatas: imageDatas,
-                referenceDate: trip.startDate,
+                referenceDate: selectedDaySelection?.day.date ?? trip.startDate,
                 sourceAssetIdentifiers: assetIdentifiers
             )
+            retryScreenshotPickerItems = recognizedDraft.recognitionNotice == nil ? [] : items
+            screenshotDraft = recognizedDraft
         } catch {
+            retryScreenshotPickerItems = items
             screenshotImportMessage = error.localizedDescription
         }
     }
 
-    private func daySection(_ day: TripDay, index: Int) -> some View {
-        let isExpanded = isDayExpanded(day)
+    private func retryScreenshotRecognition() {
+        let items = retryScreenshotPickerItems
+        guard !items.isEmpty, !isReadingScreenshot else { return }
+        screenshotImportMessage = nil
+        offersPhotoSettingsForScreenshot = false
+        screenshotDraft = nil
+        Task { await recognizeScreenshots(items) }
+    }
+
+    private func daySection(_ day: TripDay) -> some View {
         let displayedItems = day.displayItems
 
         return VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Button {
-                    toggleDay(day)
+            if displayedItems.isEmpty {
+                Menu {
+                    addArrangementActions(for: day)
                 } label: {
-                    HStack(spacing: 10) {
-                        (
-                            Text(day.title.isEmpty ? "第 \(index + 1) 天" : day.title)
-                                .font(.headline)
-                            + Text(" · \(day.date.formatted(.dateTime.month().day().weekday(.wide)))")
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        )
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-
-                        Spacer(minLength: 8)
-
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.caption.bold())
-                            .foregroundStyle(.secondary)
-                    }
-                    .contentShape(Rectangle())
+                    Label("添加安排", systemImage: "plus.circle")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.tripLake)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(Color.tripLake.opacity(0.09), in: Capsule())
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("\(day.title.isEmpty ? "第 \(index + 1) 天" : day.title)，\(isExpanded ? "已展开" : "已收起")")
-                .accessibilityHint(isExpanded ? "点击收起当天安排" : "点击展开当天安排")
-
-                Menu {
-                    Button("编辑当天", systemImage: "pencil") {
-                        dayToEdit = day
-                    }
-                    Button("分享当天", systemImage: "square.and.arrow.up") {
-                        shareRequest = TripShareRequest(scopeID: day.id)
-                    }
-                    Divider()
-                    Button("删除当天", systemImage: "trash", role: .destructive) {
-                        dayToDelete = day
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle").frame(width: 32, height: 32)
-                }
-                .accessibilityLabel("当天更多操作")
-
-                Image(systemName: "line.3.horizontal")
-                    .frame(width: 32, height: 32)
-                    .foregroundStyle(.secondary)
-                    .contentShape(Rectangle())
-                    .onDrag {
-                        beginDayDrag(day)
-                        return NSItemProvider(object: "trip-day:\(day.id.uuidString)" as NSString)
-                    } preview: {
-                        Label(displayTitle(for: day), systemImage: "calendar")
-                            .font(.headline)
-                            .padding(12)
-                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                    .accessibilityLabel("拖动调整\(displayTitle(for: day))的顺序")
-            }
-
-            if isExpanded {
-                if displayedItems.isEmpty {
-                    Button { dayForNewItem = day } label: {
-                        Label("添加安排", systemImage: "plus.circle")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.tripLake)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 9)
-                            .background(Color.tripLake.opacity(0.09), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-                } else {
-                    ForEach(displayedItems) { item in
-                        ItemSwipeActionContainer {
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            } else {
+                ForEach(displayedItems) { item in
+                    CardSwipeActionContainer(
+                        cornerRadius: 16,
+                        editTitle: "编辑安排",
+                        deleteTitle: "删除安排",
+                        onEdit: {
                             itemToEdit = item
-                        } onDelete: {
+                        },
+                        onDelete: {
                             itemToDelete = item
-                        } content: {
-                            ItineraryCard(item: item) {
-                                itemToEdit = item
-                            } onNavigate: {
-                                navigationRequest = ItineraryNavigationRequest(item: item, action: .place)
-                            } onDragStart: {
-                                beginItineraryDrag(item)
-                            }
-                            .padding(.vertical, 2)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(Color.tripSurface)
-                            .onDrop(
-                                of: [UTType.plainText],
-                                delegate: ItineraryReorderDropDelegate(
-                                    onEntered: {
-                                        if dayDrag != nil {
-                                            previewDayDrag(over: day)
-                                        } else {
-                                            previewItineraryDrag(over: item)
-                                        }
-                                    },
-                                    onExited: { clearDayDragDestination(day) },
-                                    onDrop: {
-                                        if dayDrag != nil {
-                                            finishDayDrag(over: day)
-                                        } else {
-                                            finishItineraryDrag(at: .item(item.id))
-                                        }
-                                    }
-                                )
+                        }
+                    ) {
+                        ItineraryCard(item: item) {
+                            itemToEdit = item
+                        } onNavigate: {
+                            navigationRequest = ItineraryNavigationRequest(
+                                item: item,
+                                target: $0
                             )
+                        } onDragStart: {
+                            beginItineraryDrag(item)
+                        } onDragCancel: {
+                            cancelItineraryDragIfNeeded(itemID: item.id)
+                        }
+                        .padding(.vertical, 2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.tripSurface)
+                        .onDrop(
+                            of: [UTType.plainText],
+                            delegate: ItineraryReorderDropDelegate(
+                                onEntered: {
+                                    cancelPendingDragCleanup()
+                                    if dayDrag != nil {
+                                        previewDayDrag(over: day)
+                                    } else {
+                                        previewItineraryDrag(over: item)
+                                    }
+                                },
+                                onExited: { scheduleDragCleanup() },
+                                onDrop: {
+                                    if dayDrag != nil {
+                                        finishDayDrag(over: day)
+                                    } else {
+                                        finishItineraryDrag(at: .item(item.id))
+                                    }
+                                }
+                            )
+                        )
+                    }
+                    // Keep the source visible while the system presents its drag preview.
+                    // A cancelled or timed-out drag must never make the card disappear.
+                    .opacity(itineraryDrag?.itemID == item.id ? 0.82 : 1)
+                    .overlay {
+                        if itineraryDrag?.itemID == item.id {
+                            DragPlacementPlaceholder(cornerRadius: 16)
                         }
                     }
-                    .animation(.snappy(duration: 0.22), value: displayedItems.map(\.id))
-                    .animation(.snappy(duration: 0.22), value: itineraryDragRevision)
-                    Button { dayForNewItem = day } label: {
-                        Label("添加安排", systemImage: "plus")
-                    }
-                    .font(.subheadline.bold())
                 }
-            } else {
-                collapsedDaySummary(day)
+                .animation(.snappy(duration: 0.22), value: displayedItems.map(\.id))
+                .animation(.snappy(duration: 0.22), value: itineraryDragRevision)
+                Menu {
+                    addArrangementActions(for: day)
+                } label: {
+                    Label("添加安排", systemImage: "plus")
+                }
+                .font(.subheadline.bold())
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
-        .cardSurface()
-        .overlay {
-            if dayDrag?.destinationDayID == day.id {
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .stroke(Color.tripLake, style: StrokeStyle(lineWidth: 2, dash: [6, 4]))
-                    .allowsHitTesting(false)
-            }
-        }
+        .contentShape(Rectangle())
         .onDrop(
             of: [UTType.plainText],
             delegate: ItineraryReorderDropDelegate(
                 onEntered: {
+                    cancelPendingDragCleanup()
                     if dayDrag != nil {
                         previewDayDrag(over: day)
                     } else if day.sortedItems.isEmpty {
                         previewItineraryDrag(toEndOf: day)
                     }
                 },
-                onExited: { clearDayDragDestination(day) },
+                onExited: { scheduleDragCleanup() },
                 onDrop: {
                     if dayDrag != nil {
                         finishDayDrag(over: day)
@@ -495,48 +581,28 @@ struct TripDetailView: View {
         )
     }
 
+    @ViewBuilder
+    private func addArrangementActions(for day: TripDay) -> some View {
+        Button("手动", systemImage: "square.and.pencil") {
+            dayForNewItem = day
+        }
+        Button("从收藏导入", systemImage: "heart") {
+            dayForFavoriteImport = day
+        }
+        Button("文字录入", systemImage: "text.badge.plus") {
+            dayForTextItemImport = day
+        }
+        Button("图片录入", systemImage: "photo.stack") {
+            dayForImageItemImport = day
+        }
+    }
+
     private func displayTitle(for day: TripDay) -> String {
         if !day.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return day.title
         }
         let index = trip.sortedDays.firstIndex { $0.id == day.id } ?? 0
         return "第 \(index + 1) 天"
-    }
-
-    private func isDayExpanded(_ day: TripDay) -> Bool {
-        dayExpansionOverrides[day.id] ?? !day.shouldAutomaticallyCollapse()
-    }
-
-    private func toggleDay(_ day: TripDay) {
-        withAnimation(.easeInOut(duration: 0.2)) {
-            dayExpansionOverrides[day.id] = !isDayExpanded(day)
-        }
-    }
-
-    @ViewBuilder
-    private func collapsedDaySummary(_ day: TripDay) -> some View {
-        if day.hasCompletedAllItems {
-            collapsedDayStatus(
-                icon: "checkmark.circle.fill",
-                text: "\(day.sortedItems.count) 项安排已完成",
-                color: Color.tripSage
-            )
-        } else if day.isPast(relativeTo: progressReferenceDate) {
-            collapsedDayStatus(icon: "clock.arrow.circlepath", text: "当天已过去", color: .secondary)
-        } else if Calendar.current.isDate(day.date, inSameDayAs: progressReferenceDate) {
-            collapsedDayStatus(icon: "clock.fill", text: "今天进行中", color: Color.tripLake)
-        } else {
-            collapsedDayStatus(icon: "calendar", text: "尚未开始", color: .secondary)
-        }
-    }
-
-    private func collapsedDayStatus(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-            Text(text)
-        }
-        .font(.caption)
-        .foregroundStyle(color)
     }
 
     private func completeElapsedItems(relativeTo date: Date = Date()) {
@@ -553,44 +619,114 @@ struct TripDetailView: View {
     }
 
     private func beginDayDrag(_ day: TripDay) {
+        cancelPendingDragCleanup()
         if let itineraryDrag {
             restoreItineraryDrag(itineraryDrag)
             self.itineraryDrag = nil
         }
-        dayDrag = TripDayDragState(dayID: day.id, destinationDayID: nil)
+        if let dayDrag {
+            restoreDayDrag(dayDrag)
+        }
+        dayDrag = TripDayDragState(
+            dayID: day.id,
+            originalDayIDs: trip.sortedDays.map(\.id),
+            destinationDayID: nil
+        )
     }
 
     private func previewDayDrag(over day: TripDay) {
         guard var dayDrag, dayDrag.dayID != day.id else { return }
-        dayDrag.destinationDayID = day.id
-        self.dayDrag = dayDrag
-    }
+        guard dayDrag.destinationDayID != day.id else { return }
 
-    private func clearDayDragDestination(_ day: TripDay) {
-        guard var dayDrag, dayDrag.destinationDayID == day.id else { return }
-        dayDrag.destinationDayID = nil
-        self.dayDrag = dayDrag
-    }
-
-    private func finishDayDrag(over day: TripDay) -> Bool {
-        guard let dayDrag else { return false }
         var didMove = false
         withAnimation(.snappy(duration: 0.22)) {
-            didMove = JourneyHierarchyService.moveTripDaySchedule(
+            didMove = JourneyHierarchyService.previewMoveTripDay(
                 id: dayDrag.dayID,
                 to: day.id,
                 in: trip.days
             )
         }
-        self.dayDrag = nil
-        if didMove {
-            completeElapsedItems()
+        guard didMove else { return }
+        dayDrag.destinationDayID = day.id
+        self.dayDrag = dayDrag
+        dayDragRevision &+= 1
+    }
+
+    private func finishDayDrag(over day: TripDay) -> Bool {
+        guard let dayDrag else { return false }
+        cancelPendingDragCleanup()
+
+        if hasOriginalTripDayOrder(dayDrag.originalDayIDs, in: trip.days) {
+            withTransaction(Transaction(animation: nil)) {
+                restoreDayDrag(dayDrag)
+            }
+            self.dayDrag = nil
+            dayDragRevision &+= 1
+            return false
         }
-        return didMove
+
+        let committedDayID = resolvedTripDayDropDestination(
+            lastPreviewDayID: dayDrag.destinationDayID,
+            reportedDayID: day.id
+        )
+        withTransaction(Transaction(animation: nil)) {
+            restoreDayDrag(dayDrag)
+        }
+        self.dayDrag = nil
+        dayDragRevision &+= 1
+
+        guard let plan = JourneyHierarchyService.tripDayScheduleMovePlan(
+            id: dayDrag.dayID,
+            to: committedDayID,
+            in: trip.days
+        ) else { return false }
+        return commitDayMove(plan, shiftFollowingDays: false)
+    }
+
+    @discardableResult
+    private func commitDayMove(
+        _ plan: TripDayScheduleMovePlan,
+        shiftFollowingDays: Bool
+    ) -> Bool {
+        let calendar = Calendar.current
+        var didMove = false
+        withTransaction(Transaction(animation: nil)) {
+            didMove = JourneyHierarchyService.applyTripDayScheduleMovePlan(
+                plan,
+                in: trip.days,
+                shiftFollowingDays: shiftFollowingDays,
+                calendar: calendar
+            )
+        }
+        guard didMove else { return false }
+        JourneyHierarchyService.normalizeTripDaySchedule(trip, calendar: calendar)
+        completeElapsedItems()
+        return true
+    }
+
+    private func restoreDayDrag(_ drag: TripDayDragState) {
+        let daysByID = Dictionary(uniqueKeysWithValues: trip.days.map { ($0.id, $0) })
+        for (index, dayID) in drag.originalDayIDs.enumerated() {
+            daysByID[dayID]?.sortOrder = index
+        }
+    }
+
+    private func cancelDayDragIfNeeded(dayID: UUID) {
+        guard let dayDrag, dayDrag.dayID == dayID else { return }
+        cancelPendingDragCleanup()
+        withTransaction(Transaction(animation: nil)) {
+            restoreDayDrag(dayDrag)
+        }
+        self.dayDrag = nil
+        dayDragRevision &+= 1
     }
 
     private func beginItineraryDrag(_ item: ItineraryItem) {
-        dayDrag = nil
+        cancelPendingDragCleanup()
+        if let dayDrag {
+            restoreDayDrag(dayDrag)
+            self.dayDrag = nil
+        }
         if let itineraryDrag {
             restoreItineraryDrag(itineraryDrag)
         }
@@ -647,11 +783,32 @@ struct TripDetailView: View {
 
     private func finishItineraryDrag(at destination: ItineraryDropDestination) -> Bool {
         guard let itineraryDrag else { return false }
+        cancelPendingDragCleanup()
+
+        if hasOriginalItineraryOrder(
+            itineraryDrag.originalItemIDsByDay,
+            in: trip.days
+        ) {
+            withTransaction(Transaction(animation: nil)) {
+                restoreItineraryDrag(itineraryDrag)
+            }
+            self.itineraryDrag = nil
+            itineraryDragRevision &+= 1
+            return false
+        }
+
+        // Reordering the live cards can move the drop view underneath the pointer. In that
+        // case SwiftUI reports the dragged card itself (or its parent day) on release. The
+        // last preview destination is the stable representation of the position the user saw.
+        let committedDestination = resolvedItineraryDropDestination(
+            lastPreview: itineraryDrag.destination,
+            reported: destination
+        )
 
         var result = ItineraryMoveResult.unchanged
         withTransaction(Transaction(animation: nil)) {
             restoreItineraryDrag(itineraryDrag)
-            switch destination {
+            switch committedDestination {
             case let .item(targetItemID):
                 result = JourneyHierarchyService.moveItineraryItemResult(
                     id: itineraryDrag.itemID,
@@ -695,49 +852,83 @@ struct TripDetailView: View {
         }
     }
 
-    private func requestNextPlaceNavigation() {
-        guard let item = trip.nextUnfinishedItem else {
-            placeMessage = "当前没有下一个未完成地点。"
+    private func cancelItineraryDragIfNeeded(itemID: UUID) {
+        guard let itineraryDrag, itineraryDrag.itemID == itemID else { return }
+        cancelPendingDragCleanup()
+        withTransaction(Transaction(animation: nil)) {
+            restoreItineraryDrag(itineraryDrag)
+        }
+        self.itineraryDrag = nil
+        itineraryDragRevision &+= 1
+    }
+
+    private func cancelPendingDragCleanup() {
+        dragCleanupTask?.cancel()
+        dragCleanupTask = nil
+    }
+
+    private func scheduleDragCleanup() {
+        cancelPendingDragCleanup()
+        dragCleanupTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            cancelActiveDragIfNeeded()
+        }
+    }
+
+    private func cancelActiveDragIfNeeded() {
+        cancelPendingDragCleanup()
+        if let dayDrag {
+            withTransaction(Transaction(animation: nil)) {
+                restoreDayDrag(dayDrag)
+            }
+            self.dayDrag = nil
+            dayDragRevision &+= 1
+        }
+        if let itineraryDrag {
+            withTransaction(Transaction(animation: nil)) {
+                restoreItineraryDrag(itineraryDrag)
+            }
+            self.itineraryDrag = nil
+            itineraryDragRevision &+= 1
+        }
+    }
+
+    private func requestRoutePlanning(for days: [TripDay], title: String) {
+        let points = ItineraryRoutePlanning.points(in: days)
+        let missingLocationCount = days
+            .flatMap(\.items)
+            .filter { $0.locationTargets.isEmpty }
+            .count
+        guard points.count >= 2 else {
+            placeMessage = "至少需要两个已填写地点，才能生成高德地图路线规划。"
             return
         }
-        navigationRequest = ItineraryNavigationRequest(item: item, action: .nextPlace)
+        routePlanningRequest = ItineraryRoutePlanningRequest(
+            title: title,
+            points: points,
+            missingLocationCount: missingLocationCount
+        )
     }
 
     private func open(_ request: ItineraryNavigationRequest) {
         let item = request.item
-        let stop = AmapStop(
-            name: item.title,
-            address: item.address
-        )
         Task {
-            let opened: Bool
-            switch request.action {
-            case .place:
-                opened = await AmapService.openPlace(
-                    name: item.title,
-                    address: item.address,
-                    mode: item.transport
-                )
-            case .nextPlace:
-                opened = await AmapService.openNextPlace(stop, mode: item.transport)
-            }
-            if !opened {
-                #if targetEnvironment(simulator)
-                placeMessage = "当前 iPhone 模拟器没有安装高德地图 App。模拟器与手机是独立环境，请在已安装高德地图的真机上测试。"
-                #else
-                placeMessage = "未检测到高德地图 App，请确认已安装或更新到最新版本后重试。"
-                #endif
-            }
+            let result = await AmapService.openPlace(
+                name: request.target.name,
+                address: request.target.address,
+                mode: item.transport
+            )
+            placeMessage = result.message(destinationName: request.target.displayName)
         }
     }
 
     private func openDiscovery(_ platform: PlaceDiscoveryPlatform, for request: ItineraryNavigationRequest) {
-        let item = request.item
         Task {
             let opened = await PlaceDiscoveryService.open(
                 platform,
-                name: item.title,
-                address: item.address
+                name: request.target.name,
+                address: request.target.address
             )
             if !opened {
                 placeMessage = "暂时无法打开\(platform.displayName)，请检查网络或稍后重试。"
@@ -746,17 +937,67 @@ struct TripDetailView: View {
     }
 
     private func addDay() {
-        JourneyHierarchyService.appendDay(to: trip)
+        let day = JourneyHierarchyService.appendDay(to: trip)
+        selectDay(day)
     }
 
-    private func archiveWholeTrip() {
-        showsArchive = true
+    private func ensureSelectedDay() {
+        let days = trip.sortedDays
+        guard !days.isEmpty else {
+            selectedDayID = nil
+            return
+        }
+        if let selectedDayID, days.contains(where: { $0.id == selectedDayID }) {
+            return
+        }
+        let calendar = Calendar.current
+        let preferredDay = days.first {
+            calendar.isDate($0.date, inSameDayAs: progressReferenceDate)
+        } ?? days[0]
+        selectDay(preferredDay)
+    }
+
+    private func selectDay(_ day: TripDay) {
+        cancelActiveDragIfNeeded()
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            selectedDayID = day.id
+        }
+    }
+
+    private func deleteDay(_ day: TripDay) {
+        let days = trip.sortedDays
+        if selectedDayID == day.id, let index = days.firstIndex(where: { $0.id == day.id }) {
+            let nextDay = days.dropFirst(index + 1).first ?? days.prefix(index).last
+            selectedDayID = nextDay?.id
+        }
+        trip.days.removeAll { $0.id == day.id }
+        modelContext.delete(day)
+        JourneyHierarchyService.normalizeTripDaySchedule(trip)
     }
 }
 
-private enum ItineraryDropDestination: Equatable {
+enum ItineraryDropDestination: Equatable {
     case item(UUID)
     case endOfDay(UUID)
+}
+
+func resolvedItineraryDropDestination(
+    lastPreview: ItineraryDropDestination?,
+    reported: ItineraryDropDestination
+) -> ItineraryDropDestination {
+    lastPreview ?? reported
+}
+
+func hasOriginalItineraryOrder(
+    _ originalItemIDsByDay: [UUID: [UUID]],
+    in days: [TripDay]
+) -> Bool {
+    days.allSatisfy { day in
+        guard let originalItemIDs = originalItemIDsByDay[day.id] else { return false }
+        return day.sortedItems.map(\.id) == originalItemIDs
+    }
 }
 
 private struct ItineraryDragState {
@@ -768,7 +1009,52 @@ private struct ItineraryDragState {
 
 private struct TripDayDragState {
     let dayID: UUID
+    let originalDayIDs: [UUID]
     var destinationDayID: UUID?
+}
+
+func resolvedTripDayDropDestination(
+    lastPreviewDayID: UUID?,
+    reportedDayID: UUID
+) -> UUID {
+    lastPreviewDayID ?? reportedDayID
+}
+
+func hasOriginalTripDayOrder(
+    _ originalDayIDs: [UUID],
+    in days: [TripDay]
+) -> Bool {
+    JourneyHierarchyService.sortedDays(days).map(\.id) == originalDayIDs
+}
+
+private final class DragSessionCleanupToken {
+    private let onSessionEnd: () -> Void
+
+    init(onSessionEnd: @escaping () -> Void) {
+        self.onSessionEnd = onSessionEnd
+    }
+
+    deinit {
+        let cleanup = onSessionEnd
+        DispatchQueue.main.async(execute: cleanup)
+    }
+}
+
+private func dragItemProvider(
+    payload: String,
+    onSessionEnd: @escaping () -> Void
+) -> NSItemProvider {
+    let provider = NSItemProvider()
+    let cleanupToken = DragSessionCleanupToken(onSessionEnd: onSessionEnd)
+    provider.registerDataRepresentation(
+        forTypeIdentifier: UTType.plainText.identifier,
+        visibility: .all
+    ) { completion in
+        _ = cleanupToken
+        completion(payload.data(using: .utf8), nil)
+        return nil
+    }
+    return provider
 }
 
 private struct ItineraryReorderDropDelegate: DropDelegate {
@@ -802,20 +1088,31 @@ private struct TripShareRequest: Identifiable {
     let scopeID: UUID
 }
 
-private struct ItineraryNavigationRequest: Identifiable {
-    enum Action {
-        case place
-        case nextPlace
-    }
+struct ItineraryRoutePlanningRequest: Identifiable {
+    let id = UUID()
+    let title: String
+    let points: [ItineraryRoutePoint]
+    let missingLocationCount: Int
+}
 
+private struct ItineraryNavigationRequest: Identifiable {
     let id = UUID()
     let item: ItineraryItem
-    let action: Action
+    let target: JourneyLocationTarget
 }
 
 private struct ItineraryTimeReviewRequest: Identifiable {
     let id = UUID()
     let adjustments: [ItineraryTimeAdjustment]
+}
+
+func hasOverlappingItineraryTimeRanges(_ ranges: [(start: Date, end: Date)]) -> Bool {
+    let sortedRanges = ranges.sorted { lhs, rhs in
+        lhs.start == rhs.start ? lhs.end < rhs.end : lhs.start < rhs.start
+    }
+    return zip(sortedRanges, sortedRanges.dropFirst()).contains { current, next in
+        current.end > next.start
+    }
 }
 
 private struct ItineraryTimeReviewView: View {
@@ -829,7 +1126,7 @@ private struct ItineraryTimeReviewView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Form {
                 Section {
                     Text("安排时长不同，已按新顺序预填时间，请确认或修改。")
@@ -883,12 +1180,14 @@ private struct ItineraryTimeReviewView: View {
         let draftValues = Dictionary(uniqueKeysWithValues: drafts.map { ($0.item.id, ($0.startTime, $0.endTime)) })
         let days = Dictionary(grouping: drafts.compactMap(\.item.day), by: \.id).values.compactMap(\.first)
         return days.contains { day in
-            let items = day.sortedItems
-            return zip(items, items.dropFirst()).contains { first, second in
-                let firstEnd = draftValues[first.id]?.1 ?? first.endTime
-                let secondStart = draftValues[second.id]?.0 ?? second.startTime
-                return firstEnd > secondStart
+            let ranges = day.items.map { item in
+                let draftRange = draftValues[item.id]
+                return (
+                    start: draftRange?.0 ?? item.startTime,
+                    end: draftRange?.1 ?? item.endTime
+                )
             }
+            return hasOverlappingItineraryTimeRanges(ranges)
         }
     }
 
@@ -917,50 +1216,99 @@ private struct ItineraryTimeReviewView: View {
 private struct ItineraryCard: View {
     @Bindable var item: ItineraryItem
     let onEdit: () -> Void
-    let onNavigate: () -> Void
+    let onNavigate: (JourneyLocationTarget) -> Void
     let onDragStart: () -> Void
+    let onDragCancel: () -> Void
+    var isDragEnabled = true
     @State private var mediaPreview: AssetMediaPreviewRequest?
 
+    @ViewBuilder
     var body: some View {
+        if isDragEnabled {
+            cardSurface
+                .contentShape(Rectangle())
+                .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .onTapGesture(perform: onEdit)
+                .onDrag {
+                    onDragStart()
+                    return dragItemProvider(payload: item.id.uuidString, onSessionEnd: onDragCancel)
+                } preview: {
+                    cardSurface
+                        .frame(width: 330)
+                }
+                .accessibilityHint("长按并拖动可调整顺序")
+                .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
+        } else {
+            cardSurface
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var cardSurface: some View {
         HStack(alignment: .top, spacing: 12) {
-            Button { item.toggleCompletionManually() } label: {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.title2)
-                    .foregroundStyle(item.isCompleted ? Color.tripSage : Color.secondary)
-            }
-            .buttonStyle(.plain)
+            Image(systemName: item.executionStatus.symbol)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(item.executionStatus == .inProgress ? Color.white : statusColor)
+                .frame(width: 36, height: 36)
+                .background(
+                    item.executionStatus == .inProgress ? statusColor : statusColor.opacity(0.10),
+                    in: Circle()
+                )
+                .overlay {
+                    Circle()
+                        .stroke(statusColor.opacity(item.executionStatus == .inProgress ? 0.95 : 0.20), lineWidth: 1)
+                }
+                .accessibilityLabel("执行状态：\(item.executionStatus.rawValue)")
 
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .center, spacing: 12) {
                     itineraryTitle
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    UnifiedTimeRangePicker(
-                        title: "修改时间",
-                        startTime: $item.startTime,
-                        endTime: $item.endTime,
-                        displayStyle: .capsule
-                    )
-                    .fixedSize()
+                    Text("\(item.startTime.timeText)–\(item.endTime.timeText)")
+                        .font(.caption.bold())
+                        .monospacedDigit()
+                        .padding(.horizontal, 11)
+                        .frame(minHeight: 34)
+                        .foregroundStyle(item.executionStatus == .inProgress ? Color.white : Color.primary)
+                        .background(
+                            item.executionStatus == .inProgress ? statusColor : statusColor.opacity(0.12),
+                            in: Capsule()
+                        )
+                        .fixedSize()
+                        .accessibilityLabel("时间，开始 \(item.startTime.timeText)，结束 \(item.endTime.timeText)")
+                        .highPriorityGesture(TapGesture().onEnded {})
                 }
-                if !item.distanceText.isEmpty || item.cost > 0 {
-                    HStack(spacing: 12) {
-                        if !item.distanceText.isEmpty {
-                            Label(item.distanceText, systemImage: "arrow.triangle.swap")
-                        }
-                        if item.cost > 0 {
-                            Label {
-                                Text(item.cost, format: .currency(code: "CNY"))
-                            } icon: {
-                                Image(systemName: "yensign.circle")
+
+                locationRows
+                VStack(alignment: .leading, spacing: 9) {
+                    if !item.reservationInfo.isEmpty {
+                        Label(item.reservationInfo, systemImage: "ticket")
+                    }
+                    if !item.distanceText.isEmpty || item.cost > 0 {
+                        HStack(spacing: 12) {
+                            if !item.distanceText.isEmpty {
+                                Label(item.distanceText, systemImage: "arrow.triangle.swap")
+                            }
+                            if item.cost > 0 {
+                                Label {
+                                    Text(item.cost, format: .currency(code: "CNY"))
+                                } icon: {
+                                    Image(systemName: "yensign.circle")
+                                }
                             }
                         }
                     }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                    if !item.note.isEmpty {
+                        Text(item.note)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
+                .font(.caption)
+                .fontWeight(detailFontWeight)
+                .foregroundStyle(detailForegroundColor)
 
-                InlineItineraryMediaRecorder(item: item) { media in
+                InlineItineraryMediaGallery(item: item) { media in
                     mediaPreview = AssetMediaPreviewRequest(
                         items: item.media
                             .sorted { $0.sortOrder < $1.sortOrder }
@@ -971,26 +1319,31 @@ private struct ItineraryCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .opacity(item.isCompleted ? 0.72 : 1)
+        .opacity(item.executionStatus == .completed ? 0.82 : 1)
         .padding(12)
         .background(
-            Color.tripItemSurface,
+            statusBackgroundColor,
             in: RoundedRectangle(cornerRadius: 16, style: .continuous)
         )
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.tripSand.opacity(0.34), lineWidth: 0.8)
+                .stroke(statusBorderColor, lineWidth: statusBorderWidth)
         }
-        .shadow(color: Color.tripInk.opacity(0.055), radius: 7, y: 3)
-        .contentShape(Rectangle())
-        .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .onTapGesture(perform: onEdit)
-        .onDrag {
-            onDragStart()
-            return NSItemProvider(object: item.id.uuidString as NSString)
+        .overlay(alignment: .leading) {
+            if item.executionStatus == .inProgress {
+                Capsule()
+                    .fill(Color.tripLake)
+                    .frame(width: 5)
+                    .padding(.vertical, 12)
+                    .padding(.leading, 2)
+            }
         }
-        .accessibilityHint("长按并拖动可调整顺序")
-        .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
+        .shadow(
+            color: statusShadowColor,
+            radius: item.executionStatus == .inProgress ? 13 : 7,
+            y: item.executionStatus == .inProgress ? 6 : 3
+        )
+        .animation(.easeInOut(duration: 0.18), value: item.executionStatus)
     }
 
     @ViewBuilder
@@ -998,18 +1351,146 @@ private struct ItineraryCard: View {
         HStack(spacing: 7) {
             Image(systemName: item.category.symbol)
                 .accessibilityHidden(true)
-            Button(action: onNavigate) {
-                MarqueeTitleText(text: item.title.isEmpty ? "地点" : item.title)
-            }
-            .buttonStyle(.plain)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityLabel("打开\(item.title.isEmpty ? "当前地点" : item.title)的导航选项")
-            .accessibilityHint("可选择高德地图、小红书或抖音")
+            MarqueeTitleText(
+                text: item.title.isEmpty ? "未命名安排" : item.title,
+                font: item.executionStatus == .inProgress ? .headline.bold() : .headline
+            )
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .foregroundStyle(item.isCompleted ? .secondary : .primary)
+        .foregroundStyle(item.executionStatus == .completed ? .secondary : .primary)
         .layoutPriority(1)
     }
 
+    @ViewBuilder
+    private var locationRows: some View {
+        if item.locationTargets.isEmpty {
+            Label("还没有填写地点", systemImage: "mappin.slash")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        } else {
+            ForEach(item.locationTargets) { target in
+                Button {
+                    onNavigate(target)
+                } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: target.role == .origin ? "location.circle" : "mappin.circle.fill")
+                        Text("\(target.role.displayName)：\(target.displayName)")
+                            .lineLimit(2)
+                    }
+                    .font(.subheadline.weight(locationFontWeight))
+                    .foregroundStyle(locationForegroundColor)
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("可选择高德地图、小红书或抖音")
+            }
+        }
+    }
+
+    private var statusColor: Color {
+        switch item.executionStatus {
+        case .notStarted: Color(red: 0.56, green: 0.40, blue: 0.18)
+        case .inProgress: Color.tripLake
+        case .completed: Color.tripSage
+        }
+    }
+
+    private var statusBackgroundColor: Color {
+        switch item.executionStatus {
+        case .notStarted, .inProgress: Color.tripSurface
+        case .completed: Color.tripSage.opacity(0.14)
+        }
+    }
+
+    private var statusBorderColor: Color {
+        switch item.executionStatus {
+        case .notStarted: Color.tripSand.opacity(0.82)
+        case .inProgress: Color.tripLake.opacity(0.92)
+        case .completed: Color.tripSage.opacity(0.46)
+        }
+    }
+
+    private var statusBorderWidth: CGFloat {
+        switch item.executionStatus {
+        case .notStarted: 1.2
+        case .inProgress: 2
+        case .completed: 0.8
+        }
+    }
+
+    private var detailFontWeight: Font.Weight {
+        switch item.executionStatus {
+        case .notStarted: .medium
+        case .inProgress: .semibold
+        case .completed: .regular
+        }
+    }
+
+    private var detailForegroundColor: Color {
+        switch item.executionStatus {
+        case .notStarted: Color.tripInk.opacity(0.70)
+        case .inProgress: Color.tripInk.opacity(0.82)
+        case .completed: Color.secondary
+        }
+    }
+
+    private var locationFontWeight: Font.Weight {
+        switch item.executionStatus {
+        case .notStarted: .medium
+        case .inProgress: .semibold
+        case .completed: .regular
+        }
+    }
+
+    private var locationForegroundColor: Color {
+        switch item.executionStatus {
+        case .notStarted: Color.tripLakeText.opacity(0.86)
+        case .inProgress: Color.tripLakeText
+        case .completed: Color.tripLake
+        }
+    }
+
+    private var statusShadowColor: Color {
+        switch item.executionStatus {
+        case .notStarted: Color.tripSand.opacity(0.12)
+        case .inProgress: Color.tripLake.opacity(0.24)
+        case .completed: Color.tripInk.opacity(0.055)
+        }
+    }
+
+}
+
+private struct DragPlacementPlaceholder: View {
+    let cornerRadius: CGFloat
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            .fill(Color.tripLake.opacity(0.035))
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .stroke(
+                        Color.tripLake.opacity(0.62),
+                        style: StrokeStyle(lineWidth: 2, dash: [7, 5])
+                    )
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct DayNavigatorPlacementPlaceholder: View {
+    var body: some View {
+        Capsule()
+            .fill(Color.tripLake.opacity(0.035))
+            .overlay {
+                Capsule()
+                    .stroke(
+                        Color.tripLake.opacity(0.62),
+                        style: StrokeStyle(lineWidth: 2, dash: [6, 4])
+                    )
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
 }
 
 struct NavigationOptionsSheet: View {
@@ -1087,8 +1568,174 @@ struct NavigationOptionsSheet: View {
     }
 }
 
+struct AmapRoutePlanningView: View {
+    @Environment(\.dismiss) private var dismiss
+    let request: ItineraryRoutePlanningRequest
+    @State private var selectedPointIDs: Set<String>
+    @State private var transport: TransportMode = .car
+    @State private var isOpening = false
+    @State private var errorMessage: String?
+
+    private let routeModes: [TransportMode] = [.car, .walk, .ride, .bus]
+
+    init(request: ItineraryRoutePlanningRequest) {
+        self.request = request
+        _selectedPointIDs = State(initialValue: Set(request.points.map(\.id)))
+    }
+
+    var body: some View {
+        TripNavigationStack {
+            List {
+                Section {
+                    Picker("出行方式", selection: $transport) {
+                        ForEach(routeModes) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text("高德地图会按下方顺序设置起点、途经点和终点。")
+                }
+
+                Section {
+                    HStack {
+                        Button("全选") {
+                            selectedPointIDs = Set(request.points.map(\.id))
+                        }
+                        Spacer()
+                        Button("取消全选") {
+                            selectedPointIDs.removeAll()
+                        }
+                    }
+                    .buttonStyle(.borderless)
+
+                    ForEach(request.points) { point in
+                        Button {
+                            toggle(point)
+                        } label: {
+                            HStack(alignment: .top, spacing: 12) {
+                                Image(systemName: selectedPointIDs.contains(point.id) ? "checkmark.circle.fill" : "circle")
+                                    .font(.title3)
+                                    .foregroundStyle(selectedPointIDs.contains(point.id) ? Color.tripLake : .secondary)
+                                    .padding(.top, 2)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 7) {
+                                        Text(point.target.displayName)
+                                            .font(.headline)
+                                            .foregroundStyle(.primary)
+                                        if selectedPointIDs.contains(point.id) {
+                                            Text(routeRole(for: point))
+                                                .font(.caption2.weight(.semibold))
+                                                .foregroundStyle(Color.tripLake)
+                                                .padding(.horizontal, 7)
+                                                .padding(.vertical, 3)
+                                                .background(Color.tripLake.opacity(0.10), in: Capsule())
+                                        }
+                                    }
+                                    Text("\(point.startTime.timeText)～\(point.endTime.timeText) · \(point.arrangementTitle)")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                    if !point.target.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                        Text(point.target.address)
+                                            .font(.caption2)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("选择地点（默认全选）")
+                } footer: {
+                    let selectionText = selectedPoints.count < 2
+                        ? "至少选择两个地点。"
+                        : "已选择 \(selectedPoints.count) 个地点，其中 \(max(0, selectedPoints.count - 2)) 个途经点。"
+                    let missingText = request.missingLocationCount > 0
+                        ? "另有 \(request.missingLocationCount) 个安排未填写地点，未加入规划。"
+                        : ""
+                    Text([selectionText, missingText].filter { !$0.isEmpty }.joined(separator: " "))
+                }
+            }
+            .navigationTitle(request.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button {
+                        openRoute()
+                    } label: {
+                        if isOpening {
+                            ProgressView()
+                        } else {
+                            Text("生成路线")
+                        }
+                    }
+                    .disabled(selectedPoints.count < 2 || isOpening)
+                }
+            }
+            .interactiveDismissDisabled(isOpening)
+            .alert("路线规划提示", isPresented: Binding(
+                get: { errorMessage != nil },
+                set: { if !$0 { errorMessage = nil } }
+            )) {
+                Button("知道了", role: .cancel) { errorMessage = nil }
+            } message: {
+                Text(errorMessage ?? "")
+            }
+        }
+    }
+
+    private var selectedPoints: [ItineraryRoutePoint] {
+        request.points.filter { selectedPointIDs.contains($0.id) }
+    }
+
+    private func toggle(_ point: ItineraryRoutePoint) {
+        if selectedPointIDs.contains(point.id) {
+            selectedPointIDs.remove(point.id)
+        } else {
+            selectedPointIDs.insert(point.id)
+        }
+    }
+
+    private func routeRole(for point: ItineraryRoutePoint) -> String {
+        guard let index = selectedPoints.firstIndex(where: { $0.id == point.id }) else { return "" }
+        if index == 0 { return "起点" }
+        if index == selectedPoints.count - 1 { return "终点" }
+        return "途经点 \(index)"
+    }
+
+    private func openRoute() {
+        let selected = selectedPoints
+        guard selected.count >= 2 else { return }
+        isOpening = true
+        Task {
+            let result = await AmapService.openRoute(
+                stops: selected.map {
+                    AmapStop(name: $0.target.name, address: $0.target.address)
+                },
+                mode: transport
+            )
+            isOpening = false
+            if result == .opened {
+                dismiss()
+            } else {
+                errorMessage = result.message(
+                    destinationName: selected.map(\.target.displayName).joined(separator: "、")
+                )
+            }
+        }
+    }
+}
+
 private struct MarqueeTitleText: View {
     let text: String
+    var font: Font = .headline
     @State private var textWidth: CGFloat = 0
     @State private var containerWidth: CGFloat = 0
     @State private var animationStart = Date.now
@@ -1098,30 +1745,32 @@ private struct MarqueeTitleText: View {
 
     var body: some View {
         GeometryReader { proxy in
+            let safeWidth = normalizedWidth(proxy.size.width)
             TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: !needsScrolling)) { timeline in
                 HStack(spacing: gap) {
                     titleText
                         .background {
                             GeometryReader { textProxy in
-                                Color.clear
-                                    .preference(key: MarqueeTextWidthKey.self, value: textProxy.size.width)
+                                Color.clear.preference(
+                                    key: MarqueeTextWidthKey.self,
+                                    value: normalizedWidth(textProxy.size.width)
+                                )
                             }
                         }
                     if needsScrolling {
-                        titleText
-                            .accessibilityHidden(true)
+                        titleText.accessibilityHidden(true)
                     }
                 }
                 .fixedSize(horizontal: true, vertical: false)
                 .offset(x: scrollingOffset(at: timeline.date))
-                .frame(width: proxy.size.width, alignment: .leading)
+                .frame(width: safeWidth, alignment: .leading)
                 .clipped()
             }
             .onAppear {
-                containerWidth = proxy.size.width
+                containerWidth = safeWidth
                 animationStart = .now
             }
-            .onChange(of: proxy.size.width) { _, newWidth in
+            .onChange(of: safeWidth) { _, newWidth in
                 containerWidth = newWidth
                 animationStart = .now
             }
@@ -1136,22 +1785,28 @@ private struct MarqueeTitleText: View {
         .onChange(of: text) { _, _ in
             animationStart = .now
         }
+        .accessibilityLabel(text)
     }
 
     private var titleText: some View {
         Text(text)
-            .font(.headline)
+            .font(font)
             .lineLimit(1)
             .fixedSize(horizontal: true, vertical: false)
     }
 
     private var needsScrolling: Bool {
-        containerWidth > 0 && textWidth > containerWidth + 1
+        containerWidth > 0 && textWidth.isFinite && textWidth > containerWidth + 1
+    }
+
+    private func normalizedWidth(_ width: CGFloat) -> CGFloat {
+        width.isFinite ? max(0, width) : 0
     }
 
     private func scrollingOffset(at date: Date) -> CGFloat {
         guard needsScrolling else { return 0 }
         let cycleWidth = textWidth + gap
+        guard cycleWidth.isFinite, cycleWidth > 0 else { return 0 }
         let distance = max(0, date.timeIntervalSince(animationStart)) * Double(speed)
         return -CGFloat(distance.truncatingRemainder(dividingBy: Double(cycleWidth)))
     }
@@ -1165,187 +1820,41 @@ private struct MarqueeTextWidthKey: PreferenceKey {
     }
 }
 
-private struct InlineItineraryMediaRecorder: View {
-    @Environment(\.modelContext) private var modelContext
-    @Bindable var item: ItineraryItem
+private struct InlineItineraryMediaGallery: View {
+    let item: ItineraryItem
     let onPlay: (MediaReference) -> Void
-    @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var mediaWarning: String?
+    private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
+    private var sortedMedia: [MediaReference] {
+        item.media.sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    @ViewBuilder
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(item.media.sorted { $0.sortOrder < $1.sortOrder }) { media in
-                    ZStack(alignment: .topTrailing) {
-                        AssetThumbnail(identifier: media.localIdentifier, showsVideoBadge: media.kind == .video)
-                            .frame(width: 76, height: 62)
-                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            .onTapGesture { onPlay(media) }
-                        Button {
-                            item.media.removeAll { $0.id == media.id }
-                            modelContext.delete(media)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .symbolRenderingMode(.palette)
-                                .foregroundStyle(.white, .black.opacity(0.58))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(4)
-                        .accessibilityLabel("移除这项图片或视频")
+        if !sortedMedia.isEmpty {
+            LazyVGrid(columns: columns, spacing: 8) {
+                ForEach(sortedMedia) { media in
+                    Button {
+                        onPlay(media)
+                    } label: {
+                        Color.clear
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                AssetThumbnail(
+                                    identifier: media.localIdentifier,
+                                    showsVideoBadge: media.kind == .video
+                                )
+                            }
+                            .clipped()
                     }
-                }
-
-                PhotosPicker(
-                    selection: $pickerItems,
-                    maxSelectionCount: 20,
-                    matching: .any(of: [.images, .videos]),
-                    photoLibrary: .shared()
-                ) {
-                    Image(systemName: "plus")
-                        .font(.title3.bold())
-                        .frame(width: 62, height: 62)
-                        .background(Color.tripLake.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .stroke(Color.tripLake.opacity(0.28), style: StrokeStyle(lineWidth: 1, dash: [4]))
-                        }
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.tripLake)
-                .accessibilityLabel("给\(item.title)添加图片或视频")
-            }
-        }
-        .onChange(of: pickerItems) { _, newValue in
-            addMedia(from: newValue)
-        }
-        .alert("相簿提示", isPresented: Binding(
-            get: { mediaWarning != nil },
-            set: { if !$0 { mediaWarning = nil } }
-        )) {
-            Button("知道了", role: .cancel) { mediaWarning = nil }
-        } message: {
-            Text(mediaWarning ?? "")
-        }
-    }
-
-    private func addMedia(from items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        let converted = PhotoLibraryService.pickedAssets(from: items)
-        if converted.count != items.count {
-                mediaWarning = "有 \(items.count - converted.count) 项无法读取相簿标识，请从系统“照片”中重选。当前权限：\(PhotoLibraryService.readableStatusText)。"
-        }
-
-        let existingIDs = Set(item.media.map(\.localIdentifier))
-        let newAssets = converted.filter { !existingIDs.contains($0.id) }
-        let firstSortOrder = (item.media.map(\.sortOrder).max() ?? -1) + 1
-        for (index, picked) in newAssets.enumerated() {
-            let reference = MediaReference(
-                localIdentifier: picked.id,
-                kind: picked.kind,
-                sortOrder: firstSortOrder + index
-            )
-            reference.itineraryItem = item
-            item.media.append(reference)
-        }
-        pickerItems = []
-    }
-}
-
-private struct ItemSwipeActionContainer<Content: View>: View {
-    private let actionWidth: CGFloat = 74
-    private let onEdit: () -> Void
-    private let onDelete: () -> Void
-    private let content: Content
-    @State private var isOpen = false
-    @GestureState private var dragOffset: CGFloat = 0
-
-    init(
-        _ onEdit: @escaping () -> Void,
-        onDelete: @escaping () -> Void,
-        @ViewBuilder content: () -> Content
-    ) {
-        self.onEdit = onEdit
-        self.onDelete = onDelete
-        self.content = content()
-    }
-
-    private var actionPanelWidth: CGFloat { actionWidth * 2 }
-
-    private var visibleOffset: CGFloat {
-        let settledOffset = isOpen ? -actionPanelWidth : 0
-        return min(0, max(-actionPanelWidth, settledOffset + dragOffset))
-    }
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 0) {
-                actionButton("编辑", systemImage: "pencil", color: .tripLake) {
-                    closeActions()
-                    onEdit()
-                }
-                actionButton("删除", systemImage: "trash", color: .red) {
-                    closeActions()
-                    onDelete()
+                    .buttonStyle(.plain)
+                    .aspectRatio(1, contentMode: .fit)
+                    .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityLabel(media.kind == .video ? "查看视频" : "查看图片")
+                    .accessibilityHint("打开大图，可左右滑动切换")
                 }
             }
-            .frame(width: actionPanelWidth)
-            .frame(maxHeight: .infinity)
-            .zIndex(isOpen ? 2 : 0)
-            .allowsHitTesting(isOpen)
-            .accessibilityHidden(!isOpen)
-
-            content
-                .offset(x: visibleOffset)
-                .contentShape(Rectangle())
-                .simultaneousGesture(swipeGesture)
-                .zIndex(1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .accessibilityAction(named: "编辑安排", onEdit)
-        .accessibilityAction(named: "删除安排", onDelete)
-    }
-
-    private func actionButton(
-        _ title: String,
-        systemImage: String,
-        color: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 6) {
-                Image(systemName: systemImage)
-                    .font(.headline)
-                Text(title)
-                    .font(.caption.weight(.semibold))
-            }
-            .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(color)
-        }
-        .buttonStyle(.plain)
-        .frame(width: actionWidth)
-    }
-
-    private var swipeGesture: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .updating($dragOffset) { value, state, _ in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                state = value.translation.width
-            }
-            .onEnded { value in
-                guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                let settledOffset = isOpen ? -actionPanelWidth : 0
-                let finalOffset = min(0, max(-actionPanelWidth, settledOffset + value.translation.width))
-                let shouldOpen = finalOffset < -(actionPanelWidth * 0.32)
-                withAnimation(.snappy(duration: 0.22)) {
-                    isOpen = shouldOpen
-                }
-            }
-    }
-
-    private func closeActions() {
-        withAnimation(.snappy(duration: 0.18)) {
-            isOpen = false
         }
     }
 }
@@ -1355,10 +1864,10 @@ private struct DayEditorView: View {
     @Bindable var day: TripDay
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Form {
                 TextField("当天标题", text: $day.title)
-                DatePicker("日期", selection: $day.date, displayedComponents: .date)
+                LabeledContent("日期", value: day.date.chineseDateText)
                 TextField("当天备注", text: $day.note, axis: .vertical).lineLimit(3...8)
             }
             .scrollDismissesKeyboard(.interactively)

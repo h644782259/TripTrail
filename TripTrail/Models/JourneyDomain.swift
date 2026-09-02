@@ -19,8 +19,8 @@ enum JourneyModuleKind {
             JourneyCapabilities(
                 supportsCompletion: false,
                 supportsReservation: false,
-                supportsPlannedTransport: true,
-                supportsBudget: true,
+                supportsPlannedTransport: false,
+                supportsBudget: false,
                 supportsSourceSync: true,
                 supportsPostTripNarrative: true
             )
@@ -76,18 +76,36 @@ struct JourneyPointSkeleton {
     let startTime: Date
     let endTime: Date
     let address: String
+    let locationMode: ArrangementLocationMode
+    let placeName: String
+    let placeAddress: String
+    let originName: String
+    let originAddress: String
+    let destinationName: String
+    let destinationAddress: String
     let supplementalInfo: String
     let transport: TransportMode
     let distanceText: String
     let cost: Double
     let sortOrder: Int
 
-    var defaultFootprintMemory: String {
+    var sourceFootprintDetails: String {
         var parts = ["类型：\(category.rawValue)"]
+
+        let locationText: String
+        switch locationMode {
+        case .single:
+            locationText = placeName
+        case .route:
+            locationText = [originName, destinationName].filter { !$0.isEmpty }.joined(separator: " → ")
+        }
+        if !locationText.isEmpty {
+            parts.append("地点：\(locationText)")
+        }
 
         let trimmedAddress = Self.cleanedPhrase(address)
         if !trimmedAddress.isEmpty {
-            parts.append("说明：\(trimmedAddress)")
+            parts.append("地址：\(trimmedAddress)")
         }
 
         let trimmedDistance = Self.cleanedPhrase(distanceText)
@@ -141,6 +159,18 @@ struct ItineraryMoveResult {
     static let unchanged = ItineraryMoveResult(didMove: false, timeAdjustments: [])
 }
 
+struct TripDayScheduleMovePlan: Equatable {
+    let movedDayID: UUID
+    let orderedDayIDs: [UUID]
+    let scheduleStartDate: Date
+    let movedDate: Date
+    let followingDayIDsToShift: [UUID]
+
+    var requiresFollowingShiftConfirmation: Bool {
+        !followingDayIDsToShift.isEmpty
+    }
+}
+
 enum JourneyHierarchyService {
     static func sortedDays<T: JourneyDayNode>(_ days: [T]) -> [T] {
         days.sorted { lhs, rhs in
@@ -176,43 +206,143 @@ enum JourneyHierarchyService {
         in days: [TripDay],
         calendar: Calendar = .current
     ) -> Bool {
+        guard let plan = tripDayScheduleMovePlan(
+            id: dayID,
+            to: targetDayID,
+            in: days,
+            calendar: calendar
+        ) else { return false }
+        return applyTripDayScheduleMovePlan(
+            plan,
+            in: days,
+            shiftFollowingDays: true,
+            calendar: calendar
+        )
+    }
+
+    static func tripDayScheduleMovePlan(
+        id dayID: UUID,
+        to targetDayID: UUID,
+        in days: [TripDay],
+        calendar: Calendar = .current
+    ) -> TripDayScheduleMovePlan? {
         let original = sortedDays(days)
-        let dateSlots = original.map(\.date)
         guard
             let sourceIndex = original.firstIndex(where: { $0.id == dayID }),
             let targetIndex = original.firstIndex(where: { $0.id == targetDayID }),
             sourceIndex != targetIndex
-        else { return false }
+        else { return nil }
 
         var reordered = original
         let movedDay = reordered.remove(at: sourceIndex)
         reordered.insert(movedDay, at: min(targetIndex, reordered.count))
+        guard let movedIndex = reordered.firstIndex(where: { $0.id == dayID }) else { return nil }
+        guard let firstDate = original.map({ calendar.startOfDay(for: $0.date) }).min(),
+              let movedDate = calendar.date(byAdding: .day, value: movedIndex, to: firstDate)
+        else { return nil }
 
-        for (index, day) in reordered.enumerated() {
+        return TripDayScheduleMovePlan(
+            movedDayID: dayID,
+            orderedDayIDs: reordered.map(\.id),
+            scheduleStartDate: firstDate,
+            movedDate: movedDate,
+            followingDayIDsToShift: []
+        )
+    }
+
+    @discardableResult
+    static func applyTripDayScheduleMovePlan(
+        _ plan: TripDayScheduleMovePlan,
+        in days: [TripDay],
+        shiftFollowingDays _: Bool,
+        calendar: Calendar = .current
+    ) -> Bool {
+        let daysByID = Dictionary(uniqueKeysWithValues: days.map { ($0.id, $0) })
+        guard plan.orderedDayIDs.count == days.count,
+              Set(plan.orderedDayIDs) == Set(daysByID.keys),
+              daysByID[plan.movedDayID] != nil
+        else { return false }
+
+        for (index, dayID) in plan.orderedDayIDs.enumerated() {
+            daysByID[dayID]?.sortOrder = index
+        }
+        normalizeTripDays(days, startingAt: plan.scheduleStartDate, calendar: calendar)
+        return true
+    }
+
+    /// Re-establishes the journey invariant: business order is defined by `sortOrder`,
+    /// and every day after the first is exactly one calendar day later.
+    @discardableResult
+    static func normalizeTripDaySchedule(
+        _ trip: Trip,
+        startingAt startDate: Date? = nil,
+        calendar: Calendar = .current
+    ) -> Bool {
+        let normalizedStart = calendar.startOfDay(for: startDate ?? trip.startDate)
+        let changed = normalizeTripDays(trip.days, startingAt: normalizedStart, calendar: calendar)
+        let normalizedEnd: Date
+        if trip.days.isEmpty {
+            normalizedEnd = max(normalizedStart, calendar.startOfDay(for: trip.endDate))
+        } else {
+            normalizedEnd = calendar.date(
+                byAdding: .day,
+                value: trip.days.count - 1,
+                to: normalizedStart
+            ) ?? normalizedStart
+        }
+        let rangeChanged = trip.startDate != normalizedStart || trip.endDate != normalizedEnd
+        trip.startDate = normalizedStart
+        trip.endDate = normalizedEnd
+        return changed || rangeChanged
+    }
+
+    @discardableResult
+    private static func normalizeTripDays(
+        _ days: [TripDay],
+        startingAt startDate: Date,
+        calendar: Calendar
+    ) -> Bool {
+        let orderedDays = sortedDays(days)
+        var changed = false
+        for (index, day) in orderedDays.enumerated() {
             let oldDate = day.date
-            let newDate = dateSlots[index]
-            day.sortOrder = index
-            day.date = newDate
-            if isOrdinalDayTitle(day.title) {
-                day.title = "第 \(index + 1) 天"
+            let expectedDate = calendar.date(byAdding: .day, value: index, to: startDate) ?? startDate
+            if day.sortOrder != index {
+                day.sortOrder = index
+                changed = true
             }
-            guard !calendar.isDate(oldDate, inSameDayAs: newDate) else { continue }
+            if isOrdinalDayTitle(day.title) {
+                let expectedTitle = "第 \(index + 1) 天"
+                if day.title != expectedTitle {
+                    day.title = expectedTitle
+                    changed = true
+                }
+            }
+            guard !calendar.isDate(oldDate, inSameDayAs: expectedDate) else {
+                if day.date != expectedDate {
+                    day.date = expectedDate
+                    changed = true
+                }
+                continue
+            }
+            day.date = expectedDate
+            changed = true
             for item in day.items {
                 item.startTime = shiftedDate(
                     item.startTime,
                     whenTripStartMovesFrom: oldDate,
-                    to: newDate,
+                    to: expectedDate,
                     calendar: calendar
                 )
                 item.endTime = shiftedDate(
                     item.endTime,
                     whenTripStartMovesFrom: oldDate,
-                    to: newDate,
+                    to: expectedDate,
                     calendar: calendar
                 )
             }
         }
-        return true
+        return changed
     }
 
     private static func isOrdinalDayTitle(_ title: String) -> Bool {
@@ -571,13 +701,11 @@ enum JourneyHierarchyService {
         to trip: Trip,
         calendar: Calendar = .current
     ) -> TripDay {
+        normalizeTripDaySchedule(trip, calendar: calendar)
         let seed = nextDaySeed(after: trip.days, fallbackDate: trip.startDate, calendar: calendar)
         let day = TripDay(date: seed.date, title: seed.title, sortOrder: seed.sortOrder, trip: trip)
         trip.days.append(day)
-
-        if calendar.startOfDay(for: seed.date) > calendar.startOfDay(for: trip.endDate) {
-            trip.endDate = calendar.startOfDay(for: seed.date)
-        }
+        normalizeTripDaySchedule(trip, calendar: calendar)
         return day
     }
 
@@ -649,20 +777,16 @@ enum JourneyHierarchyService {
         _ trip: Trip,
         startDate: Date,
         endDate: Date,
-        calendar: Calendar = .current
+        calendar: Calendar = .current,
+        relativeTo referenceDate: Date = Date()
     ) {
         let normalizedStart = calendar.startOfDay(for: startDate)
-        let normalizedEnd = max(normalizedStart, calendar.startOfDay(for: endDate))
-        let currentScheduleStart = sortedDays(trip.days).first?.date ?? trip.startDate
-
-        shiftTripScheduleDates(
-            trip,
-            from: currentScheduleStart,
-            to: normalizedStart,
-            calendar: calendar
-        )
         trip.startDate = normalizedStart
-        trip.endDate = normalizedEnd
+        trip.endDate = max(normalizedStart, calendar.startOfDay(for: endDate))
+        normalizeTripDaySchedule(trip, startingAt: normalizedStart, calendar: calendar)
+        for day in trip.days {
+            day.completeElapsedItems(relativeTo: referenceDate)
+        }
     }
 
     static func hasUserContent<P: JourneyPointNode>(_ point: P) -> Bool {
@@ -692,6 +816,15 @@ extension ItineraryItem {
             startTime: startTime,
             endTime: endTime,
             address: address,
+            locationMode: locationMode,
+            placeName: placeName.isEmpty && locationModeRaw.isEmpty
+                ? JourneyLocationText.entityName(from: title, arrangementTitle: title)
+                : placeName,
+            placeAddress: placeAddress,
+            originName: originName,
+            originAddress: originAddress,
+            destinationName: destinationName,
+            destinationAddress: destinationAddress,
             supplementalInfo: note,
             transport: transport,
             distanceText: distanceText,
@@ -703,21 +836,30 @@ extension ItineraryItem {
 
 extension StoryEntry {
     func apply(_ skeleton: JourneyPointSkeleton) {
+        let previousSourceDetails = sourceMemoryPrefill?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let currentMemory = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasUserMemory = !currentMemory.isEmpty && currentMemory != previousSourceDetails
+
         sourceItemID = skeleton.sourceID
         title = skeleton.title
         category = skeleton.category
         startTime = skeleton.startTime
         endTime = skeleton.endTime
         timeLabel = "\(skeleton.startTime.timeText)～\(skeleton.endTime.timeText)"
-        if !didPrefillSourceMemory {
-            if note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                let prefill = skeleton.defaultFootprintMemory
-                note = prefill
-                sourceMemoryPrefill = prefill
-            }
-            didPrefillSourceMemory = true
+        sourceMemoryPrefill = skeleton.sourceFootprintDetails
+        if !hasUserMemory {
+            note = ""
         }
+        didPrefillSourceMemory = true
         address = ""
+        locationMode = skeleton.locationMode
+        placeName = skeleton.placeName
+        placeAddress = skeleton.placeAddress
+        originName = skeleton.originName
+        originAddress = skeleton.originAddress
+        destinationName = skeleton.destinationName
+        destinationAddress = skeleton.destinationAddress
         supplementalInfo = ""
         transport = .car
         distanceText = ""

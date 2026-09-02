@@ -32,6 +32,7 @@ targets:
       - sdk: AVKit.framework
       - sdk: MapKit.framework
       - sdk: Vision.framework
+      - sdk: Security.framework
   TripTrailTests:
     type: bundle.unit-test
     platform: iOS

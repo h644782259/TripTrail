@@ -4,6 +4,180 @@ import XCTest
 
 @MainActor
 final class TravelStoryTests: XCTestCase {
+    func testDebugRouteSamplesAreAddedOnceWithOriginAndDestination() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let date = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16)))
+        let trip = Trip(
+            title: "厦门海风旧游（测试）",
+            destination: "厦门",
+            startDate: date,
+            endDate: date
+        )
+        trip.id = try XCTUnwrap(UUID(uuidString: "00000000-0000-4000-8000-000000000003"))
+        let day = TripDay(date: date, title: "鼓浪屿一日", sortOrder: 0, trip: trip)
+        day.id = try XCTUnwrap(UUID(uuidString: "00000000-0000-4000-8000-000000000030"))
+        trip.days = [day]
+
+        XCTAssertTrue(DebugSampleDataService.ensureRouteSamples(in: [trip], calendar: calendar))
+        XCTAssertFalse(DebugSampleDataService.ensureRouteSamples(in: [trip], calendar: calendar))
+
+        let routes = day.sortedItems.filter { $0.locationMode == .route }
+        XCTAssertEqual(routes.count, 3)
+        XCTAssertEqual(routes.map(\.originName), ["厦门站", "三丘田码头", "菽庄花园"])
+        XCTAssertEqual(routes.map(\.destinationName), ["厦门邮轮中心厦鼓码头", "菽庄花园", "厦门站"])
+        XCTAssertTrue(routes.allSatisfy { $0.executionStatus == .completed })
+    }
+
+    func testFavoriteFilteringSearchesArrangementFieldsAndCategory() {
+        let first = ItineraryItem(
+            title: "西湖日落",
+            category: .attraction,
+            startTime: Date(),
+            endTime: Date(),
+            sortOrder: 0
+        )
+        first.isFavorite = true
+        first.placeName = "曲院风荷"
+        first.note = "想在傍晚去"
+
+        let second = ItineraryItem(
+            title: "楼外楼",
+            category: .restaurant,
+            startTime: Date(),
+            endTime: Date(),
+            sortOrder: 0
+        )
+        second.isFavorite = true
+        second.placeName = "孤山路"
+
+        let scheduled = ItineraryItem(
+            title: "已排入旅程",
+            category: .attraction,
+            startTime: Date(),
+            endTime: Date(),
+            sortOrder: 0
+        )
+
+        XCTAssertEqual(
+            FavoriteArrangementService.filtered(
+                [first, second, scheduled],
+                searchText: "曲院",
+                category: nil
+            ).map(\.id),
+            [first.id]
+        )
+        XCTAssertEqual(
+            FavoriteArrangementService.filtered(
+                [first, second, scheduled],
+                searchText: "",
+                category: .restaurant
+            ).map(\.id),
+            [second.id]
+        )
+    }
+
+    func testFootprintBrowsingSearchesNestedPlacesAndGroupsFilteredResultsByYear() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let hangzhouDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 8, day: 29)))
+        let xiamenDate = try XCTUnwrap(calendar.date(from: DateComponents(year: 2025, month: 7, day: 16)))
+
+        let hangzhou = TravelStory(
+            title: "杭州湖畔慢游",
+            destination: "杭州",
+            startDate: hangzhouDate,
+            endDate: hangzhouDate,
+            summary: "沿着湖边慢慢走"
+        )
+        let hangzhouDay = StoryDay(date: hangzhouDate, title: "西湖环线", sortOrder: 0, story: hangzhou)
+        let bridge = StoryEntry(title: "晨间散步", category: .attraction, sortOrder: 0)
+        bridge.placeName = "断桥残雪"
+        bridge.story = hangzhou
+        bridge.storyDay = hangzhouDay
+        let media = MediaReference(localIdentifier: "photo-1", kind: .image)
+        media.storyEntry = bridge
+        bridge.media = [media]
+        hangzhouDay.entries = [bridge]
+        hangzhou.days = [hangzhouDay]
+        hangzhou.entries = [bridge]
+
+        let xiamen = TravelStory(
+            title: "厦门海风手记",
+            destination: "厦门",
+            startDate: xiamenDate,
+            endDate: xiamenDate,
+            summary: "纯文字足迹"
+        )
+
+        XCTAssertEqual(
+            FootprintBrowseService.filtered(
+                [xiamen, hangzhou],
+                searchText: "断桥",
+                year: nil,
+                calendar: calendar
+            ).map(\.id),
+            [hangzhou.id]
+        )
+        XCTAssertEqual(
+            FootprintBrowseService.filtered(
+                [xiamen, hangzhou],
+                searchText: "",
+                year: 2026,
+                calendar: calendar
+            ).map(\.id),
+            [hangzhou.id]
+        )
+        XCTAssertEqual(
+            FootprintBrowseService.groupedByYear([xiamen, hangzhou], calendar: calendar).map(\.year),
+            [2026, 2025]
+        )
+    }
+
+    func testImportingMultipleFavoritesCopiesFieldsAndSchedulesSequentially() {
+        let calendar = Calendar(identifier: .gregorian)
+        let date = calendar.date(from: DateComponents(year: 2026, month: 9, day: 1, hour: 9))!
+        let day = TripDay(date: date, title: "第一天", sortOrder: 0)
+
+        let first = ItineraryItem(
+            title: "拙政园",
+            category: .attraction,
+            startTime: date,
+            endTime: date,
+            sortOrder: 0
+        )
+        first.isFavorite = true
+        first.placeName = "拙政园"
+        first.placeAddress = "东北街178号"
+        first.playDurationMinutes = 90
+        first.cost = 80
+
+        let second = ItineraryItem(
+            title: "平江路",
+            category: .attraction,
+            startTime: date,
+            endTime: date,
+            sortOrder: 0
+        )
+        second.isFavorite = true
+        second.placeName = "平江路"
+        second.playDurationMinutes = 60
+
+        let imported = FavoriteArrangementService.importFavorites(
+            [first, second],
+            into: day,
+            calendar: calendar
+        )
+
+        XCTAssertEqual(imported.count, 2)
+        XCTAssertEqual(imported[0].sourceFavoriteID, first.id)
+        XCTAssertEqual(imported[0].placeAddress, "东北街178号")
+        XCTAssertEqual(imported[0].cost, 80)
+        XCTAssertFalse(imported[0].isFavorite)
+        XCTAssertEqual(imported[0].startTime, date)
+        XCTAssertEqual(imported[0].endTime, date.addingTimeInterval(90 * 60))
+        XCTAssertEqual(imported[1].startTime, imported[0].endTime)
+        XCTAssertEqual(day.sortedItems.map(\.title), ["拙政园", "平江路"])
+    }
+
     func testPlaceCategoriesHideRemovedOptionsAndMapLegacyValuesToOther() {
         XCTAssertTrue(PlaceCategory.allCases.contains(.other))
         XCTAssertFalse(PlaceCategory.allCases.contains(.shopping))
@@ -66,7 +240,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(HierarchyDeletionCopy.itineraryItemTitle, "删除安排？")
         XCTAssertEqual(HierarchyDeletionCopy.storyTitle, "删除足迹？")
         XCTAssertEqual(HierarchyDeletionCopy.storyDayTitle, "删除当天？")
-        XCTAssertEqual(HierarchyDeletionCopy.storyEntryTitle, "删除足迹安排？")
+        XCTAssertEqual(HierarchyDeletionCopy.storyEntryTitle, "删除这条记录？")
         XCTAssertTrue(HierarchyDeletionCopy.tripMessage(title: "杭州").contains("每日安排"))
         XCTAssertTrue(HierarchyDeletionCopy.storyMessage(title: "杭州").contains("原旅程不会受到影响"))
     }
@@ -198,7 +372,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertFalse(day.shouldAutomaticallyCollapse(relativeTo: now, calendar: calendar))
     }
 
-    func testManuallyReopenedElapsedArrangementStaysOpenDuringLaterDetection() {
+    func testLegacyManualOverrideNoLongerBlocksTimeBasedStatus() {
         let now = Date()
         let item = ItineraryItem(
             title: "已结束安排",
@@ -208,13 +382,126 @@ final class TravelStoryTests: XCTestCase {
             sortOrder: 0
         )
 
-        XCTAssertTrue(item.completeIfElapsed(relativeTo: now))
-        item.toggleCompletionManually(relativeTo: now)
-        XCTAssertFalse(item.isCompleted)
-        XCTAssertTrue(item.isAutomaticCompletionOverridden)
+        item.executionStatus = .notStarted
+        item.isAutomaticCompletionOverridden = true
 
-        XCTAssertFalse(item.completeIfElapsed(relativeTo: now.addingTimeInterval(3_600)))
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: now))
+        XCTAssertTrue(item.isCompleted)
+        XCTAssertFalse(item.isAutomaticCompletionOverridden)
+    }
+
+    func testExecutionStatusAutomaticallyAdvancesThroughAllThreeStages() {
+        let start = Date(timeIntervalSince1970: 2_000_000_000)
+        let item = ItineraryItem(
+            title: "游览世纪公园",
+            category: .attraction,
+            startTime: start,
+            endTime: start.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+
+        XCTAssertEqual(item.executionStatus, .notStarted)
+        XCTAssertFalse(item.completeIfElapsed(relativeTo: start.addingTimeInterval(-1)))
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: start.addingTimeInterval(60)))
+        XCTAssertEqual(item.executionStatus, .inProgress)
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: start.addingTimeInterval(3_601)))
+        XCTAssertEqual(item.executionStatus, .completed)
+        XCTAssertTrue(item.isCompleted)
+    }
+
+    func testAutomaticExecutionStatusMovesBackWhenScheduleMovesIntoFuture() {
+        let start = Date(timeIntervalSince1970: 2_000_000_000)
+        let item = ItineraryItem(
+            title: "游览世纪公园",
+            category: .attraction,
+            startTime: start,
+            endTime: start.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: start.addingTimeInterval(7_200)))
+        XCTAssertEqual(item.executionStatus, .completed)
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: start.addingTimeInterval(-1)))
+        XCTAssertEqual(item.executionStatus, .notStarted)
         XCTAssertFalse(item.isCompleted)
+    }
+
+    func testLocationTargetsSeparateArrangementCopyFromMapEntities() throws {
+        let date = Date()
+        let single = ItineraryItem(
+            title: "外滩夜景",
+            category: .attraction,
+            startTime: date,
+            endTime: date,
+            sortOrder: 0
+        )
+        single.locationMode = .single
+        single.placeName = "外滩夜景"
+        single.placeAddress = "上海市黄浦区中山东一路"
+
+        XCTAssertEqual(try XCTUnwrap(single.primaryNavigationTarget).displayName, "外滩")
+        XCTAssertEqual(single.locationSummary, "外滩")
+        XCTAssertEqual(
+            JourneyLocationText.entityName(from: "外滩夜景", arrangementTitle: "拍摄外滩夜景"),
+            "外滩"
+        )
+        XCTAssertEqual(
+            JourneyLocationText.entityName(from: "虹桥机场集合", arrangementTitle: "等待同行人集合"),
+            "虹桥机场"
+        )
+        XCTAssertEqual(
+            JourneyLocationText.entityName(from: "高铁抵达杭州东站", arrangementTitle: "高铁抵达杭州东站"),
+            "杭州东站"
+        )
+        XCTAssertEqual(
+            JourneyLocationText.entityName(from: "断桥晨光", arrangementTitle: "断桥晨光"),
+            "断桥"
+        )
+
+        let route = ItineraryItem(
+            title: "广州 → 上海",
+            category: .transport,
+            startTime: date,
+            endTime: date,
+            sortOrder: 1
+        )
+        route.locationMode = .route
+        route.originName = "广州 白云T3出发"
+        route.destinationName = "上海 虹桥T1到达"
+
+        XCTAssertEqual(route.nextNavigationTarget?.displayName, "广州 白云T3")
+        XCTAssertEqual(route.primaryNavigationTarget?.displayName, "上海 虹桥T1")
+        XCTAssertEqual(route.locationSummary, "广州 白云T3 → 上海 虹桥T1")
+    }
+
+    func testRoutePlanningOrdersByTimeFlattensRoutesAndDeduplicatesConnections() {
+        let date = Date(timeIntervalSince1970: 2_000_000_000)
+        let day = TripDay(date: date, title: "全天", sortOrder: 0)
+        let later = ItineraryItem(
+            title: "外滩夜景",
+            category: .attraction,
+            startTime: date.addingTimeInterval(7_200),
+            endTime: date.addingTimeInterval(10_800),
+            sortOrder: 0
+        )
+        later.locationMode = .single
+        later.placeName = "外滩"
+        let earlier = ItineraryItem(
+            title: "虹桥机场 → 外滩",
+            category: .transport,
+            startTime: date,
+            endTime: date.addingTimeInterval(3_600),
+            sortOrder: 1
+        )
+        earlier.locationMode = .route
+        earlier.originName = "上海虹桥国际机场 T2"
+        earlier.destinationName = "外滩"
+        day.items = [later, earlier]
+
+        let points = ItineraryRoutePlanning.points(in: [day])
+
+        XCTAssertEqual(points.map(\.target.displayName), ["上海虹桥国际机场 T2", "外滩"])
+        XCTAssertEqual(points.map(\.arrangementTitle), ["虹桥机场 → 外滩", "虹桥机场 → 外滩"])
     }
 
     func testCompletedDayCollapsesButEmptyDayStaysExpanded() {
@@ -371,10 +658,121 @@ final class TravelStoryTests: XCTestCase {
         )
 
         XCTAssertEqual(trip.startDate, newStart)
-        XCTAssertEqual(trip.endDate, newEnd)
+        XCTAssertEqual(trip.endDate, newStart)
         XCTAssertEqual(day.date, newStart)
         XCTAssertEqual(calendar.component(.day, from: item.startTime), 5)
         XCTAssertEqual(calendar.component(.hour, from: item.startTime), 9)
+    }
+
+    func testUpdatingTripDateRangeImmediatelyRefreshesAutomaticExecutionStatus() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let pastStart = calendar.date(from: DateComponents(year: 2026, month: 8, day: 20))!
+        let futureStart = calendar.date(from: DateComponents(year: 2026, month: 9, day: 8))!
+        let referenceDate = calendar.date(from: DateComponents(year: 2026, month: 9, day: 2, hour: 12))!
+        let itemStart = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: pastStart)!
+        let item = ItineraryItem(
+            title: "康定至泸定桥",
+            category: .transport,
+            startTime: itemStart,
+            endTime: itemStart.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        let day = TripDay(date: pastStart, title: "第 1 天", sortOrder: 0)
+        day.items = [item]
+        let trip = Trip(
+            title: "川西旅程",
+            destination: "川西",
+            startDate: pastStart,
+            endDate: pastStart
+        )
+        trip.days = [day]
+
+        XCTAssertTrue(item.completeIfElapsed(relativeTo: referenceDate))
+        XCTAssertEqual(item.executionStatus, .completed)
+
+        JourneyHierarchyService.updateTripDateRange(
+            trip,
+            startDate: futureStart,
+            endDate: futureStart,
+            calendar: calendar,
+            relativeTo: referenceDate
+        )
+
+        XCTAssertEqual(day.date, futureStart)
+        XCTAssertEqual(calendar.component(.day, from: item.startTime), 8)
+        XCTAssertEqual(item.executionStatus, .notStarted)
+        XCTAssertFalse(item.isCompleted)
+    }
+
+    func testNormalizeTripDayScheduleRepairsDateGapsAndRebasesItemTimes() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let august25 = calendar.date(from: DateComponents(year: 2026, month: 8, day: 25))!
+        let august26 = calendar.date(byAdding: .day, value: 1, to: august25)!
+        let september2 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 2))!
+        let expectedThirdDate = calendar.date(byAdding: .day, value: 2, to: august25)!
+        let itemStart = calendar.date(bySettingHour: 21, minute: 39, second: 0, of: september2)!
+        let item = ItineraryItem(
+            title: "湖畔自由漫步",
+            category: .attraction,
+            startTime: itemStart,
+            endTime: itemStart.addingTimeInterval(5_400),
+            sortOrder: 0
+        )
+        let firstDay = TripDay(date: august25, title: "第 1 天", sortOrder: 0)
+        let secondDay = TripDay(date: august26, title: "西湖一日", sortOrder: 1)
+        let thirdDay = TripDay(date: september2, title: "第 3 天", sortOrder: 2)
+        thirdDay.items = [item]
+        let trip = Trip(
+            title: "杭州",
+            destination: "杭州",
+            startDate: august25,
+            endDate: september2
+        )
+        trip.days = [thirdDay, firstDay, secondDay]
+
+        XCTAssertTrue(JourneyHierarchyService.normalizeTripDaySchedule(trip, calendar: calendar))
+        XCTAssertEqual(trip.sortedDays.map(\.date), [august25, august26, expectedThirdDate])
+        XCTAssertEqual(trip.sortedDays.map(\.sortOrder), [0, 1, 2])
+        XCTAssertEqual(trip.endDate, expectedThirdDate)
+        XCTAssertEqual(calendar.component(.day, from: item.startTime), 27)
+        XCTAssertEqual(calendar.component(.hour, from: item.startTime), 21)
+        XCTAssertEqual(calendar.component(.minute, from: item.startTime), 39)
+        XCTAssertEqual(item.endTime.timeIntervalSince(item.startTime), 5_400)
+        XCTAssertFalse(JourneyHierarchyService.normalizeTripDaySchedule(trip, calendar: calendar))
+    }
+
+    func testNormalizeTripDayScheduleClosesGapAfterDeletingMiddleDay() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = calendar.date(from: DateComponents(year: 2026, month: 8, day: 25))!
+        let secondDate = calendar.date(byAdding: .day, value: 1, to: start)!
+        let thirdDate = calendar.date(byAdding: .day, value: 2, to: start)!
+        let firstDay = TripDay(date: start, title: "第 1 天", sortOrder: 0)
+        let secondDay = TripDay(date: secondDate, title: "第 2 天", sortOrder: 1)
+        let thirdDay = TripDay(date: thirdDate, title: "第 3 天", sortOrder: 2)
+        let itemStart = calendar.date(bySettingHour: 14, minute: 0, second: 0, of: thirdDate)!
+        let item = ItineraryItem(
+            title: "龙井村",
+            category: .attraction,
+            startTime: itemStart,
+            endTime: itemStart.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        thirdDay.items = [item]
+        let trip = Trip(title: "杭州", destination: "杭州", startDate: start, endDate: thirdDate)
+        trip.days = [firstDay, secondDay, thirdDay]
+
+        trip.days.removeAll { $0.id == secondDay.id }
+        JourneyHierarchyService.normalizeTripDaySchedule(trip, calendar: calendar)
+
+        XCTAssertEqual(trip.sortedDays.map(\.id), [firstDay.id, thirdDay.id])
+        XCTAssertEqual(trip.sortedDays.map(\.date), [start, secondDate])
+        XCTAssertEqual(trip.sortedDays.map(\.title), ["第 1 天", "第 2 天"])
+        XCTAssertEqual(trip.endDate, secondDate)
+        XCTAssertTrue(calendar.isDate(item.startTime, inSameDayAs: secondDate))
+        XCTAssertEqual(calendar.component(.hour, from: item.startTime), 14)
     }
 
     func testTripTimelineOrderingPrioritizesCurrentThenUpcomingThenHistory() {
@@ -471,7 +869,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(history, TripCalendarProgress(currentDay: 7, totalDays: 7, phase: .history))
     }
 
-    func testMoveTripDayScheduleReordersDaysAndKeepsDateSlots() {
+    func testMoveTripDayScheduleBeforeFirstKeepsTripStartAndReassignsConsecutiveDates() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let firstDate = calendar.date(from: DateComponents(year: 2026, month: 8, day: 29))!
@@ -509,6 +907,168 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(item.endTime.timeIntervalSince(item.startTime), 7_200)
     }
 
+    func testTripDayMoveUsesAvailableDateGapWithoutShiftingFollowingDays() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let september24 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 24))!
+        let september26 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 26))!
+        let september27 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 27))!
+        let september28 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 28))!
+        let firstDay = TripDay(date: september24, title: "9月24日", sortOrder: 0)
+        let secondDay = TripDay(date: september26, title: "9月26日", sortOrder: 1)
+        let thirdDay = TripDay(date: september27, title: "9月27日", sortOrder: 2)
+        let insertedDay = TripDay(date: september28, title: "新增一天", sortOrder: 3)
+        let days = [firstDay, secondDay, thirdDay, insertedDay]
+
+        let plan = try XCTUnwrap(
+            JourneyHierarchyService.tripDayScheduleMovePlan(
+                id: insertedDay.id,
+                to: secondDay.id,
+                in: days,
+                calendar: calendar
+            )
+        )
+
+        XCTAssertFalse(plan.requiresFollowingShiftConfirmation)
+        XCTAssertTrue(calendar.isDate(plan.movedDate, inSameDayAs: calendar.date(byAdding: .day, value: 1, to: september24)!))
+        XCTAssertTrue(
+            JourneyHierarchyService.applyTripDayScheduleMovePlan(
+                plan,
+                in: days,
+                shiftFollowingDays: false,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            JourneyHierarchyService.sortedDays(days).map(\.id),
+            [firstDay.id, insertedDay.id, secondDay.id, thirdDay.id]
+        )
+        XCTAssertTrue(calendar.isDate(secondDay.date, inSameDayAs: september26))
+        XCTAssertTrue(calendar.isDate(thirdDay.date, inSameDayAs: september27))
+    }
+
+    func testTripDayMoveBetweenAdjacentDatesAlwaysReassignsConsecutiveDates() throws {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let september24 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 24))!
+        let september25 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 25))!
+        let september26 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 26))!
+        let september27 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 27))!
+        let firstDay = TripDay(date: september24, title: "9月24日", sortOrder: 0)
+        let secondDay = TripDay(date: september25, title: "9月25日", sortOrder: 1)
+        let thirdDay = TripDay(date: september26, title: "9月26日", sortOrder: 2)
+        let insertedDay = TripDay(date: september27, title: "新增一天", sortOrder: 3)
+        let days = [firstDay, secondDay, thirdDay, insertedDay]
+
+        let plan = try XCTUnwrap(
+            JourneyHierarchyService.tripDayScheduleMovePlan(
+                id: insertedDay.id,
+                to: secondDay.id,
+                in: days,
+                calendar: calendar
+            )
+        )
+
+        XCTAssertFalse(plan.requiresFollowingShiftConfirmation)
+        XCTAssertTrue(plan.followingDayIDsToShift.isEmpty)
+        XCTAssertTrue(
+            JourneyHierarchyService.applyTripDayScheduleMovePlan(
+                plan,
+                in: days,
+                shiftFollowingDays: false,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            JourneyHierarchyService.sortedDays(days).map(\.id),
+            [firstDay.id, insertedDay.id, secondDay.id, thirdDay.id]
+        )
+        XCTAssertTrue(calendar.isDate(insertedDay.date, inSameDayAs: september25))
+        XCTAssertTrue(calendar.isDate(secondDay.date, inSameDayAs: september26))
+        XCTAssertTrue(calendar.isDate(thirdDay.date, inSameDayAs: september27))
+    }
+
+    func testDayDropCommitsLastPreviewDestinationAfterLiveCardsMove() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let firstDate = calendar.date(from: DateComponents(year: 2026, month: 8, day: 29))!
+        let secondDate = calendar.date(byAdding: .day, value: 1, to: firstDate)!
+        let thirdDate = calendar.date(byAdding: .day, value: 2, to: firstDate)!
+        let firstDay = TripDay(date: firstDate, title: "西湖", sortOrder: 0)
+        let secondDay = TripDay(date: secondDate, title: "灵隐寺", sortOrder: 1)
+        let thirdDay = TripDay(date: thirdDate, title: "龙井村", sortOrder: 2)
+        let days = [firstDay, secondDay, thirdDay]
+        let originalDayIDs = days.map(\.id)
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveTripDay(
+                id: thirdDay.id,
+                to: firstDay.id,
+                in: days
+            )
+        )
+        XCTAssertEqual(
+            JourneyHierarchyService.sortedDays(days).map(\.id),
+            [thirdDay.id, firstDay.id, secondDay.id]
+        )
+
+        // Live displacement can put the dragged card under the pointer at release.
+        // Restore the original slots, then commit the last target the user actually saw.
+        let daysByID = Dictionary(uniqueKeysWithValues: days.map { ($0.id, $0) })
+        for (index, dayID) in originalDayIDs.enumerated() {
+            daysByID[dayID]?.sortOrder = index
+        }
+        let committedDayID = resolvedTripDayDropDestination(
+            lastPreviewDayID: firstDay.id,
+            reportedDayID: thirdDay.id
+        )
+
+        XCTAssertEqual(committedDayID, firstDay.id)
+        XCTAssertTrue(
+            JourneyHierarchyService.moveTripDaySchedule(
+                id: thirdDay.id,
+                to: committedDayID,
+                in: days,
+                calendar: calendar
+            )
+        )
+        XCTAssertEqual(
+            JourneyHierarchyService.sortedDays(days).map(\.id),
+            [thirdDay.id, firstDay.id, secondDay.id]
+        )
+        XCTAssertEqual(thirdDay.date, firstDate)
+        XCTAssertEqual(firstDay.date, secondDate)
+        XCTAssertEqual(secondDay.date, thirdDate)
+    }
+
+    func testDayDragBackToOriginalOrderIsTreatedAsUnchanged() {
+        let date = Date()
+        let firstDay = TripDay(date: date, title: "第一天", sortOrder: 0)
+        let secondDay = TripDay(date: date.addingTimeInterval(86_400), title: "第二天", sortOrder: 1)
+        let thirdDay = TripDay(date: date.addingTimeInterval(172_800), title: "第三天", sortOrder: 2)
+        let days = [firstDay, secondDay, thirdDay]
+        let originalDayIDs = days.map(\.id)
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveTripDay(
+                id: thirdDay.id,
+                to: firstDay.id,
+                in: days
+            )
+        )
+        XCTAssertFalse(hasOriginalTripDayOrder(originalDayIDs, in: days))
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveTripDay(
+                id: thirdDay.id,
+                to: secondDay.id,
+                in: days
+            )
+        )
+        XCTAssertEqual(JourneyHierarchyService.sortedDays(days).map(\.id), originalDayIDs)
+        XCTAssertTrue(hasOriginalTripDayOrder(originalDayIDs, in: days))
+    }
+
     func testDragPreviewReordersWithoutChangingStoredTimes() {
         let calendar = Calendar(identifier: .gregorian)
         let date = calendar.date(from: DateComponents(year: 2026, month: 8, day: 29))!
@@ -535,7 +1095,112 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(third.startTime, fourteen)
     }
 
-    func testAppendingDayExtendsTripEndDateOnlyWhenNewDayExceedsRange() {
+    func testDropCommitsLastPreviewDestinationWhenLiveReorderingMovesDropView() {
+        let calendar = Calendar(identifier: .gregorian)
+        let date = calendar.date(from: DateComponents(year: 2026, month: 8, day: 29))!
+        let nine = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: date)!
+        let eleven = calendar.date(bySettingHour: 11, minute: 0, second: 0, of: date)!
+        let day = TripDay(date: date, title: "第一天", sortOrder: 0)
+        let first = ItineraryItem(
+            title: "东方明珠",
+            category: .attraction,
+            startTime: nine,
+            endTime: nine.addingTimeInterval(3600),
+            sortOrder: 0
+        )
+        let second = ItineraryItem(
+            title: "上海滩",
+            category: .attraction,
+            startTime: eleven,
+            endTime: eleven.addingTimeInterval(3600),
+            sortOrder: 1
+        )
+        day.items = [first, second]
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveItineraryItem(
+                id: first.id,
+                to: second.id,
+                in: [day]
+            )
+        )
+        XCTAssertEqual(day.sortedItems.map(\.id), [second.id, first.id])
+
+        // The live swap places the dragged card under the pointer, so SwiftUI can report
+        // `first` as the final drop view. Restoring and committing the last valid preview
+        // target must still preserve the order shown to the user.
+        first.sortOrder = 0
+        second.sortOrder = 1
+        let lastPreviewDestination = ItineraryDropDestination.item(second.id)
+        let reportedDestination = ItineraryDropDestination.item(first.id)
+        let committedDestination = resolvedItineraryDropDestination(
+            lastPreview: lastPreviewDestination,
+            reported: reportedDestination
+        )
+
+        guard case let .item(targetID) = committedDestination else {
+            return XCTFail("Expected an item drop destination")
+        }
+        XCTAssertNotEqual(committedDestination, reportedDestination)
+        let result = JourneyHierarchyService.moveItineraryItemResult(
+            id: first.id,
+            to: targetID,
+            in: [day],
+            calendar: calendar
+        )
+
+        XCTAssertTrue(result.didMove)
+        XCTAssertEqual(day.sortedItems.map(\.id), [second.id, first.id])
+    }
+
+    func testItineraryDragBackToOriginalOrderIsTreatedAsUnchanged() {
+        let date = Date()
+        let day = TripDay(date: date, title: "第一天", sortOrder: 0)
+        let first = ItineraryItem(
+            title: "第一站",
+            category: .attraction,
+            startTime: date,
+            endTime: date.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        let second = ItineraryItem(
+            title: "第二站",
+            category: .attraction,
+            startTime: date.addingTimeInterval(3_600),
+            endTime: date.addingTimeInterval(7_200),
+            sortOrder: 1
+        )
+        let third = ItineraryItem(
+            title: "第三站",
+            category: .attraction,
+            startTime: date.addingTimeInterval(7_200),
+            endTime: date.addingTimeInterval(10_800),
+            sortOrder: 2
+        )
+        day.items = [first, second, third]
+        let originalItemsByDay = [day.id: day.sortedItems.map(\.id)]
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveItineraryItem(
+                id: first.id,
+                to: third.id,
+                in: [day]
+            )
+        )
+        XCTAssertFalse(hasOriginalItineraryOrder(originalItemsByDay, in: [day]))
+
+        XCTAssertTrue(
+            JourneyHierarchyService.previewMoveItineraryItem(
+                id: first.id,
+                to: second.id,
+                in: [day]
+            )
+        )
+        XCTAssertEqual(day.sortedItems.map(\.id), originalItemsByDay[day.id])
+        XCTAssertTrue(hasOriginalItineraryOrder(originalItemsByDay, in: [day]))
+    }
+
+    func testAppendingDayKeepsTripRangeAlignedWithConsecutiveDayCards() {
         let calendar = Calendar(identifier: .gregorian)
         let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 6))!
         let originalEnd = calendar.date(byAdding: .day, value: 2, to: start)!
@@ -544,15 +1209,35 @@ final class TravelStoryTests: XCTestCase {
 
         let secondDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
         XCTAssertEqual(secondDay.date, calendar.date(byAdding: .day, value: 1, to: start))
-        XCTAssertEqual(trip.endDate, originalEnd)
+        XCTAssertEqual(trip.endDate, secondDay.date)
 
-        _ = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+        let thirdDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+        XCTAssertEqual(thirdDay.date, originalEnd)
         XCTAssertEqual(trip.endDate, originalEnd)
 
         let extraDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
         let extendedEnd = calendar.date(byAdding: .day, value: 3, to: start)!
         XCTAssertEqual(extraDay.date, extendedEnd)
         XCTAssertEqual(trip.endDate, extendedEnd)
+    }
+
+    func testAppendingDayRepairsExistingGapBeforeChoosingNextDate() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let start = calendar.date(from: DateComponents(year: 2026, month: 8, day: 25))!
+        let september2 = calendar.date(from: DateComponents(year: 2026, month: 9, day: 2))!
+        let trip = Trip(title: "杭州", destination: "杭州", startDate: start, endDate: september2)
+        trip.days = [
+            TripDay(date: start, title: "第 1 天", sortOrder: 0),
+            TripDay(date: september2, title: "第 2 天", sortOrder: 1)
+        ]
+
+        let newDay = JourneyHierarchyService.appendDay(to: trip, calendar: calendar)
+
+        let expectedDates = (0..<3).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+        XCTAssertEqual(trip.sortedDays.map(\.date), expectedDates)
+        XCTAssertEqual(newDay.date, expectedDates[2])
+        XCTAssertEqual(trip.endDate, expectedDates[2])
     }
 
     func testDraggingEqualDurationItemsReordersAndExchangesTimeSlots() {
@@ -606,6 +1291,24 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(result.timeAdjustments.map { calendar.component(.hour, from: $0.suggestedEndTime) }, [10, 13])
         XCTAssertEqual(second.startTime, eleven)
         XCTAssertEqual(first.startTime, nine)
+    }
+
+    func testTimeReviewDoesNotTreatReverseCardOrderAsOverlap() {
+        let calendar = Calendar(identifier: .gregorian)
+        let date = calendar.date(from: DateComponents(year: 2026, month: 9, day: 6))!
+        let morningStart = calendar.date(bySettingHour: 8, minute: 0, second: 0, of: date)!
+        let morningEnd = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: date)!
+        let eveningStart = calendar.date(bySettingHour: 18, minute: 30, second: 0, of: date)!
+        let eveningEnd = calendar.date(bySettingHour: 20, minute: 30, second: 0, of: date)!
+
+        XCTAssertFalse(hasOverlappingItineraryTimeRanges([
+            (start: eveningStart, end: eveningEnd),
+            (start: morningStart, end: morningEnd)
+        ]))
+        XCTAssertTrue(hasOverlappingItineraryTimeRanges([
+            (start: morningStart, end: eveningStart),
+            (start: morningEnd, end: eveningEnd)
+        ]))
     }
 
     func testDraggingItineraryItemToAnotherDayMovesItAndPreservesTime() {
@@ -755,9 +1458,10 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(archivedEntry.startTime, first.startTime)
         XCTAssertEqual(archivedEntry.endTime, first.endTime)
         XCTAssertEqual(archivedEntry.timeLabel, "\(first.startTime.timeText)～\(first.endTime.timeText)")
+        XCTAssertEqual(archivedEntry.note, "")
         XCTAssertEqual(
-            archivedEntry.note,
-            "类型：景点；说明：东北街178号；步行前往，路程 1.2 公里 · 18 分钟；花费：¥80；补充：提前十分钟到入口。"
+            archivedEntry.sourceMemoryPrefill,
+            "类型：景点；地点：拙政园；地址：东北街178号；步行前往，路程 1.2 公里 · 18 分钟；花费：¥80；补充：提前十分钟到入口。"
         )
         XCTAssertEqual(stories[0].syncScope, .item)
         XCTAssertEqual(stories[0].sourceSelectionIDs, [first.id, second.id])
@@ -896,7 +1600,11 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedEntry.transport, .car)
         XCTAssertEqual(savedEntry.routeInfo, "")
         XCTAssertEqual(savedEntry.cost, 0)
-        XCTAssertEqual(result.story.sortedEntries[1].note, "类型：景点；前往方式：驾车。")
+        XCTAssertEqual(result.story.sortedEntries[1].note, "")
+        XCTAssertEqual(
+            result.story.sortedEntries[1].sourceMemoryPrefill,
+            "类型：景点；地点：雷峰塔；前往方式：驾车。"
+        )
         XCTAssertEqual(savedEntry.media.map(\.localIdentifier), ["user-photo"])
         XCTAssertEqual(savedDay.note, "西湖边的一天")
         XCTAssertEqual(savedDay.details, "上午沿着北山街散步，傍晚在断桥看落日。")
@@ -932,6 +1640,77 @@ final class TravelStoryTests: XCTestCase {
 
         XCTAssertEqual(day.note, "")
         XCTAssertEqual(entry.note, "后来补充的具体安排回忆")
+    }
+
+    func testAutomaticSourceDetailsAreRemovedFromEditableMemory() {
+        let story = TravelStory(
+            title: "杭州周末",
+            destination: "杭州",
+            startDate: Date(),
+            endDate: Date(),
+            summary: ""
+        )
+        let day = StoryDay(date: Date(), title: "第一天", sortOrder: 0, story: story)
+        let entry = StoryEntry(title: "断桥", category: .attraction, sortOrder: 0)
+        let sourceDetails = "类型：景点；地点：断桥；步行前往，路程 1.2 公里。"
+        entry.sourceItemID = UUID()
+        entry.sourceMemoryPrefill = sourceDetails
+        entry.note = sourceDetails
+        entry.story = story
+        entry.storyDay = day
+        day.entries = [entry]
+        story.days = [day]
+        story.entries = [entry]
+
+        StorySyncService.ensureHierarchy(for: story)
+
+        XCTAssertEqual(entry.note, "")
+        XCTAssertEqual(entry.sourceMemoryPrefill, sourceDetails)
+        XCTAssertEqual(day.note, "")
+    }
+
+    func testJourneyModuleCapabilitiesKeepFootprintFocusedOnMemories() {
+        XCTAssertTrue(JourneyModuleKind.itinerary.capabilities.supportsPlannedTransport)
+        XCTAssertTrue(JourneyModuleKind.itinerary.capabilities.supportsBudget)
+        XCTAssertFalse(JourneyModuleKind.footprint.capabilities.supportsPlannedTransport)
+        XCTAssertFalse(JourneyModuleKind.footprint.capabilities.supportsBudget)
+        XCTAssertTrue(JourneyModuleKind.footprint.capabilities.supportsPostTripNarrative)
+    }
+
+    func testLegacyStoryLocationMigrationFillsMissingFieldsWithoutOverwritingUserLocation() {
+        let date = Date()
+        let trip = Trip(title: "杭州周末", destination: "杭州", startDate: date, endDate: date)
+        let day = TripDay(date: date, title: "抵达杭州", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(
+            title: "高铁抵达杭州东站",
+            category: .transport,
+            startTime: date,
+            endTime: date.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        item.locationMode = .single
+        item.placeName = "杭州东站"
+        item.placeAddress = "杭州市上城区全福桥路2号"
+        item.day = day
+        day.items = [item]
+        trip.days = [day]
+
+        let story = TravelStory(title: "杭州周末", destination: "杭州", startDate: date, endDate: date, summary: "")
+        let entry = StoryEntry(title: item.title, category: .transport, sortOrder: 0)
+        entry.sourceItemID = item.id
+        entry.story = story
+        story.entries = [entry]
+
+        XCTAssertTrue(StorySyncService.migrateLegacyLocations(for: story, from: trip))
+        XCTAssertEqual(entry.locationMode, .single)
+        XCTAssertEqual(entry.placeName, "杭州东站")
+        XCTAssertEqual(entry.placeAddress, "杭州市上城区全福桥路2号")
+
+        entry.placeName = "用户标注的东广场入口"
+        item.placeName = "杭州东站西广场"
+
+        XCTAssertFalse(StorySyncService.migrateLegacyLocations(for: story, from: trip))
+        XCTAssertEqual(entry.placeName, "用户标注的东广场入口")
     }
 
     func testStoryDayCardDisplaysSummaryWithoutFallingBackToDetails() {
@@ -988,9 +1767,14 @@ final class TravelStoryTests: XCTestCase {
         day.note = "早起"
         let item = ItineraryItem(title: "拙政园", category: .attraction, startTime: start, endTime: start.addingTimeInterval(7_200), sortOrder: 0)
         item.address = "东北街178号"
+        item.locationMode = .route
+        item.originName = "苏州站"
+        item.originAddress = "苏州市姑苏区苏站路"
+        item.destinationName = "拙政园"
+        item.destinationAddress = "苏州市姑苏区东北街178号"
         item.transport = .walk
         item.cost = 80
-        item.isCompleted = true
+        item.completeIfElapsed(relativeTo: start)
         item.day = day
         let itineraryMedia = MediaReference(localIdentifier: "trip-photo", kind: .image)
         itineraryMedia.caption = "荷花"
@@ -1012,6 +1796,9 @@ final class TravelStoryTests: XCTestCase {
         entry.startTime = start
         entry.endTime = start.addingTimeInterval(7_200)
         entry.address = "东北街178号"
+        entry.locationMode = .single
+        entry.placeName = "拙政园"
+        entry.placeAddress = "苏州市姑苏区东北街178号"
         entry.supplementalInfo = "提前预约"
         entry.transport = .walk
         entry.distanceText = "1.2 公里 · 18 分钟"
@@ -1055,7 +1842,11 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedItem.address, "东北街178号")
         XCTAssertEqual(savedItem.transport, .walk)
         XCTAssertEqual(savedItem.cost, 80)
-        XCTAssertTrue(savedItem.isCompleted)
+        XCTAssertEqual(savedItem.executionStatus, .inProgress)
+        XCTAssertFalse(savedItem.isAutomaticCompletionOverridden)
+        XCTAssertEqual(savedItem.locationMode, .route)
+        XCTAssertEqual(savedItem.originName, "苏州站")
+        XCTAssertEqual(savedItem.destinationName, "拙政园")
         XCTAssertEqual(savedItem.media.first?.localIdentifier, "trip-photo")
         XCTAssertEqual(savedItem.media.first?.itineraryItem?.id, savedItem.id)
 
@@ -1067,6 +1858,9 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedStoryDay.sourceDayID, savedTrip.sortedDays.first?.id)
         XCTAssertEqual(savedStoryDay.details, "天气晴")
         XCTAssertEqual(savedEntry.sourceItemID, savedItem.id)
+        XCTAssertEqual(savedEntry.locationMode, .single)
+        XCTAssertEqual(savedEntry.placeName, "拙政园")
+        XCTAssertEqual(savedEntry.placeAddress, "苏州市姑苏区东北街178号")
         XCTAssertEqual(savedEntry.startTime, start)
         XCTAssertEqual(savedEntry.endTime, start.addingTimeInterval(7_200))
         XCTAssertEqual(savedEntry.address, "东北街178号")
@@ -1077,6 +1871,155 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedEntry.note, "值得再来")
         XCTAssertEqual(savedEntry.media.first?.localIdentifier, "story-video")
         XCTAssertEqual(savedEntry.media.first?.storyEntry?.id, savedEntry.id)
+    }
+
+    func testBackupRoundTripsFavoriteArrangements() throws {
+        let source = try makeContainer()
+        let context = source.mainContext
+        let now = Date(timeIntervalSince1970: 1_788_000_000)
+        let favorite = ItineraryItem(
+            title: "想去良渚",
+            category: .attraction,
+            startTime: now,
+            endTime: now.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        favorite.isFavorite = true
+        favorite.favoriteCreatedAt = now
+        favorite.placeName = "良渚古城遗址公园"
+        favorite.note = "等天气好时再去"
+        let media = MediaReference(localIdentifier: "favorite-photo", kind: .image)
+        media.itineraryItem = favorite
+        favorite.media = [media]
+        context.insert(favorite)
+        try context.save()
+
+        let data = try DataBackupService.makeBackupData(from: context, exportedAt: now)
+        let summary = try DataBackupService.inspectBackup(data)
+        XCTAssertEqual(summary.favoriteCount, 1)
+        XCTAssertEqual(summary.placeCount, 1)
+        XCTAssertEqual(summary.mediaReferenceCount, 1)
+
+        let target = try makeContainer()
+        _ = try DataBackupService.restoreBackup(data, into: target.mainContext)
+        let restored = try target.mainContext.fetch(FetchDescriptor<ItineraryItem>())
+            .filter(\.isFavorite)
+        let saved = try XCTUnwrap(restored.first)
+        XCTAssertEqual(restored.count, 1)
+        XCTAssertEqual(saved.title, "想去良渚")
+        XCTAssertEqual(saved.placeName, "良渚古城遗址公园")
+        XCTAssertEqual(saved.note, "等天气好时再去")
+        XCTAssertNil(saved.day)
+        XCTAssertEqual(saved.media.first?.localIdentifier, "favorite-photo")
+    }
+
+    func testLegacyBackupWithoutLocationAndExecutionFieldsStillRestores() throws {
+        let source = try makeContainer()
+        let start = Date(timeIntervalSince1970: 1_788_000_000)
+        let trip = Trip(title: "旧备份", destination: "上海", startDate: start, endDate: start)
+        let day = TripDay(date: start, title: "浦东", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(
+            title: "外滩夜景",
+            category: .attraction,
+            startTime: start,
+            endTime: start.addingTimeInterval(3_600),
+            sortOrder: 0
+        )
+        item.address = "上海市黄浦区中山东一路"
+        item.isCompleted = true
+        item.day = day
+        day.items = [item]
+        trip.days = [day]
+        source.mainContext.insert(trip)
+        try source.mainContext.save()
+
+        let currentData = try DataBackupService.makeBackupData(from: source.mainContext, exportedAt: start)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: currentData) as? [String: Any])
+        var trips = try XCTUnwrap(root["trips"] as? [[String: Any]])
+        var days = try XCTUnwrap(trips[0]["days"] as? [[String: Any]])
+        var items = try XCTUnwrap(days[0]["items"] as? [[String: Any]])
+        for key in [
+            "locationModeRaw", "placeName", "placeAddress", "originName", "originAddress",
+            "destinationName", "destinationAddress", "executionStatusRaw", "isAutomaticCompletionOverridden"
+        ] {
+            items[0].removeValue(forKey: key)
+        }
+        days[0]["items"] = items
+        trips[0]["days"] = days
+        root["trips"] = trips
+        let legacyData = try JSONSerialization.data(withJSONObject: root)
+
+        let target = try makeContainer()
+        _ = try DataBackupService.restoreBackup(legacyData, into: target.mainContext)
+        let restoredTrip = try XCTUnwrap(target.mainContext.fetch(FetchDescriptor<Trip>()).first)
+        let restoredItem = try XCTUnwrap(restoredTrip.allItems.first)
+
+        XCTAssertEqual(restoredItem.executionStatus, .completed)
+        XCTAssertEqual(restoredItem.locationMode, .single)
+        XCTAssertEqual(restoredItem.primaryNavigationTarget?.displayName, "外滩")
+        XCTAssertEqual(restoredItem.primaryNavigationTarget?.address, "上海市黄浦区中山东一路")
+    }
+
+    func testStoryCoverAndCropRoundTripThroughBackupAndShareData() throws {
+        let source = try makeContainer()
+        let date = Date(timeIntervalSince1970: 1_788_000_000)
+        let story = TravelStory(title: "西湖足迹", destination: "杭州", startDate: date, endDate: date, summary: "湖边慢走")
+        story.coverZoom = 2.25
+        story.coverOffsetX = -0.4
+        story.coverOffsetY = 0.65
+        let cover = MediaReference(localIdentifier: "local-cover-photo", kind: .image)
+        cover.storyCover = story
+        story.coverMedia = cover
+        source.mainContext.insert(story)
+        try source.mainContext.save()
+
+        let backup = try DataBackupService.makeBackupData(from: source.mainContext, exportedAt: date)
+        XCTAssertEqual(try DataBackupService.inspectBackup(backup).mediaReferenceCount, 1)
+
+        let target = try makeContainer()
+        _ = try DataBackupService.restoreBackup(backup, into: target.mainContext)
+        let restored = try XCTUnwrap(target.mainContext.fetch(FetchDescriptor<TravelStory>()).first)
+        XCTAssertEqual(restored.coverMedia?.localIdentifier, "local-cover-photo")
+        XCTAssertEqual(restored.coverMedia?.storyCover?.id, restored.id)
+        XCTAssertEqual(restored.coverZoom, 2.25, accuracy: 0.001)
+        XCTAssertEqual(restored.coverOffsetX, -0.4, accuracy: 0.001)
+        XCTAssertEqual(restored.coverOffsetY, 0.65, accuracy: 0.001)
+
+        let sharedData = try SharedJourneyService.makeShareData(story: story, sharedAt: date, includeMedia: true)
+        XCTAssertEqual(try SharedJourneyService.inspect(sharedData).mediaCount, 1)
+        let sharedTarget = try makeContainer()
+        _ = try SharedJourneyService.importJourney(sharedData, into: sharedTarget.mainContext)
+        let sharedStory = try XCTUnwrap(sharedTarget.mainContext.fetch(FetchDescriptor<TravelStory>()).first)
+        XCTAssertEqual(sharedStory.coverMedia?.localIdentifier, "")
+        XCTAssertEqual(sharedStory.coverZoom, 2.25, accuracy: 0.001)
+        XCTAssertEqual(sharedStory.coverOffsetX, -0.4, accuracy: 0.001)
+        XCTAssertEqual(sharedStory.coverOffsetY, 0.65, accuracy: 0.001)
+    }
+
+    func testLegacyStoryBackupWithoutCoverFieldsStillRestores() throws {
+        let source = try makeContainer()
+        let date = Date(timeIntervalSince1970: 1_788_000_000)
+        source.mainContext.insert(
+            TravelStory(title: "旧版足迹", destination: "厦门", startDate: date, endDate: date, summary: "")
+        )
+        try source.mainContext.save()
+
+        let data = try DataBackupService.makeBackupData(from: source.mainContext, exportedAt: date)
+        var root = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        var stories = try XCTUnwrap(root["stories"] as? [[String: Any]])
+        for key in ["coverMedia", "coverZoom", "coverOffsetX", "coverOffsetY"] {
+            stories[0].removeValue(forKey: key)
+        }
+        root["stories"] = stories
+        let legacyData = try JSONSerialization.data(withJSONObject: root)
+
+        let target = try makeContainer()
+        _ = try DataBackupService.restoreBackup(legacyData, into: target.mainContext)
+        let restored = try XCTUnwrap(target.mainContext.fetch(FetchDescriptor<TravelStory>()).first)
+        XCTAssertNil(restored.coverMedia)
+        XCTAssertEqual(restored.coverZoom, 1)
+        XCTAssertEqual(restored.coverOffsetX, 0)
+        XCTAssertEqual(restored.coverOffsetY, 0)
     }
 
     func testShareCardDataSupportsWholeTripAndSingleDayScopes() {
@@ -1129,13 +2072,22 @@ final class TravelStoryTests: XCTestCase {
         day.entries = [entry]
         story.days = [day]
         story.entries = [entry]
+        let customCover = MediaReference(localIdentifier: "custom-cover", kind: .image)
+        customCover.storyCover = story
+        story.coverMedia = customCover
+        story.coverZoom = 1.8
+        story.coverOffsetX = 0.25
+        story.coverOffsetY = -0.5
 
         let data = ShareCardData(story: story, day: day)
 
         XCTAssertEqual(data.scopeLabel, "单日足迹")
         XCTAssertEqual(data.summary, "登高看城市")
         XCTAssertEqual(data.sections.first?.narrative, "傍晚灯光很好看")
-        XCTAssertEqual(data.coverAssetIdentifier, "cover-photo")
+        XCTAssertEqual(data.coverAssetIdentifier, "custom-cover")
+        XCTAssertEqual(data.coverZoom, 1.8, accuracy: 0.001)
+        XCTAssertEqual(data.coverOffsetX, 0.25, accuracy: 0.001)
+        XCTAssertEqual(data.coverOffsetY, -0.5, accuracy: 0.001)
         XCTAssertEqual(data.sections.first?.items.first?.photoAssetIdentifiers, ["cover-photo", "second-photo"])
         XCTAssertEqual(data.photoAssetIdentifiers, ["cover-photo", "second-photo"])
     }
@@ -1145,8 +2097,14 @@ final class TravelStoryTests: XCTestCase {
         let start = Date(timeIntervalSince1970: 1_788_000_000)
         let trip = Trip(title: "杭州周末", destination: "杭州", startDate: start, endDate: start)
         let day = TripDay(date: start, title: "西湖", sortOrder: 0, trip: trip)
-        let item = ItineraryItem(title: "断桥", category: .attraction, startTime: start, endTime: start.addingTimeInterval(3_600), sortOrder: 0)
-        item.address = "白堤"
+        let item = ItineraryItem(title: "前往断桥", category: .attraction, startTime: start, endTime: start.addingTimeInterval(3_600), sortOrder: 0)
+        item.locationMode = .route
+        item.originName = "杭州东站"
+        item.originAddress = "杭州市上城区全福桥路2号"
+        item.destinationName = "断桥"
+        item.destinationAddress = "杭州市西湖区白堤"
+        item.address = item.destinationAddress
+        item.completeIfElapsed(relativeTo: start)
         item.day = day
         let media = MediaReference(localIdentifier: "only-valid-on-sender", kind: .image)
         media.itineraryItem = item
@@ -1161,8 +2119,11 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(preview.summary.kind, .trip)
         XCTAssertEqual(preview.summary.title, "杭州周末")
         XCTAssertEqual(preview.summary.dayCount, 1)
-        XCTAssertEqual(preview.summary.placeCount, 1)
-        XCTAssertEqual(preview.days.first?.places.first?.address, "白堤")
+        XCTAssertEqual(preview.summary.placeCount, 2)
+        XCTAssertEqual(
+            preview.days.first?.places.first?.address,
+            "杭州东站 · 杭州市上城区全福桥路2号 → 断桥 · 杭州市西湖区白堤"
+        )
 
         let targetContainer = try makeContainer()
         let targetContext = targetContainer.mainContext
@@ -1173,8 +2134,13 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertFalse(firstImport.wasAlreadyPresent)
         XCTAssertEqual(try targetContext.fetch(FetchDescriptor<Trip>()).count, 2)
         let imported = try XCTUnwrap(try targetContext.fetch(FetchDescriptor<Trip>()).first { $0.id == trip.id })
-        XCTAssertEqual(imported.sortedDays.first?.sortedItems.first?.title, "断桥")
-        XCTAssertTrue(imported.sortedDays.first?.sortedItems.first?.media.isEmpty == true)
+        let importedItem = try XCTUnwrap(imported.sortedDays.first?.sortedItems.first)
+        XCTAssertEqual(importedItem.title, "前往断桥")
+        XCTAssertEqual(importedItem.locationMode, .route)
+        XCTAssertEqual(importedItem.originName, "杭州东站")
+        XCTAssertEqual(importedItem.destinationName, "断桥")
+        XCTAssertEqual(importedItem.executionStatus, .inProgress)
+        XCTAssertTrue(importedItem.media.isEmpty)
 
         let secondImport = try SharedJourneyService.importJourney(data, into: targetContext)
         XCTAssertTrue(secondImport.wasAlreadyPresent)
@@ -1189,8 +2155,11 @@ final class TravelStoryTests: XCTestCase {
         story.syncScope = .day
         let firstDay = StoryDay(date: start, title: "城墙", sortOrder: 0, sourceDayID: UUID(), story: story)
         let secondDay = StoryDay(date: start.addingTimeInterval(86_400), title: "博物院", sortOrder: 1, sourceDayID: UUID(), story: story)
-        let entry = StoryEntry(title: "中华门", category: .attraction, sortOrder: 0)
+        let entry = StoryEntry(title: "游览中华门城堡", category: .attraction, sortOrder: 0)
         entry.sourceItemID = UUID()
+        entry.locationMode = .single
+        entry.placeName = "中华门城堡"
+        entry.placeAddress = "南京市秦淮区中华路"
         entry.story = story
         entry.storyDay = firstDay
         firstDay.entries = [entry]
@@ -1200,6 +2169,9 @@ final class TravelStoryTests: XCTestCase {
         try sourceContainer.mainContext.save()
 
         let data = try SharedJourneyService.makeShareData(story: story, selectedDay: firstDay, sharedAt: start)
+        let preview = try SharedJourneyService.preview(data)
+        XCTAssertEqual(preview.summary.placeCount, 1)
+        XCTAssertEqual(preview.days.first?.places.first?.address, "中华门城堡 · 南京市秦淮区中华路")
         let targetContainer = try makeContainer()
         _ = try SharedJourneyService.importJourney(data, into: targetContainer.mainContext)
 
@@ -1209,7 +2181,12 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertNil(imported.sourceTripID)
         XCTAssertTrue(imported.sourceSelectionIDs.isEmpty)
         XCTAssertNil(imported.sortedDays.first?.sourceDayID)
-        XCTAssertNil(imported.sortedEntries.first?.sourceItemID)
+        let importedEntry = try XCTUnwrap(imported.sortedEntries.first)
+        XCTAssertNil(importedEntry.sourceItemID)
+        XCTAssertEqual(importedEntry.title, "游览中华门城堡")
+        XCTAssertEqual(importedEntry.locationMode, .single)
+        XCTAssertEqual(importedEntry.placeName, "中华门城堡")
+        XCTAssertEqual(importedEntry.placeAddress, "南京市秦淮区中华路")
     }
 
     func testSharedJourneyMediaMetadataOmitsSenderPhotoIdentifier() throws {

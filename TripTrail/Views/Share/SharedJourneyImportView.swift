@@ -18,7 +18,7 @@ struct SharedJourneyImportView: View {
     private var preview: SharedJourneyPreview { incoming.preview }
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
                     header

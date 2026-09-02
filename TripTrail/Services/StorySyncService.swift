@@ -8,7 +8,7 @@ struct StorySyncReport {
     var detachedEntries = 0
 
     var message: String {
-        "已同步最新骨架：新增 \(addedDays) 天、\(addedEntries) 个旅程安排，更新 \(updatedEntries) 个；保留 \(detachedEntries) 个已有补充内容的旧片段。"
+        "已同步最新旅程框架：新增 \(addedDays) 天、\(addedEntries) 个记录，更新 \(updatedEntries) 个；保留 \(detachedEntries) 个已有回忆或影像的旧记录。"
     }
 }
 
@@ -36,14 +36,67 @@ enum StorySyncService {
             }
         }
 
+        migrateAutomaticSourceMemories(in: story)
         migrateLegacyInlineSummaries(in: story)
+    }
+
+    /// Earlier versions put source itinerary facts into the editable memory field.
+    /// Keep those facts as source metadata, while leaving memory for the user's own words.
+    private static func migrateAutomaticSourceMemories(in story: TravelStory) {
+        for entry in story.entries {
+            let memory = entry.note.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !memory.isEmpty, entry.sourceItemID != nil else { continue }
+
+            let storedSourceDetails = entry.sourceMemoryPrefill?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if memory == storedSourceDetails {
+                entry.note = ""
+            } else if storedSourceDetails == nil, memory.hasPrefix("类型：") {
+                entry.sourceMemoryPrefill = memory
+                entry.note = ""
+                entry.didPrefillSourceMemory = true
+            }
+        }
+    }
+
+    /// Fills only missing legacy location fields. User-edited location data is never overwritten.
+    @discardableResult
+    static func migrateLegacyLocations(for story: TravelStory, from trip: Trip?) -> Bool {
+        guard let trip else { return false }
+        let sourceItems = Dictionary(uniqueKeysWithValues: trip.allItems.map { ($0.id, $0) })
+        var changed = false
+
+        for entry in story.entries {
+            guard entry.locationModeRaw.isEmpty,
+                  entry.placeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  entry.originName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  entry.destinationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  let sourceItemID = entry.sourceItemID,
+                  let sourceItem = sourceItems[sourceItemID]
+            else { continue }
+
+            let skeleton = sourceItem.footprintSkeleton
+            entry.locationMode = skeleton.locationMode
+            entry.placeName = skeleton.placeName
+            entry.placeAddress = skeleton.placeAddress
+            entry.originName = skeleton.originName
+            entry.originAddress = skeleton.originAddress
+            entry.destinationName = skeleton.destinationName
+            entry.destinationAddress = skeleton.destinationAddress
+            entry.address = ""
+            changed = true
+        }
+        return changed
     }
 
     private static func migrateLegacyInlineSummaries(in story: TravelStory) {
         for day in story.days where !day.didMigrateInlineSummary {
             if day.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                let legacyEntry = day.sortedEntries.first(where: {
-                   !$0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                   let memory = $0.note.trimmingCharacters(in: .whitespacesAndNewlines)
+                   let sourceDetails = $0.sourceMemoryPrefill?
+                       .trimmingCharacters(in: .whitespacesAndNewlines)
+                   return !memory.isEmpty && memory != sourceDetails
                }) {
                 day.note = legacyEntry.note
                 legacyEntry.note = ""
@@ -144,6 +197,13 @@ enum StorySyncService {
             startTime: skeleton.startTime,
             endTime: skeleton.endTime,
             address: skeleton.address,
+            locationMode: skeleton.locationMode,
+            placeName: skeleton.placeName,
+            placeAddress: skeleton.placeAddress,
+            originName: skeleton.originName,
+            originAddress: skeleton.originAddress,
+            destinationName: skeleton.destinationName,
+            destinationAddress: skeleton.destinationAddress,
             supplementalInfo: skeleton.supplementalInfo,
             transport: skeleton.transport,
             distanceText: skeleton.distanceText,

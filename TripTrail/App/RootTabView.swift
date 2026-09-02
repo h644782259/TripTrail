@@ -7,21 +7,27 @@ struct RootTabView: View {
 
     var body: some View {
         TabView {
-            NavigationStack { CurrentTripsView() }
+            TripNavigationStack { CurrentTripsView() }
                 .tabItem { Label("旅程", systemImage: "map.fill") }
 
-            NavigationStack { StoriesView() }
+            TripNavigationStack { StoriesView() }
                 .tabItem { Label("足迹", systemImage: "book.closed.fill") }
 
-            NavigationStack { TripStatisticsView() }
-                .tabItem { Label("统计", systemImage: "chart.bar.fill") }
+            TripNavigationStack { FavoritesView() }
+                .tabItem { Label("收藏", systemImage: "heart.fill") }
 
-            NavigationStack { SettingsView() }
+            TripNavigationStack { SettingsView() }
                 .tabItem { Label("我的", systemImage: "person.crop.circle") }
         }
+        .tint(Color.tripLakeText)
+        .toolbarBackground(Color.tripSurface.opacity(0.97), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
         .installsKeyboardDismissal()
         .onOpenURL(perform: openSharedJourney)
         .task {
+            if PhotoLibraryService.status == .notDetermined {
+                _ = await PhotoLibraryService.requestReadWriteAccess()
+            }
             #if DEBUG
             await DebugSampleDataService.prepareIfNeeded(in: modelContext)
             #endif

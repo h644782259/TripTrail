@@ -18,6 +18,7 @@ struct ShareCardItem: Identifiable {
     let title: String
     let detail: String
     let completed: Bool
+    let statusText: String
     let photoAssetIdentifiers: [String]
 }
 
@@ -40,6 +41,9 @@ struct ShareCardData {
     let summary: String
     let sections: [ShareCardSection]
     let coverAssetIdentifier: String?
+    let coverZoom: Double
+    let coverOffsetX: Double
+    let coverOffsetY: Double
 
     init(trip: Trip, day selectedDay: TripDay? = nil) {
         let days = selectedDay.map { [$0] } ?? trip.sortedDays
@@ -67,10 +71,11 @@ struct ShareCardData {
                         id: $0.id,
                         time: "\($0.startTime.timeText)–\($0.endTime.timeText)",
                         title: $0.title,
-                        detail: [$0.category.rawValue, $0.address, $0.distanceText]
+                        detail: [$0.locationSummary, $0.category.rawValue, $0.distanceText, $0.note]
                             .filter { !$0.isEmpty }
                             .joined(separator: " · "),
-                        completed: $0.isCompleted,
+                        completed: $0.executionStatus == .completed,
+                        statusText: $0.executionStatus.rawValue,
                         photoAssetIdentifiers: $0.media
                             .sorted { $0.sortOrder < $1.sortOrder }
                             .filter { $0.kind == .image }
@@ -84,6 +89,9 @@ struct ShareCardData {
             .flatMap { $0.media.sorted { $0.sortOrder < $1.sortOrder } }
             .first { $0.kind == .image }?
             .localIdentifier
+        coverZoom = 1
+        coverOffsetX = 0
+        coverOffsetY = 0
     }
 
     init(story: TravelStory, day selectedDay: StoryDay? = nil) {
@@ -116,6 +124,7 @@ struct ShareCardData {
                         title: $0.title,
                         detail: $0.note,
                         completed: true,
+                        statusText: "",
                         photoAssetIdentifiers: $0.sortedMedia
                             .filter { $0.kind == .image }
                             .map(\.localIdentifier)
@@ -123,11 +132,15 @@ struct ShareCardData {
                 }
             )
         }
-        coverAssetIdentifier = days
+        let fallbackCoverIdentifier = days
             .flatMap(\.sortedEntries)
             .flatMap(\.sortedMedia)
             .first { $0.kind == .image }?
             .localIdentifier
+        coverAssetIdentifier = story.coverMedia?.localIdentifier ?? fallbackCoverIdentifier
+        coverZoom = story.coverMedia == nil ? 1 : story.coverZoom
+        coverOffsetX = story.coverMedia == nil ? 0 : story.coverOffsetX
+        coverOffsetY = story.coverMedia == nil ? 0 : story.coverOffsetY
     }
 
     var photoAssetIdentifiers: [String] {
@@ -220,7 +233,7 @@ private enum ShareExportSource {
             return days.flatMap(\.sortedItems).flatMap(\.media).count
         case .story(let story):
             let days = story.sortedDays.first { $0.id == scopeID }.map { [$0] } ?? story.sortedDays
-            return days.flatMap(\.sortedEntries).flatMap(\.media).count
+            return days.flatMap(\.sortedEntries).flatMap(\.media).count + (story.coverMedia == nil ? 0 : 1)
         }
     }
 }
@@ -233,10 +246,9 @@ struct ShareExportView: View {
     @State private var photoImages: [String: UIImage] = [:]
     @State private var renderedImage: UIImage?
     @State private var fileURL: URL?
-    @State private var portableFileURL: URL?
-    @State private var includeMedia = false
     @State private var isPreparingPortableFile = false
-    @State private var portableMediaCount = 0
+    @State private var showsPortableOptions = false
+    @State private var portableShareItem: PortableShareItem?
     @State private var message: String?
 
     init(trip: Trip, initialScopeID: UUID? = nil) {
@@ -252,7 +264,7 @@ struct ShareExportView: View {
     private var data: ShareCardData { source.data(for: selectedScopeID) }
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
                     scopePicker
@@ -271,38 +283,18 @@ struct ShareExportView: View {
                     } else {
                         ProgressView("正在生成分享长图…")
                     }
-                    VStack(alignment: .leading, spacing: 10) {
-                        Toggle(isOn: $includeMedia) {
-                            Text("照片与视频（\(source.mediaCount(for: selectedScopeID))）")
-                                .font(.headline)
-                        }
-                        if includeMedia {
-                            Text("将读取相簿原件，文件可能较大。")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        Text("仅影响下方的可导入文件；精美长图始终展示照片，不包含视频。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .cardSurface()
-
                     if isPreparingPortableFile {
-                        ProgressView(includeMedia ? "正在读取并打包媒体原件…" : "正在生成可收藏文件…")
+                        ProgressView("正在生成可导入文件…")
                             .frame(maxWidth: .infinity)
-                    } else if let portableFileURL {
-                        ShareLink(
-                            item: portableFileURL,
-                            subject: Text("来自旅迹的\(data.scopeLabel)"),
-                            message: Text("点击文件并选择用“旅迹”打开，即可预览并收藏。")
-                        ) {
+                    } else {
+                        Button {
+                            showsPortableOptions = true
+                        } label: {
                             Label("发送可导入的\(data.scopeLabel)", systemImage: "square.and.arrow.up.on.square")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                        Text(includeMedia
-                             ? "已包含 \(portableMediaCount) 个媒体原件。"
-                             : "对方可在旅迹中预览并收藏。")
+                        Text("点击后可选择是否包含照片与视频。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -314,7 +306,22 @@ struct ShareExportView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
             .task(id: selectedScopeID) { await renderLongImage() }
-            .task(id: "\(selectedScopeID.uuidString)-\(includeMedia)") { await preparePortableFile() }
+            .confirmationDialog("是否包含照片与视频？", isPresented: $showsPortableOptions, titleVisibility: .visible) {
+                let mediaCount = source.mediaCount(for: selectedScopeID)
+                Button("包含照片与视频（\(mediaCount)）") {
+                    preparePortableFile(includeMedia: true)
+                }
+                .disabled(mediaCount == 0)
+                Button("不包含，文件更小") {
+                    preparePortableFile(includeMedia: false)
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("包含媒体会保留完整内容，但文件更大，并需要读取相簿原件。")
+            }
+            .sheet(item: $portableShareItem) { item in
+                SystemShareSheet(items: [item.url])
+            }
             .alert("分享提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好", role: .cancel) { message = nil }
             } message: { Text(message ?? "") }
@@ -336,37 +343,33 @@ struct ShareExportView: View {
         .cardSurface()
     }
 
-    @MainActor
-    private func preparePortableFile() async {
-        portableFileURL = nil
-        portableMediaCount = 0
-        isPreparingPortableFile = true
+    private func preparePortableFile(includeMedia: Bool) {
         let currentData = data
-        do {
-            let safeName = currentData.title.replacingOccurrences(of: "/", with: "-")
-            let generatedURL: URL
-            if includeMedia {
-                let result = try await source.portablePackage(for: currentData.scopeID)
-                let namedURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
-                try FileManager.default.copyItem(at: result.url, to: namedURL)
-                generatedURL = namedURL
-                portableMediaCount = result.mediaCount
-            } else {
-                let portableData = try source.portableData(for: currentData.scopeID)
-                let portableURL = FileManager.default.temporaryDirectory
-                    .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).triptrail")
-                try portableData.write(to: portableURL, options: .atomic)
-                generatedURL = portableURL
+        isPreparingPortableFile = true
+        Task { @MainActor in
+            defer { isPreparingPortableFile = false }
+            do {
+                let safeName = currentData.title.replacingOccurrences(of: "/", with: "-")
+                let generatedURL: URL
+                if includeMedia {
+                    let result = try await source.portablePackage(for: currentData.scopeID)
+                    let namedURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
+                    try FileManager.default.copyItem(at: result.url, to: namedURL)
+                    generatedURL = namedURL
+                } else {
+                    let portableData = try source.portableData(for: currentData.scopeID)
+                    let portableURL = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).triptrail")
+                    try portableData.write(to: portableURL, options: .atomic)
+                    generatedURL = portableURL
+                }
+                guard currentData.scopeID == selectedScopeID else { return }
+                portableShareItem = PortableShareItem(url: generatedURL)
+            } catch {
+                message = "可导入文件生成失败：\(error.localizedDescription)"
             }
-            guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
-            portableFileURL = generatedURL
-        } catch {
-            guard !Task.isCancelled else { return }
-            message = "可收藏文件生成失败：\(error.localizedDescription)"
         }
-        guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
-        isPreparingPortableFile = false
     }
 
     @MainActor
@@ -440,6 +443,21 @@ enum ShareCardImageRenderer {
     }
 }
 
+private struct PortableShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct SystemShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
 private struct ShareCard: View {
     let data: ShareCardData
     let coverImage: UIImage?
@@ -448,117 +466,271 @@ private struct ShareCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
-                if let coverImage {
-                    Image(uiImage: coverImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                }
                 LinearGradient(
-                    colors: [.tripInk.opacity(coverImage == nil ? 1 : 0.48), Color.tripLake.opacity(coverImage == nil ? 1 : 0.82)],
+                    colors: [.tripInk, Color.tripLake],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                VStack(alignment: .leading, spacing: 10) {
-                    Text(data.eyebrow).font(.caption.bold()).tracking(1.4).foregroundStyle(Color.tripSand)
+                if let coverImage {
+                    ShareCoverImage(
+                        image: coverImage,
+                        zoom: data.coverZoom,
+                        offsetX: data.coverOffsetX,
+                        offsetY: data.coverOffsetY
+                    )
+                } else {
+                    ShareCoverDecoration()
+                }
+                LinearGradient(
+                    colors: [.black.opacity(0.08), .clear, .black.opacity(0.72)],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text(data.eyebrow)
+                            .font(.system(size: 10, weight: .bold))
+                            .tracking(1.35)
+                        Spacer()
+                        Text(data.scopeLabel)
+                            .font(.caption2.bold())
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(.ultraThinMaterial, in: Capsule())
+                    }
+                    .foregroundStyle(.white.opacity(0.9))
                     Spacer()
                     Text(data.title)
-                        .font(.system(size: 30, weight: .bold, design: .rounded))
+                        .font(.system(size: 31, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
-                    Label(data.destination.isEmpty ? "目的地待定" : data.destination, systemImage: "mappin.and.ellipse")
-                        .font(.headline)
-                        .foregroundStyle(.white.opacity(0.88))
-                    Text(data.dateRange).font(.caption).foregroundStyle(.white.opacity(0.72))
+                        .lineLimit(2)
+                    HStack(spacing: 8) {
+                        Label(data.destination.isEmpty ? "目的地待定" : data.destination, systemImage: "mappin.and.ellipse")
+                        Text("·")
+                        Text(data.dateRange)
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(.white.opacity(0.88))
                 }
-                .padding(24)
+                .padding(22)
             }
-            .frame(height: coverImage == nil ? 190 : 230)
+            .frame(height: 252)
+            .clipped()
 
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 18) {
                 if !data.summary.isEmpty {
-                    Text(data.summary)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(alignment: .top, spacing: 11) {
+                        Image(systemName: "quote.opening")
+                            .font(.headline)
+                            .foregroundStyle(Color.tripLake)
+                        Text(data.summary)
+                            .font(.subheadline)
+                            .foregroundStyle(Color.tripInk.opacity(0.78))
+                            .lineSpacing(3)
+                            .lineLimit(4)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(15)
+                    .background(Color.shareSummary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(Color.tripLake.opacity(0.24), lineWidth: 1)
+                    }
                 }
 
                 ForEach(Array(data.sections.enumerated()), id: \.element.id) { sectionIndex, section in
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 14) {
+                        HStack(alignment: .center, spacing: 11) {
                             Text("D\(sectionIndex + 1)")
-                                .font(.caption2.bold())
+                                .font(.caption.bold())
                                 .foregroundStyle(.white)
-                                .frame(width: 30, height: 30)
+                                .frame(width: 36, height: 36)
                                 .background(Color.tripLake, in: Circle())
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(section.title).font(.headline)
-                                Text(section.dateText).font(.caption).foregroundStyle(.secondary)
+                                Text(section.title)
+                                    .font(.headline.bold())
+                                    .foregroundStyle(Color.tripInk)
+                                Text(section.dateText)
+                                    .font(.caption)
+                                    .foregroundStyle(Color.tripInk.opacity(0.62))
                             }
+                            Spacer()
+                            Text("\(section.items.count) 个片段")
+                                .font(.caption2.bold())
+                                .foregroundStyle(Color.tripLake)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 5)
+                                .background(Color.shareTimeBadge, in: Capsule())
                         }
                         if !section.narrative.isEmpty {
                             Text(section.narrative)
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(Color.tripInk.opacity(0.68))
+                                .lineSpacing(2)
+                                .lineLimit(4)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if section.items.isEmpty {
-                            Text("这一天还没有具体安排")
+                            Text("这一天还没有具体内容")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(Color.shareItemTop, in: RoundedRectangle(cornerRadius: 14))
                         } else {
                             ForEach(Array(section.items.enumerated()), id: \.element.id) { itemIndex, item in
-                                HStack(alignment: .top, spacing: 11) {
-                                    ZStack {
-                                        Circle().fill(item.completed ? Color.tripSage : Color.tripLake.opacity(0.15))
-                                        if item.completed {
-                                            Image(systemName: "checkmark")
-                                                .font(.caption2.bold())
-                                                .foregroundStyle(.white)
-                                        } else {
-                                            Text("\(itemIndex + 1)")
+                                VStack(alignment: .leading, spacing: 10) {
+                                    HStack(alignment: .center, spacing: 9) {
+                                        ZStack {
+                                            Circle().fill(item.completed ? Color.tripSage : Color.tripLake.opacity(0.13))
+                                            if item.completed {
+                                                Image(systemName: "checkmark")
+                                                    .font(.caption2.bold())
+                                                    .foregroundStyle(.white)
+                                            } else {
+                                                Text("\(itemIndex + 1)")
+                                                    .font(.caption2.bold())
+                                                    .foregroundStyle(Color.tripLake)
+                                            }
+                                        }
+                                        .frame(width: 25, height: 25)
+                                        Text(item.title)
+                                            .font(.subheadline.bold())
+                                            .foregroundStyle(Color.tripInk)
+                                            .lineLimit(2)
+                                        Spacer(minLength: 6)
+                                        if !item.time.isEmpty {
+                                            Text(item.time)
                                                 .font(.caption2.bold())
                                                 .foregroundStyle(Color.tripLake)
+                                                .padding(.horizontal, 8)
+                                                .padding(.vertical, 5)
+                                                .background(Color.shareTimeBadge, in: Capsule())
                                         }
                                     }
-                                    .frame(width: 26, height: 26)
-                                    VStack(alignment: .leading, spacing: 3) {
-                                        HStack(alignment: .firstTextBaseline) {
-                                            Text(item.title).font(.subheadline.bold())
-                                            Spacer(minLength: 8)
-                                            Text(item.time).font(.caption2).foregroundStyle(.secondary)
-                                        }
-                                        if !item.detail.isEmpty {
-                                            Text(item.detail)
-                                                .font(.caption)
-                                                .foregroundStyle(.secondary)
-                                                .fixedSize(horizontal: false, vertical: true)
-                                        }
-                                        SharePhotoGrid(
-                                            identifiers: item.photoAssetIdentifiers,
-                                            images: photoImages
-                                        )
+                                    if !item.detail.isEmpty {
+                                        Text(item.detail)
+                                            .font(.caption)
+                                            .foregroundStyle(Color.tripInk.opacity(0.66))
+                                            .lineSpacing(2)
+                                            .lineLimit(4)
+                                            .fixedSize(horizontal: false, vertical: true)
                                     }
+                                    SharePhotoGrid(
+                                        identifiers: item.photoAssetIdentifiers,
+                                        images: photoImages
+                                    )
                                 }
+                                .padding(13)
+                                .background(
+                                    LinearGradient(
+                                        colors: [Color.shareItemTop, Color.shareItemBottom],
+                                        startPoint: .topLeading,
+                                        endPoint: .bottomTrailing
+                                    ),
+                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .stroke(Color.tripLake.opacity(0.18), lineWidth: 1)
+                                }
+                                .shadow(color: Color.tripInk.opacity(0.075), radius: 8, y: 4)
                             }
                         }
                     }
-                    if sectionIndex < data.sections.count - 1 {
-                        Divider()
+                    .padding(14)
+                    .background(Color.shareDayPanel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 20, style: .continuous)
+                            .stroke(Color.tripLake.opacity(0.20), lineWidth: 1)
+                    }
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.tripLake.opacity(0.58))
+                            .frame(width: 3)
+                            .padding(.vertical, 20)
+                            .padding(.leading, 1)
                     }
                 }
 
                 HStack {
-                    Text("旅迹 · 把走过的路留下来").font(.caption2.bold()).foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("旅迹")
+                            .font(.caption.bold())
+                            .foregroundStyle(Color.tripInk)
+                        Text("把走过的路留下来")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath").foregroundStyle(Color.tripLake)
+                    Image(systemName: "point.topleft.down.to.point.bottomright.curvepath")
+                        .font(.title3)
+                        .foregroundStyle(Color.tripLake)
                 }
-                .padding(.top, 4)
+                .padding(.top, 6)
             }
-            .padding(24)
-            .background(Color(uiColor: .systemBackground))
+            .padding(20)
+            .background(
+                LinearGradient(
+                    colors: [Color.sharePaperTop, Color.sharePaperBottom],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
         }
         .environment(\.colorScheme, .light)
+    }
+}
+
+private struct ShareCoverImage: View {
+    let image: UIImage
+    let zoom: Double
+    let offsetX: Double
+    let offsetY: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            let imageSize = image.size
+            let cropSize = proxy.size
+            let fillScale = max(cropSize.width / max(imageSize.width, 1), cropSize.height / max(imageSize.height, 1))
+            let baseSize = CGSize(width: imageSize.width * fillScale, height: imageSize.height * fillScale)
+            let safeZoom = CGFloat(max(1, min(4, zoom)))
+            let maximumOffset = CGSize(
+                width: max(0, (baseSize.width * safeZoom - cropSize.width) / 2),
+                height: max(0, (baseSize.height * safeZoom - cropSize.height) / 2)
+            )
+            Image(uiImage: image)
+                .resizable()
+                .frame(width: baseSize.width, height: baseSize.height)
+                .scaleEffect(safeZoom)
+                .offset(
+                    x: maximumOffset.width * CGFloat(max(-1, min(1, offsetX))),
+                    y: maximumOffset.height * CGFloat(max(-1, min(1, offsetY)))
+                )
+                .frame(width: cropSize.width, height: cropSize.height)
+                .clipped()
+        }
+    }
+}
+
+private struct ShareCoverDecoration: View {
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                Circle()
+                    .fill(.white.opacity(0.08))
+                    .frame(width: 210, height: 210)
+                    .offset(x: proxy.size.width * 0.33, y: -70)
+                Circle()
+                    .stroke(.white.opacity(0.12), lineWidth: 26)
+                    .frame(width: 170, height: 170)
+                    .offset(x: -proxy.size.width * 0.38, y: 95)
+                Image(systemName: "map.fill")
+                    .font(.system(size: 72, weight: .light))
+                    .foregroundStyle(.white.opacity(0.08))
+                    .offset(x: proxy.size.width * 0.28, y: 70)
+            }
+        }
     }
 }
 
@@ -570,27 +742,53 @@ private struct SharePhotoGrid: View {
         identifiers.filter { images[$0] != nil }
     }
 
+    private var displayedIdentifiers: [String] {
+        Array(availableIdentifiers.prefix(4))
+    }
+
     private var columns: [GridItem] {
-        let count = availableIdentifiers.count == 1 ? 1 : min(3, availableIdentifiers.count)
+        let count = displayedIdentifiers.count == 1 ? 1 : 2
         return Array(repeating: GridItem(.flexible(), spacing: 5), count: count)
     }
 
     var body: some View {
         if !availableIdentifiers.isEmpty {
-            LazyVGrid(columns: columns, spacing: 5) {
-                ForEach(availableIdentifiers, id: \.self) { identifier in
+            LazyVGrid(columns: columns, spacing: 6) {
+                ForEach(Array(displayedIdentifiers.enumerated()), id: \.element) { index, identifier in
                     if let image = images[identifier] {
-                        Image(uiImage: image)
-                            .resizable()
-                            .scaledToFill()
-                            .aspectRatio(availableIdentifiers.count == 1 ? 1.65 : 1, contentMode: .fit)
-                            .frame(maxWidth: .infinity)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        ZStack {
+                            Image(uiImage: image)
+                                .resizable()
+                                .scaledToFill()
+                                .aspectRatio(displayedIdentifiers.count == 1 ? 1.6 : 1.15, contentMode: .fit)
+                                .frame(maxWidth: .infinity)
+                                .clipped()
+                            if index == 3, availableIdentifiers.count > displayedIdentifiers.count {
+                                Color.black.opacity(0.42)
+                                Text("+\(availableIdentifiers.count - displayedIdentifiers.count)")
+                                    .font(.title2.bold())
+                                    .foregroundStyle(.white)
+                            }
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                .stroke(Color.tripSand.opacity(0.22), lineWidth: 1)
+                        }
                     }
                 }
             }
-            .padding(.top, 5)
+            .padding(.top, 2)
         }
     }
+}
+
+private extension Color {
+    static let sharePaperTop = Color(red: 0.975, green: 0.961, blue: 0.915)
+    static let sharePaperBottom = Color(red: 0.950, green: 0.932, blue: 0.873)
+    static let shareSummary = Color(red: 0.845, green: 0.902, blue: 0.858)
+    static let shareDayPanel = Color(red: 0.900, green: 0.922, blue: 0.885)
+    static let shareItemTop = Color(red: 0.986, green: 0.974, blue: 0.936)
+    static let shareItemBottom = Color(red: 0.965, green: 0.952, blue: 0.910)
+    static let shareTimeBadge = Color(red: 0.820, green: 0.895, blue: 0.880)
 }

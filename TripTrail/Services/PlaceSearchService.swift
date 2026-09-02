@@ -5,11 +5,15 @@ struct ResolvedPlace: Identifiable, Hashable {
     let id: String
     let name: String
     let address: String
+    let latitude: Double
+    let longitude: Double
 
-    init(name: String, address: String) {
+    init(name: String, address: String, latitude: Double, longitude: Double) {
         self.name = name
         self.address = address
-        self.id = "\(name)-\(address)"
+        self.latitude = latitude
+        self.longitude = longitude
+        self.id = "\(name)-\(latitude)-\(longitude)"
     }
 }
 
@@ -26,10 +30,17 @@ enum PlaceSearchService {
 
         var seen = Set<String>()
         return response.mapItems.compactMap { item in
+            let coordinate = item.placemark.coordinate
+            guard CLLocationCoordinate2DIsValid(coordinate) else { return nil }
             let name = item.name?.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedName = (name?.isEmpty == false ? name : item.placemark.name) ?? keyword
             let address = formattedAddress(item.placemark)
-            let place = ResolvedPlace(name: resolvedName, address: address)
+            let place = ResolvedPlace(
+                name: resolvedName,
+                address: address,
+                latitude: coordinate.latitude,
+                longitude: coordinate.longitude
+            )
             let key = place.id
             guard seen.insert(key).inserted else { return nil }
             return place

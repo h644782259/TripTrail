@@ -25,12 +25,28 @@ enum DebugSampleDataService {
 
         do {
             let existingTrips = try modelContext.fetch(FetchDescriptor<Trip>())
+            let existingStories = try modelContext.fetch(FetchDescriptor<TravelStory>())
+            let didMigrateLocations = migrateLegacyDemoLocations(in: existingTrips)
+            let didAddRouteSamples = ensureRouteSamples(in: existingTrips)
+            let tripsByID = Dictionary(uniqueKeysWithValues: existingTrips.map { ($0.id, $0) })
+            var didMigrateStoryLocations = false
+            for story in existingStories {
+                let sourceTrip = story.sourceTripID.flatMap { tripsByID[$0] }
+                didMigrateStoryLocations = StorySyncService.migrateLegacyLocations(
+                    for: story,
+                    from: sourceTrip
+                ) || didMigrateStoryLocations
+            }
+            if didMigrateLocations || didAddRouteSamples || didMigrateStoryLocations {
+                try modelContext.save()
+            }
             let shouldSeed = !existingTrips.contains { $0.id == markerTripID }
             guard shouldSeed || shouldExport else { return }
 
             let media = try await importBundledMedia()
             if shouldSeed {
                 let library = makeDemoLibrary(media: media)
+                _ = ensureRouteSamples(in: library.trips)
                 library.trips.forEach(modelContext.insert)
                 library.stories.forEach(modelContext.insert)
                 try modelContext.save()
@@ -133,7 +149,8 @@ enum DebugSampleDataService {
 
         let station = makeItem(
             id: 100,
-            title: "杭州东站",
+            title: "抵达杭州东站",
+            placeName: "杭州东站",
             category: .transport,
             start: time(9, 10, on: arrivalDay.date),
             end: time(9, 40, on: arrivalDay.date),
@@ -150,7 +167,8 @@ enum DebugSampleDataService {
         )
         let hotel = makeItem(
             id: 101,
-            title: "湖滨酒店",
+            title: "入住湖滨酒店",
+            placeName: "湖滨酒店",
             category: .hotel,
             start: time(10, 30, on: arrivalDay.date),
             end: time(11, 0, on: arrivalDay.date),
@@ -167,7 +185,8 @@ enum DebugSampleDataService {
         )
         let checklist = makeItem(
             id: 102,
-            title: "湖滨银泰 in77",
+            title: "补充旅行用品",
+            placeName: "湖滨银泰 in77",
             category: .other,
             start: time(11, 10, on: arrivalDay.date),
             end: time(11, 25, on: arrivalDay.date),
@@ -186,7 +205,8 @@ enum DebugSampleDataService {
 
         let brokenBridge = makeItem(
             id: 110,
-            title: "断桥残雪",
+            title: "游览断桥残雪",
+            placeName: "断桥残雪",
             category: .attraction,
             start: time(8, 0, on: todayDay.date),
             end: time(9, 30, on: todayDay.date),
@@ -206,7 +226,8 @@ enum DebugSampleDataService {
 
         let lunch = makeItem(
             id: 111,
-            title: "楼外楼（孤山店）",
+            title: "在楼外楼用餐",
+            placeName: "楼外楼（孤山店）",
             category: .restaurant,
             start: time(11, 30, on: todayDay.date),
             end: time(13, 0, on: todayDay.date),
@@ -223,7 +244,8 @@ enum DebugSampleDataService {
         )
         let market = makeItem(
             id: 112,
-            title: "河坊街",
+            title: "购买旅行伴手礼",
+            placeName: "河坊街",
             category: .other,
             start: time(15, 20, on: todayDay.date),
             end: time(17, 0, on: todayDay.date),
@@ -242,7 +264,8 @@ enum DebugSampleDataService {
 
         let teaGarden = makeItem(
             id: 120,
-            title: "龙井村茶园",
+            title: "漫步龙井村茶园",
+            placeName: "龙井村茶园",
             category: .special,
             start: time(9, 0, on: teaDay.date),
             end: time(11, 30, on: teaDay.date),
@@ -259,7 +282,8 @@ enum DebugSampleDataService {
         )
         let returnTrain = makeItem(
             id: 121,
-            title: "杭州东站",
+            title: "乘坐返程高铁",
+            placeName: "杭州东站",
             category: .transport,
             start: time(17, 5, on: teaDay.date),
             end: time(18, 10, on: teaDay.date),
@@ -289,7 +313,9 @@ enum DebugSampleDataService {
         let shanghaiDay = makeTripDay(id: 20, date: day(7), title: "建筑与夜色", order: 0, trip: upcomingTrip)
         let flight = makeItem(
             id: 200,
-            title: "上海虹桥国际机场 T2",
+            title: "虹桥机场集合",
+            placeName: "上海虹桥国际机场 T2",
+            placeAddress: "上海市长宁区虹桥路2550号",
             category: .transport,
             start: time(8, 0, on: shanghaiDay.date),
             end: time(9, 0, on: shanghaiDay.date),
@@ -306,7 +332,9 @@ enum DebugSampleDataService {
         )
         let bund = makeItem(
             id: 201,
-            title: "外滩",
+            title: "外滩夜景",
+            placeName: "外滩",
+            placeAddress: "上海市黄浦区中山东一路",
             category: .attraction,
             start: time(18, 30, on: shanghaiDay.date),
             end: time(20, 30, on: shanghaiDay.date),
@@ -337,7 +365,8 @@ enum DebugSampleDataService {
         let xiamenDay = makeTripDay(id: 30, date: day(-45), title: "鼓浪屿一日", order: 0, trip: historyTrip)
         let ferry = makeItem(
             id: 300,
-            title: "厦门邮轮中心厦鼓码头",
+            title: "乘船前往鼓浪屿",
+            placeName: "厦门邮轮中心厦鼓码头",
             category: .transport,
             start: time(8, 10, on: xiamenDay.date),
             end: time(8, 35, on: xiamenDay.date),
@@ -354,7 +383,8 @@ enum DebugSampleDataService {
         )
         let pianoMuseum = makeItem(
             id: 301,
-            title: "菽庄花园与钢琴博物馆",
+            title: "游览菽庄花园与钢琴博物馆",
+            placeName: "菽庄花园与钢琴博物馆",
             category: .attraction,
             start: time(9, 20, on: xiamenDay.date),
             end: time(11, 40, on: xiamenDay.date),
@@ -391,6 +421,8 @@ enum DebugSampleDataService {
             id: 520,
             title: "断桥残雪",
             category: .attraction,
+            placeName: "断桥残雪",
+            placeAddress: brokenBridge.placeAddress,
             time: "08:00–09:30",
             address: brokenBridge.address,
             note: "风不大，适合慢慢走，也拍下了一段动态素材。",
@@ -421,6 +453,8 @@ enum DebugSampleDataService {
             id: 620,
             title: "外滩",
             category: .attraction,
+            placeName: "外滩",
+            placeAddress: "上海市黄浦区中山东一路",
             time: "18:42",
             address: "蓝调时刻前到达，沿江记录城市夜色。",
             note: "这张图用于检查足迹卡片封面、轮播与跨设备媒体恢复。",
@@ -451,6 +485,7 @@ enum DebugSampleDataService {
             id: 720,
             title: "菽庄花园",
             category: .attraction,
+            placeName: "菽庄花园与钢琴博物馆",
             time: "09:20–11:40",
             address: "从菽庄花园入园，顺路参观钢琴博物馆。",
             note: "没有照片也能完整保留文字、说明与路线。",
@@ -479,6 +514,8 @@ enum DebugSampleDataService {
     private static func makeItem(
         id: Int,
         title: String,
+        placeName: String? = nil,
+        placeAddress: String = "",
         category: PlaceCategory,
         start: Date,
         end: Date,
@@ -495,7 +532,10 @@ enum DebugSampleDataService {
     ) -> ItineraryItem {
         let result = ItineraryItem(title: title, category: category, startTime: start, endTime: end, sortOrder: order)
         result.id = fixedID(id)
-        result.address = address
+        result.locationMode = .single
+        result.placeName = placeName ?? title
+        result.placeAddress = placeAddress
+        result.address = placeAddress
         result.note = note
         result.transport = transport
         result.distanceText = distance
@@ -505,6 +545,145 @@ enum DebugSampleDataService {
         result.isCompleted = completed
         result.day = day
         return result
+    }
+
+    private static func migrateLegacyDemoLocations(in trips: [Trip]) -> Bool {
+        let values: [UUID: (title: String, place: String, address: String)] = [
+            fixedID(100): ("抵达杭州东站", "杭州东站", ""),
+            fixedID(101): ("入住湖滨酒店", "湖滨酒店", ""),
+            fixedID(102): ("补充旅行用品", "湖滨银泰 in77", ""),
+            fixedID(110): ("游览断桥残雪", "断桥残雪", ""),
+            fixedID(111): ("在楼外楼用餐", "楼外楼（孤山店）", ""),
+            fixedID(112): ("购买旅行伴手礼", "河坊街", ""),
+            fixedID(120): ("漫步龙井村茶园", "龙井村茶园", ""),
+            fixedID(121): ("乘坐返程高铁", "杭州东站", ""),
+            fixedID(200): ("虹桥机场集合", "上海虹桥国际机场 T2", "上海市长宁区虹桥路2550号"),
+            fixedID(201): ("外滩夜景", "外滩", "上海市黄浦区中山东一路"),
+            fixedID(300): ("乘船前往鼓浪屿", "厦门邮轮中心厦鼓码头", ""),
+            fixedID(301): ("游览菽庄花园与钢琴博物馆", "菽庄花园与钢琴博物馆", "")
+        ]
+        var changed = false
+        for item in trips.flatMap(\.allItems) {
+            guard let value = values[item.id] else { continue }
+            guard item.title != value.title
+                    || item.locationMode != .single
+                    || item.placeName != value.place
+                    || item.placeAddress != value.address
+                    || item.address != value.address else {
+                continue
+            }
+            item.title = value.title
+            item.locationMode = .single
+            item.placeName = value.place
+            item.placeAddress = value.address
+            item.address = value.address
+            changed = true
+        }
+        return changed
+    }
+
+    /// Incrementally adds route-style arrangements to existing simulator sample data.
+    /// Stable IDs keep repeated debug launches idempotent and preserve user-created data.
+    @discardableResult
+    static func ensureRouteSamples(in trips: [Trip], calendar: Calendar = .current) -> Bool {
+        guard let demoTrip = trips.first(where: { $0.id == fixedID(3) }),
+              let demoDay = demoTrip.days.first(where: { $0.id == fixedID(30) }) else {
+            return false
+        }
+
+        let samples: [(id: Int, title: String, origin: String, originAddress: String,
+                       destination: String, destinationAddress: String,
+                       startHour: Int, startMinute: Int, endHour: Int, endMinute: Int,
+                       order: Int, transport: TransportMode, distance: String)] = [
+            (
+                302, "前往厦鼓码头", "厦门站", "厦门市思明区厦禾路900号",
+                "厦门邮轮中心厦鼓码头", "厦门市湖里区东港路2号",
+                7, 10, 8, 0, 0, .car, "驾车约 25 分钟"
+            ),
+            (
+                303, "岛上漫步", "三丘田码头", "厦门市思明区鼓浪屿延平路199号",
+                "菽庄花园", "厦门市思明区鼓浪屿港后路7号",
+                8, 40, 9, 10, 2, .walk, "步行约 1.6 公里"
+            ),
+            (
+                304, "海边返程", "菽庄花园", "厦门市思明区鼓浪屿港后路7号",
+                "厦门站", "厦门市思明区厦禾路900号",
+                12, 0, 12, 45, 4, .car, "轮渡 + 驾车约 45 分钟"
+            )
+        ]
+
+        var changed = false
+        let existingByID = Dictionary(uniqueKeysWithValues: demoDay.items.map { ($0.id, $0) })
+        for sample in samples {
+            let id = fixedID(sample.id)
+            let start = calendar.date(
+                bySettingHour: sample.startHour,
+                minute: sample.startMinute,
+                second: 0,
+                of: demoDay.date
+            ) ?? demoDay.date
+            let end = calendar.date(
+                bySettingHour: sample.endHour,
+                minute: sample.endMinute,
+                second: 0,
+                of: demoDay.date
+            ) ?? start
+            let item: ItineraryItem
+            if let existing = existingByID[id] {
+                item = existing
+            } else {
+                item = ItineraryItem(
+                    title: sample.title,
+                    category: .transport,
+                    startTime: start,
+                    endTime: end,
+                    sortOrder: sample.order
+                )
+                item.id = id
+                item.day = demoDay
+                demoDay.items.append(item)
+                changed = true
+            }
+
+            let valuesDiffer = item.title != sample.title
+                || item.locationMode != .route
+                || item.originName != sample.origin
+                || item.originAddress != sample.originAddress
+                || item.destinationName != sample.destination
+                || item.destinationAddress != sample.destinationAddress
+                || item.startTime != start
+                || item.endTime != end
+                || item.sortOrder != sample.order
+                || item.transport != sample.transport
+                || item.distanceText != sample.distance
+                || item.executionStatus != .completed
+            if valuesDiffer {
+                item.title = sample.title
+                item.category = .transport
+                item.locationMode = .route
+                item.originName = sample.origin
+                item.originAddress = sample.originAddress
+                item.destinationName = sample.destination
+                item.destinationAddress = sample.destinationAddress
+                item.startTime = start
+                item.endTime = end
+                item.sortOrder = sample.order
+                item.transport = sample.transport
+                item.distanceText = sample.distance
+                item.executionStatus = .completed
+                changed = true
+            }
+        }
+
+        if let ferry = demoDay.items.first(where: { $0.id == fixedID(300) }), ferry.sortOrder != 1 {
+            ferry.sortOrder = 1
+            changed = true
+        }
+        if let museum = demoDay.items.first(where: { $0.id == fixedID(301) }), museum.sortOrder != 3 {
+            museum.sortOrder = 3
+            changed = true
+        }
+        return changed
     }
 
     private static func attachMedia(
@@ -539,6 +718,8 @@ enum DebugSampleDataService {
         id: Int,
         title: String,
         category: PlaceCategory,
+        placeName: String? = nil,
+        placeAddress: String = "",
         time: String,
         address: String,
         note: String,
@@ -550,6 +731,9 @@ enum DebugSampleDataService {
     ) -> StoryEntry {
         let result = StoryEntry(title: title, category: category, sortOrder: order)
         result.id = fixedID(id)
+        result.locationMode = .single
+        result.placeName = placeName ?? JourneyLocationText.entityName(from: title, arrangementTitle: title)
+        result.placeAddress = placeAddress
         result.timeLabel = time
         result.address = address
         result.note = note

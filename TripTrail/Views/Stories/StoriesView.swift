@@ -1,6 +1,68 @@
 import SwiftData
 import SwiftUI
 
+struct FootprintYearSection: Identifiable {
+    let year: Int
+    let stories: [TravelStory]
+
+    var id: Int { year }
+}
+
+enum FootprintBrowseService {
+    static func filtered(
+        _ stories: [TravelStory],
+        searchText: String,
+        year: Int?,
+        calendar: Calendar = .current
+    ) -> [TravelStory] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        return stories
+            .filter { story in
+                if let year, calendar.component(.year, from: story.startDate) != year {
+                    return false
+                }
+                return query.isEmpty || searchableText(for: story).localizedCaseInsensitiveContains(query)
+            }
+            .sorted {
+                if $0.startDate != $1.startDate { return $0.startDate > $1.startDate }
+                if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+    }
+
+    static func groupedByYear(
+        _ stories: [TravelStory],
+        calendar: Calendar = .current
+    ) -> [FootprintYearSection] {
+        Dictionary(grouping: stories) { calendar.component(.year, from: $0.startDate) }
+            .map { FootprintYearSection(year: $0.key, stories: $0.value) }
+            .sorted { $0.year > $1.year }
+    }
+
+    private static func searchableText(for story: TravelStory) -> String {
+        var parts = [story.title, story.destination, story.summary]
+        for day in story.sortedDays {
+            parts.append(contentsOf: [day.title, day.note, day.details])
+        }
+        for entry in story.sortedEntries {
+            parts.append(contentsOf: [
+                entry.title,
+                entry.note,
+                entry.supplementalInfo,
+                entry.address,
+                entry.placeName,
+                entry.placeAddress,
+                entry.originName,
+                entry.originAddress,
+                entry.destinationName,
+                entry.destinationAddress
+            ])
+        }
+        return parts.joined(separator: " ")
+    }
+}
+
 struct StoriesView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \TravelStory.startDate, order: .reverse) private var stories: [TravelStory]
@@ -9,7 +71,31 @@ struct StoriesView: View {
     @State private var storyToShare: TravelStory?
     @State private var storyToDelete: TravelStory?
     @State private var creatingStory = false
-    @State private var syncMessage: String?
+    @State private var searchText = ""
+    @State private var selectedYear: Int?
+    @State private var collapsedYears: Set<Int> = []
+    @State private var didInitializeCollapsedYears = false
+
+    private var filteredStories: [TravelStory] {
+        FootprintBrowseService.filtered(
+            stories,
+            searchText: searchText,
+            year: selectedYear
+        )
+    }
+
+    private var yearSections: [FootprintYearSection] {
+        FootprintBrowseService.groupedByYear(filteredStories)
+    }
+
+    private var availableYears: [Int] {
+        Array(Set(stories.map { Calendar.current.component(.year, from: $0.startDate) })).sorted(by: >)
+    }
+
+    private var hasActiveConditions: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || selectedYear != nil
+    }
 
     var body: some View {
         ScrollView {
@@ -25,34 +111,46 @@ struct StoriesView: View {
                     }
                     .frame(minHeight: 360)
                 } else {
-                    header
-                    ForEach(stories) { story in
-                        StoryCard(
-                            story: story,
-                            canSync: sourceTrip(for: story) != nil,
-                            onSync: { sync(story) },
-                            onEdit: { storyToEdit = story },
-                            onShare: { storyToShare = story },
-                            onDelete: { storyToDelete = story }
-                        )
-                            .contextMenu {
-                                if sourceTrip(for: story) != nil {
-                                    Button("同步足迹", systemImage: "arrow.triangle.2.circlepath") { sync(story) }
-                                }
-                                Button("编辑足迹", systemImage: "pencil") { storyToEdit = story }
-                                Button("分享足迹", systemImage: "square.and.arrow.up") { storyToShare = story }
-                                Divider()
-                                Button("删除足迹", systemImage: "trash", role: .destructive) { storyToDelete = story }
-                            }
+                    if hasActiveConditions {
+                        HStack {
+                            Text("找到 \(filteredStories.count) / \(stories.count) 段足迹")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("清除条件", action: clearConditions)
+                                .font(.subheadline.bold())
+                        }
+                    }
+                    if filteredStories.isEmpty {
+                        ContentUnavailableView {
+                            Label("没有找到足迹", systemImage: "magnifyingglass")
+                        } description: {
+                            Text("试试其他关键词，或清除筛选条件。")
+                        } actions: {
+                            Button("清除条件", action: clearConditions)
+                                .buttonStyle(.bordered)
+                        }
+                        .frame(minHeight: 280)
+                    } else {
+                        ForEach(yearSections) { section in
+                            yearGroup(section)
+                        }
                     }
                 }
             }
             .padding()
+            .padding(.bottom, 96)
         }
         .background(Color.tripCanvas)
-        .navigationTitle("旅行足迹")
+        .navigationBarTitleDisplayMode(.inline)
+        .searchable(
+            text: $searchText,
+            placement: .navigationBarDrawer(displayMode: .always),
+            prompt: "搜索名称、城市、地点或摘要"
+        )
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                filterMenu
                 Button("新建足迹", systemImage: "plus") { creatingStory = true }
             }
         }
@@ -60,14 +158,6 @@ struct StoriesView: View {
         .sheet(isPresented: $creatingStory) { NewFootprintView() }
         .sheet(item: $storyToEdit) { StoryEditorView(story: $0) }
         .sheet(item: $storyToShare) { ShareExportView(story: $0) }
-        .alert("足迹同步", isPresented: Binding(
-            get: { syncMessage != nil },
-            set: { if !$0 { syncMessage = nil } }
-        )) {
-            Button("好", role: .cancel) { syncMessage = nil }
-        } message: {
-            Text(syncMessage ?? "")
-        }
         .alert(
             HierarchyDeletionCopy.storyTitle,
             isPresented: Binding(
@@ -81,7 +171,102 @@ struct StoriesView: View {
         } message: { story in
             Text(HierarchyDeletionCopy.storyMessage(title: story.title))
         }
-        .task { stories.forEach { StorySyncService.ensureHierarchy(for: $0) } }
+        .task {
+            for story in stories {
+                StorySyncService.ensureHierarchy(for: story)
+                _ = StorySyncService.migrateLegacyLocations(
+                    for: story,
+                    from: sourceTrip(for: story)
+                )
+            }
+            initializeCollapsedYearsIfNeeded()
+        }
+        .onChange(of: hasActiveConditions) { _, isActive in
+            if isActive {
+                collapsedYears.removeAll()
+            }
+        }
+    }
+
+    private func storyCard(_ story: TravelStory) -> some View {
+        StoryCard(
+            story: story,
+            onEdit: { storyToEdit = story },
+            onShare: { storyToShare = story },
+            onDelete: { storyToDelete = story }
+        )
+        .contextMenu {
+            Button("编辑足迹", systemImage: "pencil") { storyToEdit = story }
+            Button("分享足迹", systemImage: "square.and.arrow.up") { storyToShare = story }
+            Divider()
+            Button("删除足迹", systemImage: "trash", role: .destructive) { storyToDelete = story }
+        }
+    }
+
+    private func yearGroup(_ section: FootprintYearSection) -> some View {
+        LazyVStack(spacing: 12) {
+            Button {
+                withAnimation(.snappy(duration: 0.22)) {
+                    if collapsedYears.contains(section.year) {
+                        collapsedYears.remove(section.year)
+                    } else {
+                        collapsedYears.insert(section.year)
+                    }
+                }
+            } label: {
+                HStack {
+                    Text("\(section.year) 年")
+                        .font(.headline)
+                        .foregroundStyle(Color.tripInk)
+                    Text("\(section.stories.count) 段")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.tripLake)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.tripLake.opacity(0.1), in: Capsule())
+                    Spacer()
+                    Image(systemName: collapsedYears.contains(section.year) ? "chevron.down" : "chevron.up")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(section.year) 年，\(section.stories.count) 段足迹")
+            .accessibilityValue(collapsedYears.contains(section.year) ? "已收起" : "已展开")
+
+            if !collapsedYears.contains(section.year) {
+                ForEach(section.stories) { story in
+                    storyCard(story)
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
+        }
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("年份", selection: $selectedYear) {
+                Text("全部年份").tag(nil as Int?)
+                ForEach(availableYears, id: \.self) { year in
+                    Text("\(year) 年").tag(Optional(year))
+                }
+            }
+        } label: {
+            Image(systemName: selectedYear == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+        }
+        .accessibilityLabel(selectedYear == nil ? "按年份筛选足迹" : "按年份筛选足迹，已有条件")
+    }
+
+    private func initializeCollapsedYearsIfNeeded() {
+        guard !didInitializeCollapsedYears else { return }
+        collapsedYears = Set(availableYears.dropFirst())
+        didInitializeCollapsedYears = true
+    }
+
+    private func clearConditions() {
+        searchText = ""
+        selectedYear = nil
     }
 
     private func delete(_ story: TravelStory) {
@@ -95,24 +280,6 @@ struct StoriesView: View {
         return trips.first { $0.id == sourceTripID }
     }
 
-    private func sync(_ story: TravelStory) {
-        guard let trip = sourceTrip(for: story) else { return }
-        syncMessage = StorySyncService.sync(story: story, from: trip, modelContext: modelContext).message
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("走过的路，会留下来").font(.title2.bold())
-                Text("\(stories.count) 段足迹").font(.subheadline).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Image(systemName: "map.circle.fill")
-                .font(.system(size: 50))
-                .foregroundStyle(Color.tripLake, Color.tripMist)
-        }
-        .cardSurface()
-    }
 }
 
 private struct NewFootprintView: View {
@@ -125,7 +292,7 @@ private struct NewFootprintView: View {
     @State private var summary = ""
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Form {
                 Section("这段足迹") {
                     TextField("例如：初秋杭州三日", text: $title)
@@ -171,84 +338,125 @@ private struct NewFootprintView: View {
 
 private struct StoryCard: View {
     let story: TravelStory
-    let canSync: Bool
-    let onSync: () -> Void
     let onEdit: () -> Void
     let onShare: () -> Void
     let onDelete: () -> Void
     @State private var mediaPreview: AssetMediaPreviewRequest?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            if story.allMedia.isEmpty {
-                NavigationLink(value: story) {
-                    ContentUnavailableView("还没有图片", systemImage: "photo.on.rectangle.angled")
-                        .frame(maxWidth: .infinity, minHeight: 116)
-                        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("进入足迹详情")
-            } else {
-                StoryMediaCarousel(
-                    media: story.allMedia,
-                    height: 196,
-                    onSelect: showMedia
-                )
-            }
+        HStack(alignment: .top, spacing: 14) {
+            thumbnail
 
-            HStack(alignment: .top) {
-                NavigationLink(value: story) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(story.title).font(.title3.bold()).foregroundStyle(.primary)
-                            if !story.destination.isEmpty {
-                                Label(story.destination, systemImage: "mappin.and.ellipse")
-                                    .font(.subheadline).foregroundStyle(.secondary)
-                            }
-                        }
-                        if !story.summary.isEmpty {
-                            Text(story.summary)
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(3)
-                        }
-                        HStack(spacing: 8) {
-                            Text("\(story.startDate.compactDayText) — \(story.endDate.compactDayText)")
-                                .foregroundStyle(.secondary)
-                            Spacer(minLength: 8)
-                            Text("\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个安排")
-                                .fontWeight(.bold)
-                                .foregroundStyle(Color.tripLake)
-                        }
+            NavigationLink(value: story) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(story.title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+
+                    if !story.destination.isEmpty {
+                        Label(story.destination, systemImage: "mappin.and.ellipse")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    if !story.summary.isEmpty {
+                        Text(story.summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+
+                    Spacer(minLength: 0)
+
+                    Text("\(story.startDate.compactDayText) — \(story.endDate.compactDayText)")
                         .font(.caption)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityHint("进入足迹详情")
+                        .foregroundStyle(.secondary)
 
-                Menu {
-                    if canSync {
-                        Button("同步足迹", systemImage: "arrow.triangle.2.circlepath", action: onSync)
-                    }
-                    Button("编辑足迹", systemImage: "pencil", action: onEdit)
-                    Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
-                    Divider()
-                    Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                        .font(.title3)
-                        .frame(width: 40, height: 40)
-                        .background(Color.secondary.opacity(0.08), in: Circle())
+                    Text("\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个记录")
+                        .font(.caption.bold())
+                        .foregroundStyle(Color.tripLake)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.tripInk.opacity(0.72))
-                .accessibilityLabel("\(story.title)更多操作")
+                .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityHint("进入足迹详情")
+
+            Menu {
+                Button("编辑足迹", systemImage: "pencil", action: onEdit)
+                Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
+                Divider()
+                Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.title3)
+                    .frame(width: 40, height: 40)
+                    .background(Color.secondary.opacity(0.08), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.tripInk.opacity(0.72))
+            .accessibilityLabel("\(story.title)更多操作")
         }
         .cardSurface()
         .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if story.coverMedia != nil {
+            NavigationLink(value: story) {
+                StoryCoverArtwork(
+                    story: story,
+                    targetSize: CGSize(width: 360, height: 360)
+                )
+                    .frame(width: 112, height: 112)
+                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看\(story.title)")
+            .accessibilityHint("进入足迹详情")
+        } else if let media = story.allMedia.first {
+            Button {
+                showMedia(media)
+            } label: {
+                AssetThumbnail(
+                    identifier: media.localIdentifier,
+                    showsVideoBadge: media.kind == .video
+                )
+                .frame(width: 112, height: 112)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .overlay(alignment: .bottomTrailing) {
+                    if story.allMedia.count > 1 {
+                        Label("\(story.allMedia.count)", systemImage: "photo.on.rectangle.angled")
+                            .font(.caption2.bold())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.58), in: Capsule())
+                            .padding(7)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(media.kind == .video ? "查看足迹视频" : "查看足迹照片")
+            .accessibilityValue("共 \(story.allMedia.count) 个媒体")
+        } else {
+            NavigationLink(value: story) {
+                VStack(spacing: 7) {
+                    Image(systemName: "photo.on.rectangle.angled")
+                        .font(.title2)
+                    Text("暂无图片")
+                        .font(.caption)
+                }
+                .foregroundStyle(.secondary)
+                .frame(width: 112, height: 112)
+                .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("进入足迹详情")
+        }
     }
 
     private func showMedia(_ media: MediaReference) {
@@ -280,16 +488,16 @@ struct ArchiveTripView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Form {
                 Section {
-                    LabeledContent("保存位置", value: existingStory == nil ? "新建“\(trip.title)”足迹" : "合并到“\(trip.title)”足迹")
-                    LabeledContent("已选择", value: "\(selectedDaysCount) 天 · \(selectedItemIDs.count) 个安排")
+                    LabeledContent("保存位置", value: existingStory == nil ? "新建“\(trip.title)”足迹" : "更新“\(trip.title)”足迹")
+                    LabeledContent("已选择", value: "\(selectedDaysCount) 天 · \(selectedItemIDs.count) 个记录")
                 }
                 Section("选择内容") {
                     selectionRow(
                         title: trip.title,
-                        subtitle: "全部 \(trip.sortedDays.count) 天 · \(trip.allItems.count) 个安排",
+                        subtitle: "全部 \(trip.sortedDays.count) 天 · \(trip.allItems.count) 个记录",
                         state: rootSelectionState,
                         level: 0,
                         action: toggleAll
@@ -297,7 +505,7 @@ struct ArchiveTripView: View {
                     ForEach(trip.sortedDays) { day in
                         selectionRow(
                             title: day.title.isEmpty ? day.date.chineseDateText : day.title,
-                            subtitle: "\(day.date.compactDayText) · \(day.items.count) 个安排",
+                            subtitle: "\(day.date.compactDayText) · \(day.items.count) 个记录",
                             state: selectionState(for: day),
                             level: 1,
                             action: { toggle(day) }
@@ -318,12 +526,12 @@ struct ArchiveTripView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("收进足迹")
+            .navigationTitle("整理成足迹")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(existingStory == nil ? "创建足迹" : "同步到足迹") { archive() }
+                    Button(existingStory == nil ? "创建足迹" : "更新足迹框架") { archive() }
                         .disabled(!hasSelection)
                 }
             }

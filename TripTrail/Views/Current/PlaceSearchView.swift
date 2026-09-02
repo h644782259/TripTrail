@@ -18,7 +18,7 @@ struct PlaceSearchView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Group {
                 if isSearching && results.isEmpty {
                     ProgressView("正在查找地点…")

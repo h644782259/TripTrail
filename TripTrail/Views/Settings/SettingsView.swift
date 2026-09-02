@@ -1,11 +1,11 @@
-import Photos
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
-    @State private var photoStatus = PhotoLibraryService.status
+    @AppStorage(EnhancedRecognitionSettings.enabledDefaultsKey)
+    private var enhancedRecognitionEnabled = ZhipuAPIKeyStore.hasAPIKey
     @State private var message: String?
     @State private var backupExportRequest: BackupExportRequest?
     @State private var backupExportResult: BackupExportResult?
@@ -19,28 +19,67 @@ struct SettingsView: View {
     @State private var pendingSharedJourneySummary: SharedJourneySummary?
     @State private var isConfirmingSharedJourney = false
     @State private var showsCreatorReward = false
+    @State private var zhipuAPIKeyInput = ZhipuAPIKeyStore.load() ?? ""
+    @State private var isZhipuAPIKeyVisible = false
+    @State private var hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
+    @State private var isZhipuAPIKeyDirty = false
+    @State private var apiKeySaveTask: Task<Void, Never>?
+    @State private var isAddingSampleTrip = false
+    @FocusState private var isZhipuAPIKeyFocused: Bool
 
     var body: some View {
         List {
-            Section {
-                HStack(spacing: 14) {
-                    Image(systemName: "photo.stack.fill")
-                        .font(.title2).foregroundStyle(Color.tripLake)
-                        .frame(width: 42, height: 42)
-                        .background(Color.tripLake.opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text("系统相簿").font(.headline)
-                        Text(photoStatusText).font(.caption).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Button(photoButtonTitle) { handlePhotoPermission() }.font(.subheadline.bold())
+            Section("开始体验") {
+                Button { addSampleTrip() } label: {
+                    Label(isAddingSampleTrip ? "正在准备示例旅程…" : "添加示例旅程", systemImage: "wand.and.stars")
                 }
-            } header: { Text("权限") } footer: {
-                Text("平时仅保存相簿索引；完整备份或带媒体分享时才读取原件。")
+                .disabled(isAddingSampleTrip)
             }
 
-            Section("开始体验") {
-                Button { addSampleTrip() } label: { Label("添加杭州示例旅程", systemImage: "wand.and.stars") }
+            Section("旅行概览") {
+                NavigationLink {
+                    TripStatisticsView()
+                } label: {
+                    Label("旅行统计", systemImage: "chart.bar.fill")
+                }
+            }
+
+            Section {
+                Toggle(
+                    "使用大模型智能识别",
+                    isOn: $enhancedRecognitionEnabled
+                )
+
+                if enhancedRecognitionEnabled {
+                    HStack(spacing: 10) {
+                        Group {
+                            if isZhipuAPIKeyVisible {
+                                TextField("智谱 API Key", text: $zhipuAPIKeyInput)
+                            } else {
+                                SecureField("智谱 API Key", text: $zhipuAPIKeyInput)
+                            }
+                        }
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textContentType(.oneTimeCode)
+                        .privacySensitive()
+                        .focused($isZhipuAPIKeyFocused)
+
+                        Button {
+                            isZhipuAPIKeyVisible.toggle()
+                        } label: {
+                            Image(systemName: isZhipuAPIKeyVisible ? "eye.slash" : "eye")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(isZhipuAPIKeyVisible ? "隐藏 API Key" : "显示 API Key")
+                    }
+                    .onChange(of: zhipuAPIKeyInput) { _, newValue in
+                        handleAPIKeyInputChange(newValue)
+                    }
+                }
+            } header: {
+                Text("智能识别")
             }
 
             Section {
@@ -48,36 +87,33 @@ struct SettingsView: View {
                     if isPreparingBackup {
                         Label("正在读取并打包媒体…", systemImage: "hourglass")
                     } else {
-                        Label("导出完整备份", systemImage: "square.and.arrow.up")
+                        Label("导出备份", systemImage: "square.and.arrow.up")
                     }
                 }
                 .disabled(isPreparingBackup)
                 Button { importRequest = DocumentImportRequest(kind: .backup) } label: {
-                    Label("从备份恢复", systemImage: "square.and.arrow.down")
+                    Label("恢复备份", systemImage: "square.and.arrow.down")
                 }
             } header: {
-                Text("数据备份与换机")
+                Text("备份与恢复")
             } footer: {
-                Text("完整备份包含照片和视频；恢复会替换本机旅迹数据。")
+                Text("含照片和视频；恢复将替换本机数据。")
             }
 
             Section {
                 Button { importRequest = DocumentImportRequest(kind: .sharedJourney) } label: {
-                    Label("收藏别人分享的旅程或足迹", systemImage: "square.and.arrow.down.on.square")
+                    Label("导入旅程或足迹", systemImage: "square.and.arrow.down.on.square")
                 }
             } header: {
                 Text("接收分享")
-            } footer: {
-                Text("导入后保存为独立副本。")
             }
 
             Section("数据与隐私") {
-                Label("旅行数据仅保存在本机", systemImage: "lock.shield")
-                Label("删除相簿原图后，旅迹图片会失效", systemImage: "exclamationmark.triangle")
+                Label("数据存在本机", systemImage: "lock.shield")
+                Label("删除相簿原图后，图片将无法显示", systemImage: "exclamationmark.triangle")
             }
 
             Section("关于") {
-                LabeledContent("App", value: "旅迹")
                 Button {
                     showsCreatorReward = true
                 } label: {
@@ -93,11 +129,38 @@ struct SettingsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                LabeledContent("版本", value: "0.1.0 MVP")
-                LabeledContent("系统要求", value: "iOS 17 或更高")
+                LabeledContent("版本", value: "0.1.0")
+                LabeledContent("系统要求", value: "iOS 17+")
             }
         }
-        .navigationTitle("我的")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            hasZhipuAPIKey = !zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            if !hasZhipuAPIKey {
+                enhancedRecognitionEnabled = false
+            }
+        }
+        .onChange(of: enhancedRecognitionEnabled) { _, isEnabled in
+            if isEnabled, !hasZhipuAPIKey {
+                Task { @MainActor in
+                    await Task.yield()
+                    isZhipuAPIKeyFocused = true
+                }
+            } else if !isEnabled {
+                isZhipuAPIKeyFocused = false
+                flushPendingZhipuAPIKeyChange()
+            }
+        }
+        .onChange(of: isZhipuAPIKeyFocused) { wasFocused, isFocused in
+            guard wasFocused, !isFocused else { return }
+            finishEditingZhipuAPIKey()
+        }
+        .onDisappear {
+            finishEditingZhipuAPIKey()
+        }
+        .safeAreaInset(edge: .bottom) {
+            Color.clear.frame(height: 72)
+        }
         .alert("提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
@@ -147,30 +210,56 @@ struct SettingsView: View {
         }
     }
 
-    private var photoStatusText: String {
-        switch photoStatus {
-        case .authorized: "已允许读取与添加"
-        case .limited: "仅可访问已选择的照片"
-        case .denied, .restricted: "未允许，请到系统设置修改"
-        case .notDetermined: "尚未请求"
-        @unknown default: "状态未知"
+    private func handleAPIKeyInputChange(_ value: String) {
+        apiKeySaveTask?.cancel()
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        hasZhipuAPIKey = !candidate.isEmpty
+        isZhipuAPIKeyDirty = true
+
+        apiKeySaveTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            guard !Task.isCancelled else { return }
+            guard candidate == zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
+            if persistZhipuAPIKey(candidate) {
+                isZhipuAPIKeyDirty = false
+                apiKeySaveTask = nil
+            }
         }
     }
 
-    private var photoButtonTitle: String {
-        switch photoStatus {
-        case .notDetermined: "允许"
-        case .denied, .restricted: "去设置"
-        default: "管理"
+    @discardableResult
+    private func persistZhipuAPIKey(_ key: String) -> Bool {
+        do {
+            if key.isEmpty {
+                try ZhipuAPIKeyStore.delete()
+            } else {
+                try ZhipuAPIKeyStore.save(key)
+            }
+            return true
+        } catch {
+            hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
+            message = error.localizedDescription
+            return false
         }
     }
 
-    private func handlePhotoPermission() {
-        if photoStatus == .notDetermined {
-            Task { photoStatus = await PhotoLibraryService.requestReadWriteAccess() }
-        } else if let url = URL(string: UIApplication.openSettingsURLString) {
-            UIApplication.shared.open(url)
+    private func finishEditingZhipuAPIKey() {
+        let candidate = flushPendingZhipuAPIKeyChange()
+        if candidate.isEmpty {
+            enhancedRecognitionEnabled = false
         }
+    }
+
+    @discardableResult
+    private func flushPendingZhipuAPIKeyChange() -> String {
+        apiKeySaveTask?.cancel()
+        apiKeySaveTask = nil
+        let candidate = zhipuAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
+        hasZhipuAPIKey = !candidate.isEmpty
+        if isZhipuAPIKeyDirty, persistZhipuAPIKey(candidate) {
+            isZhipuAPIKeyDirty = false
+        }
+        return candidate
     }
 
     private func exportBackup() {
@@ -221,7 +310,7 @@ struct SettingsView: View {
 
     private var restoreConfirmationText: String {
         guard let summary = pendingRestoreSummary else { return "将替换本机当前数据。" }
-        return "备份包含\(summary.restoreDescription)。恢复后将替换本机当前的所有旅程和足迹，此操作不可撤销。"
+        return "备份包含\(summary.restoreDescription)。恢复后将替换本机当前的所有旅程、足迹和收藏，此操作不可撤销。"
     }
 
     private func restorePendingBackup() {
@@ -285,38 +374,241 @@ struct SettingsView: View {
     }()
 
     private func addSampleTrip() {
-        let calendar = Calendar.current
-        let start = calendar.startOfDay(for: Date())
-        let trip = Trip(title: "西湖慢游三日", destination: "杭州", startDate: start, endDate: calendar.date(byAdding: .day, value: 2, to: start)!, note: "沿着湖边慢慢走，给好吃的和晚霞留出时间。")
-        modelContext.insert(trip)
-        let samples: [[(String, PlaceCategory, String)]] = [
-            [("断桥残雪", .attraction, "从白堤东端开始散步，早晨光线更柔和。"), ("孤山公园", .attraction, "沿湖慢慢走，顺路看看荷花与林间小路。")],
-            [("灵隐寺", .attraction, "建议早点到达，避开午后人流。"), ("龙井村", .restaurant, "找一家茶室休息，尝尝当地家常菜。")],
-            [("九溪烟树", .attraction, "穿舒适的鞋，沿溪流慢慢走到林间。")]
-        ]
-        for dayIndex in samples.indices {
-            let date = calendar.date(byAdding: .day, value: dayIndex, to: start)!
-            let day = TripDay(date: date, title: ["湖畔初见", "山寺与茶", "九溪收尾"][dayIndex], sortOrder: dayIndex, trip: trip)
-            trip.days.append(day)
-            for (itemIndex, sample) in samples[dayIndex].enumerated() {
-                let time = calendar.date(bySettingHour: 9 + itemIndex * 4, minute: 0, second: 0, of: date)!
-                let item = ItineraryItem(title: sample.0, category: sample.1, startTime: time, endTime: calendar.date(byAdding: .hour, value: 2, to: time)!, sortOrder: itemIndex)
-                item.address = sample.2
-                item.distanceText = itemIndex == 0 ? "从当前位置出发" : "约 4.5 km · 20 分钟"
-                item.note = "到达后可以补充照片、视频和当时的感受。"
-                item.day = day
-                day.items.append(item)
+        guard !isAddingSampleTrip else { return }
+        isAddingSampleTrip = true
+        Task { @MainActor in
+            let media = await importSampleMedia()
+            let trip = makeFeatureRichSampleTrip(media: media)
+            modelContext.insert(trip)
+            do {
+                try modelContext.save()
+                message = media.hasAnyMedia
+                    ? "示例旅程已添加，可从“旅程”页体验完整功能。"
+                    : "示例旅程已添加。未获取到相簿权限，因此未加入示例图片和视频。"
+            } catch {
+                message = "示例旅程添加失败：\(error.localizedDescription)"
             }
+            isAddingSampleTrip = false
         }
-        message = "示例旅程已添加，可从“旅程”页开始体验。"
     }
+
+    private func importSampleMedia() async -> SampleJourneyMedia {
+        let authorization = await PhotoLibraryService.requestReadWriteAccessIfNeeded()
+        guard authorization == .authorized || authorization == .limited else { return .empty }
+
+        func importResource(_ name: String, extension fileExtension: String, kind: MediaKind) async -> String? {
+            guard let url = Bundle.main.url(forResource: name, withExtension: fileExtension) else { return nil }
+            return try? await PhotoLibraryService.importAssetFile(at: url, kind: kind)
+        }
+
+        return SampleJourneyMedia(
+            lake: await importResource("triptrail-demo-lake", extension: "png", kind: .image),
+            city: await importResource("triptrail-demo-city", extension: "png", kind: .image),
+            motion: await importResource("triptrail-demo-motion", extension: "mov", kind: .video)
+        )
+    }
+
+    private func makeFeatureRichSampleTrip(media: SampleJourneyMedia) -> Trip {
+        let calendar = Calendar.current
+        let now = Date()
+        let today = calendar.startOfDay(for: now)
+        let firstDate = calendar.date(byAdding: .day, value: -1, to: today) ?? today
+        let lastDate = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+
+        func at(_ hour: Int, _ minute: Int = 0, on date: Date) -> Date {
+            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
+        }
+        let endOfToday = at(23, 50, on: today)
+        let currentWalkStart = min(now.addingTimeInterval(-30 * 60), endOfToday.addingTimeInterval(-90 * 60))
+        let currentWalkEnd = min(now.addingTimeInterval(60 * 60), endOfToday.addingTimeInterval(-45 * 60))
+        let lakesideStart = currentWalkEnd.addingTimeInterval(15 * 60)
+
+        let trip = Trip(
+            title: "杭州山水三日",
+            destination: "杭州",
+            startDate: firstDate,
+            endDate: lastDate,
+            note: "从西湖晨光到龙井茶山，一段有路线、预约、花费和影像记录的完整示例旅程。"
+        )
+
+        let arrivalDay = TripDay(date: firstDate, title: "抵达与安顿", sortOrder: 0, trip: trip)
+        arrivalDay.note = "先放好行李，再用一段轻松的湖边散步开始旅程。"
+        let lakeDay = TripDay(date: today, title: "西湖一日", sortOrder: 1, trip: trip)
+        lakeDay.note = "不赶景点，把时间留给湖面、风和一顿杭帮菜。"
+        let teaDay = TripDay(date: lastDate, title: "茶山与返程", sortOrder: 2, trip: trip)
+        teaDay.note = "上午慢走茶园，下午买好伴手礼后前往车站。"
+        trip.days = [arrivalDay, lakeDay, teaDay]
+
+        let train = sampleItem(
+            title: "高铁前往杭州", category: .transport,
+            start: at(8, 0, on: firstDate), end: at(9, 5, on: firstDate), order: 0, day: arrivalDay,
+            transport: .train, distance: "高铁 1 小时 5 分", duration: 65,
+            reservation: "G7311 · 08车12A", cost: 73,
+            note: "提前 30 分钟到站，抵达后从东广场出站。"
+        )
+        train.locationMode = .route
+        train.originName = "上海虹桥站"
+        train.originAddress = "上海市闵行区申贵路1500号"
+        train.destinationName = "杭州东站"
+        train.destinationAddress = "杭州市上城区全福桥路2号"
+
+        let hotel = sampleItem(
+            title: "办理酒店入住", category: .hotel,
+            start: at(10, 0, on: firstDate), end: at(10, 30, on: firstDate), order: 1, day: arrivalDay,
+            place: "杭州西湖湖滨酒店", address: "杭州市上城区湖滨路",
+            transport: .bus, distance: "地铁 1 号线·龙翔桥站", duration: 30,
+            reservation: "大床房 · 含早", cost: 688,
+            note: "先寄存行李，14:00 后取房卡。"
+        )
+
+        let packing = sampleItem(
+            title: "整理随身物品", category: .other,
+            start: at(10, 40, on: firstDate), end: at(11, 0, on: firstDate), order: 2, day: arrivalDay,
+            place: "杭州西湖湖滨酒店", transport: .walk, distance: "酒店内", duration: 20,
+            reservation: "", cost: 0,
+            note: "只带相机、雨伞和充电宝，大件行李留在酒店。"
+        )
+        arrivalDay.items = [train, hotel, packing]
+
+        let bridge = sampleItem(
+            title: "沿白堤看西湖晨光", category: .attraction,
+            start: at(7, 30, on: today), end: at(9, 0, on: today), order: 0, day: lakeDay,
+            place: "断桥残雪", address: "杭州市西湖区白堤东端",
+            transport: .walk, distance: "步行 1.8 公里", duration: 90,
+            reservation: "无需预约", cost: 0,
+            note: "从断桥慢慢走到平湖秋月，清晨人少，适合拍湖面反光。"
+        )
+        attachSampleMedia(media.lake, kind: .image, caption: "西湖晨光", order: 0, to: bridge)
+        attachSampleMedia(media.motion, kind: .video, caption: "湖边的风", order: 1, to: bridge)
+
+        let lunch = sampleItem(
+            title: "品尝杭帮菜", category: .restaurant,
+            start: at(11, 30, on: today), end: at(13, 0, on: today), order: 1, day: lakeDay,
+            place: "楼外楼（孤山店）", address: "杭州市西湖区孤山路30号",
+            transport: .walk, distance: "步行 900 米", duration: 90,
+            reservation: "12:00 · 2人 · 临窗位", cost: 328,
+            note: "尝试西湖醋鱼和龙井虾仁，用餐后可在孤山稍作休息。"
+        )
+        lunch.isFavorite = true
+        lunch.favoriteCreatedAt = now
+
+        let currentWalk = sampleItem(
+            title: "湖畔自由漫步", category: .attraction,
+            start: currentWalkStart, end: currentWalkEnd, order: 2, day: lakeDay,
+            place: "曲院风荷", address: "杭州市西湖区北山街89号",
+            transport: .walk, distance: "环湖步行约 2.4 公里", duration: 90,
+            reservation: "", cost: 0,
+            note: "这段安排示范“进行中”状态，状态会随当前时间自动更新。"
+        )
+
+        let sunset = sampleItem(
+            title: "湖滨散步与拍照", category: .special,
+            start: lakesideStart, end: endOfToday, order: 3, day: lakeDay,
+            place: "集贤亭", address: "杭州市上城区湖滨路",
+            transport: .ride, distance: "骑行约 3.2 公里", duration: 60,
+            reservation: "日落前 30 分钟到达", cost: 15,
+            note: "沿湖滨慢慢走，记录城市灯光与湖面；如果下雨就改成室内散步。"
+        )
+        attachSampleMedia(media.city, kind: .image, caption: "湖滨夜色", order: 0, to: sunset)
+        lakeDay.items = [bridge, lunch, currentWalk, sunset]
+
+        let teaGarden = sampleItem(
+            title: "漫步龙井村茶园", category: .special,
+            start: at(9, 0, on: lastDate), end: at(11, 30, on: lastDate), order: 0, day: teaDay,
+            place: "龙井村", address: "杭州市西湖区龙井村",
+            transport: .car, distance: "驾车约 11 公里", duration: 150,
+            reservation: "茶室 09:30", cost: 120,
+            note: "沿十里琅珰走一小段，穿防滑的鞋，留意山间天气。"
+        )
+        let shopping = sampleItem(
+            title: "挑选杭州伴手礼", category: .other,
+            start: at(14, 0, on: lastDate), end: at(15, 0, on: lastDate), order: 1, day: teaDay,
+            place: "河坊街", address: "杭州市上城区河坊街",
+            transport: .bus, distance: "公交约 35 分钟", duration: 60,
+            reservation: "", cost: 180,
+            note: "茶叶和桂花糕控制在一个手提袋内。"
+        )
+        let station = sampleItem(
+            title: "前往杭州东站", category: .transport,
+            start: at(16, 0, on: lastDate), end: at(16, 45, on: lastDate), order: 2, day: teaDay,
+            transport: .bus, distance: "地铁约 35 分钟", duration: 45,
+            reservation: "G7590 · 17:30 开车", cost: 6,
+            note: "提前 40 分钟到站，进站前确认检票口。"
+        )
+        station.locationMode = .route
+        station.originName = "河坊街"
+        station.originAddress = "杭州市上城区河坊街"
+        station.destinationName = "杭州东站"
+        station.destinationAddress = "杭州市上城区全福桥路2号"
+        teaDay.items = [teaGarden, shopping, station]
+
+        for item in trip.allItems {
+            item.completeIfElapsed(relativeTo: now)
+        }
+
+        return trip
+    }
+
+    private func sampleItem(
+        title: String,
+        category: PlaceCategory,
+        start: Date,
+        end: Date,
+        order: Int,
+        day: TripDay,
+        place: String = "",
+        address: String = "",
+        transport: TransportMode,
+        distance: String,
+        duration: Int,
+        reservation: String,
+        cost: Double,
+        note: String
+    ) -> ItineraryItem {
+        let item = ItineraryItem(title: title, category: category, startTime: start, endTime: end, sortOrder: order)
+        item.locationMode = .single
+        item.placeName = place
+        item.placeAddress = address
+        item.address = address
+        item.transport = transport
+        item.distanceText = distance
+        item.playDurationMinutes = duration
+        item.reservationInfo = reservation
+        item.cost = cost
+        item.note = note
+        item.day = day
+        return item
+    }
+
+    private func attachSampleMedia(
+        _ identifier: String?,
+        kind: MediaKind,
+        caption: String,
+        order: Int,
+        to item: ItineraryItem
+    ) {
+        guard let identifier else { return }
+        let media = MediaReference(localIdentifier: identifier, kind: kind, sortOrder: order)
+        media.caption = caption
+        media.itineraryItem = item
+        item.media.append(media)
+    }
+}
+
+private struct SampleJourneyMedia {
+    let lake: String?
+    let city: String?
+    let motion: String?
+
+    static let empty = SampleJourneyMedia(lake: nil, city: nil, motion: nil)
+    var hasAnyMedia: Bool { lake != nil || city != nil || motion != nil }
 }
 
 private struct CreatorRewardView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             VStack {
                 Spacer(minLength: 20)
                 Image("CreatorReward")

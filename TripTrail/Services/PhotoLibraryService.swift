@@ -4,6 +4,24 @@ import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+private enum PhotoLibraryImageCache {
+    static let shared: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 80
+        cache.totalCostLimit = 64 * 1_024 * 1_024
+        return cache
+    }()
+
+    static func key(identifier: String, targetSize: CGSize, contentMode: PHImageContentMode) -> NSString {
+        "\(identifier)-\(Int(targetSize.width))x\(Int(targetSize.height))-\(contentMode.rawValue)" as NSString
+    }
+
+    static func store(_ image: UIImage, forKey key: NSString) {
+        let pixelCost = Int(image.size.width * image.scale * image.size.height * image.scale * 4)
+        shared.setObject(image, forKey: key, cost: pixelCost)
+    }
+}
+
 struct PickedAsset: Identifiable, Hashable {
     let id: String
     let kind: MediaKind
@@ -74,6 +92,25 @@ enum PhotoLibraryService {
         await PHPhotoLibrary.requestAuthorization(for: .readWrite)
     }
 
+    static var hasReadWriteAccess: Bool {
+        status == .authorized || status == .limited
+    }
+
+    static func requestReadWriteAccessIfNeeded() async -> PHAuthorizationStatus {
+        status == .notDetermined ? await requestReadWriteAccess() : status
+    }
+
+    static var permissionGuidance: String {
+        switch status {
+        case .denied:
+            "相簿权限已关闭。请到系统设置中允许“旅迹”访问照片，然后再试。"
+        case .restricted:
+            "当前设备限制了相簿访问，暂时无法使用这项功能。"
+        default:
+            "需要允许访问系统相簿才能继续。"
+        }
+    }
+
     static func pickedAssets(from items: [PhotosPickerItem]) -> [PickedAsset] {
         items.compactMap { item in
             guard let identifier = item.itemIdentifier else { return nil }
@@ -94,6 +131,8 @@ enum PhotoLibraryService {
     }
 
     static func shareImage(identifier: String, targetSize: CGSize = CGSize(width: 1_200, height: 800)) async -> UIImage? {
+        let authorization = await requestReadWriteAccessIfNeeded()
+        guard authorization == .authorized || authorization == .limited else { return nil }
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
         guard let asset = assets.firstObject else { return nil }
 
@@ -112,6 +151,43 @@ enum PhotoLibraryService {
                 let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
                 guard !degraded, !didResume else { return }
                 didResume = true
+                continuation.resume(returning: image)
+            }
+        }
+    }
+
+    static func displayImage(identifier: String, targetSize: CGSize = CGSize(width: 2_000, height: 2_000)) async -> UIImage? {
+        let authorization = await requestReadWriteAccessIfNeeded()
+        guard authorization == .authorized || authorization == .limited else { return nil }
+        let cacheKey = PhotoLibraryImageCache.key(
+            identifier: identifier,
+            targetSize: targetSize,
+            contentMode: .aspectFit
+        )
+        if let cached = PhotoLibraryImageCache.shared.object(forKey: cacheKey) {
+            return cached
+        }
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
+        guard let asset = assets.firstObject else { return nil }
+
+        let options = PHImageRequestOptions()
+        options.deliveryMode = .highQualityFormat
+        options.resizeMode = .fast
+        options.isNetworkAccessAllowed = true
+        return await withCheckedContinuation { continuation in
+            var didResume = false
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: targetSize,
+                contentMode: .aspectFit,
+                options: options
+            ) { image, info in
+                let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
+                guard !degraded, !didResume else { return }
+                didResume = true
+                if let image {
+                    PhotoLibraryImageCache.store(image, forKey: cacheKey)
+                }
                 continuation.resume(returning: image)
             }
         }
@@ -160,6 +236,10 @@ enum PhotoLibraryService {
     }
 
     static func importAssetFile(at url: URL, kind: MediaKind) async throws -> String {
+        let authorization = await requestReadWriteAccessIfNeeded()
+        guard authorization == .authorized || authorization == .limited else {
+            throw PhotoLibraryError.permissionDenied
+        }
         var createdIdentifier: String?
         try await PHPhotoLibrary.shared().performChanges {
             let request: PHAssetChangeRequest?
@@ -189,6 +269,75 @@ enum PhotoLibraryError: LocalizedError {
             "原照片或视频不可用，可能已删除或尚未从 iCloud 下载。"
         case .importFailed:
             "媒体写入系统相簿失败。"
+        }
+    }
+}
+
+struct PermissionAwarePhotosPicker<Label: View>: View {
+    @Binding var selection: [PhotosPickerItem]
+    let maxSelectionCount: Int
+    var usesOrderedSelection = false
+    let matching: PHPickerFilter
+    @ViewBuilder let label: () -> Label
+
+    @State private var isPresented = false
+    @State private var permissionMessage: String?
+
+    var body: some View {
+        pickerTrigger
+            .alert("需要相簿权限", isPresented: Binding(
+                get: { permissionMessage != nil },
+                set: { if !$0 { permissionMessage = nil } }
+            )) {
+                Button("取消", role: .cancel) { permissionMessage = nil }
+                if PhotoLibraryService.status == .denied || PhotoLibraryService.status == .restricted {
+                    Button("去设置") {
+                        permissionMessage = nil
+                        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+                        UIApplication.shared.open(url)
+                    }
+                }
+            } message: {
+                Text(permissionMessage ?? "")
+            }
+    }
+
+    @ViewBuilder
+    private var pickerTrigger: some View {
+        if usesOrderedSelection {
+            triggerButton
+                .photosPicker(
+                    isPresented: $isPresented,
+                    selection: $selection,
+                    maxSelectionCount: maxSelectionCount,
+                    selectionBehavior: .ordered,
+                    matching: matching,
+                    photoLibrary: .shared()
+                )
+        } else {
+            triggerButton
+                .photosPicker(
+                    isPresented: $isPresented,
+                    selection: $selection,
+                    maxSelectionCount: maxSelectionCount,
+                    matching: matching,
+                    photoLibrary: .shared()
+                )
+        }
+    }
+
+    private var triggerButton: some View {
+        Button {
+            Task { @MainActor in
+                let authorization = await PhotoLibraryService.requestReadWriteAccessIfNeeded()
+                if authorization == .authorized || authorization == .limited {
+                    isPresented = true
+                } else {
+                    permissionMessage = PhotoLibraryService.permissionGuidance
+                }
+            }
+        } label: {
+            label()
         }
     }
 }
@@ -227,6 +376,17 @@ struct AssetThumbnail: View {
     }
 
     private func load() {
+        let targetSize = CGSize(width: 480, height: 480)
+        let cacheKey = PhotoLibraryImageCache.key(
+            identifier: identifier,
+            targetSize: targetSize,
+            contentMode: .aspectFill
+        )
+        if let cached = PhotoLibraryImageCache.shared.object(forKey: cacheKey) {
+            image = cached
+            isMissing = false
+            return
+        }
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
         guard let asset = assets.firstObject else {
             isMissing = true
@@ -238,12 +398,15 @@ struct AssetThumbnail: View {
         options.isNetworkAccessAllowed = true
         PHImageManager.default().requestImage(
             for: asset,
-            targetSize: CGSize(width: 480, height: 480),
+            targetSize: targetSize,
             contentMode: .aspectFill,
             options: options
         ) { loadedImage, info in
             let degraded = (info?[PHImageResultIsDegradedKey] as? Bool) ?? false
             guard !degraded else { return }
+            if let loadedImage {
+                PhotoLibraryImageCache.store(loadedImage, forKey: cacheKey)
+            }
             Task { @MainActor in
                 image = loadedImage
                 isMissing = loadedImage == nil
@@ -501,7 +664,7 @@ struct AssetVideoPlayer: View {
     @State private var failed = false
 
     var body: some View {
-        NavigationStack {
+        TripNavigationStack {
             Group {
                 if let player {
                     VideoPlayer(player: player)

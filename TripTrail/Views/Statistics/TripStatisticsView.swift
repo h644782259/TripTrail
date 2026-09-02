@@ -5,6 +5,7 @@ import SwiftUI
 struct TripStatisticsView: View {
     @Query private var trips: [Trip]
     @State private var selectedTripID: UUID?
+    @State private var showsTripPicker = false
 
     private var orderedTrips: [Trip] {
         TripTimelineOrdering.sorted(trips)
@@ -28,6 +29,15 @@ struct TripStatisticsView: View {
         }
         .background(Color.tripCanvas.ignoresSafeArea())
         .navigationTitle("统计")
+        .sheet(isPresented: $showsTripPicker) {
+            StatisticsTripPicker(
+                trips: orderedTrips,
+                selectedTripID: selectedTripID
+            ) { trip in
+                selectedTripID = trip.id
+                showsTripPicker = false
+            }
+        }
         .onAppear(perform: selectDefaultTripIfNeeded)
         .onChange(of: orderedTrips.map(\.id)) { _, _ in
             selectDefaultTripIfNeeded()
@@ -49,18 +59,8 @@ struct TripStatisticsView: View {
     }
 
     private func tripSelector(currentTrip: Trip) -> some View {
-        Menu {
-            ForEach(orderedTrips) { trip in
-                Button {
-                    selectedTripID = trip.id
-                } label: {
-                    if trip.id == currentTrip.id {
-                        Label(trip.title, systemImage: "checkmark")
-                    } else {
-                        Text(trip.title)
-                    }
-                }
-            }
+        Button {
+            showsTripPicker = true
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: "map.fill")
@@ -74,7 +74,7 @@ struct TripStatisticsView: View {
                     .lineLimit(1)
 
                 Spacer()
-                Image(systemName: "chevron.up.chevron.down")
+                Image(systemName: "chevron.right")
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
             }
@@ -202,6 +202,113 @@ struct TripStatisticsView: View {
         }
         if !orderedTrips.contains(where: { $0.id == selectedTripID }) {
             selectedTripID = orderedTrips.first?.id
+        }
+    }
+}
+
+private struct StatisticsTripPicker: View {
+    @Environment(\.dismiss) private var dismiss
+    let trips: [Trip]
+    let selectedTripID: UUID?
+    let onSelect: (Trip) -> Void
+    @State private var searchText = ""
+
+    private var filteredTrips: [Trip] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return trips }
+        return trips.filter {
+            $0.title.localizedCaseInsensitiveContains(query)
+                || $0.destination.localizedCaseInsensitiveContains(query)
+        }
+    }
+
+    var body: some View {
+        TripNavigationStack {
+            Group {
+                if filteredTrips.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                } else {
+                    List {
+                        tripSection(title: "进行中", phase: .current)
+                        tripSection(title: "即将出发", phase: .upcoming)
+                        tripSection(title: "已结束", phase: .history)
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("选择旅程")
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, prompt: "搜索旅程名称或目的地")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("取消") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .presentationDragIndicator(.visible)
+    }
+
+    @ViewBuilder
+    private func tripSection(title: String, phase: TripTimelinePhase) -> some View {
+        let matchingTrips = filteredTrips.filter { TripTimelineOrdering.phase(for: $0) == phase }
+        if !matchingTrips.isEmpty {
+            Section(title) {
+                ForEach(matchingTrips) { trip in
+                    Button {
+                        onSelect(trip)
+                    } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: phaseSymbol(phase))
+                                .foregroundStyle(phaseColor(phase))
+                                .frame(width: 32, height: 32)
+                                .background(phaseColor(phase).opacity(0.11), in: RoundedRectangle(cornerRadius: 9))
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(trip.title)
+                                    .font(.body.weight(.semibold))
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(1)
+                                HStack(spacing: 5) {
+                                    if !trip.destination.isEmpty {
+                                        Text(trip.destination).lineLimit(1)
+                                        Text("·")
+                                    }
+                                    Text(trip.startDate.compactDayText + " — " + trip.endDate.compactDayText)
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            }
+
+                            Spacer(minLength: 8)
+                            if trip.id == selectedTripID {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color.tripLake)
+                                    .accessibilityLabel("当前选择")
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("选择\(trip.title)")
+                }
+            }
+        }
+    }
+
+    private func phaseSymbol(_ phase: TripTimelinePhase) -> String {
+        switch phase {
+        case .current: "figure.walk.motion"
+        case .upcoming: "calendar"
+        case .history: "checkmark"
+        }
+    }
+
+    private func phaseColor(_ phase: TripTimelinePhase) -> Color {
+        switch phase {
+        case .current: .tripSage
+        case .upcoming: .tripLake
+        case .history: .secondary
         }
     }
 }

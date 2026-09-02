@@ -159,7 +159,7 @@ struct TwoTapDateRangePicker: View {
     }
 
     private var pickerSheet: some View {
-        NavigationStack {
+        TripNavigationStack {
             VStack(spacing: 14) {
                 monthHeader
                 weekdayHeader
@@ -330,7 +330,7 @@ struct TwoTapDateRangePicker: View {
     private func openPicker() {
         let normalizedStart = calendar.startOfDay(for: startDate)
         let normalizedEnd = max(normalizedStart, calendar.startOfDay(for: endDate))
-        draft = DateRangeDraft(startDate: normalizedStart, endDate: normalizedEnd, phase: .start)
+        draft = DateRangeDraft(startDate: normalizedStart, endDate: normalizedEnd, phase: .complete)
         draftStartTime = startDate
         draftEndTime = endDate
         visibleMonth = calendar.dateInterval(of: .month, for: normalizedStart)?.start ?? normalizedStart

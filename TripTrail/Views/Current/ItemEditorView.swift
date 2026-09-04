@@ -26,6 +26,7 @@ struct ItemEditorView: View {
     @State private var category: PlaceCategory
     @State private var startTime: Date
     @State private var endTime: Date
+    @State private var isFixedTime: Bool
     @State private var note: String
     @State private var transport: TransportMode
     @State private var distanceText: String
@@ -83,6 +84,7 @@ struct ItemEditorView: View {
         _category = State(initialValue: item?.category ?? .attraction)
         _startTime = State(initialValue: initialStartTime)
         _endTime = State(initialValue: initialEndTime)
+        _isFixedTime = State(initialValue: item?.isFixedTime ?? false)
         _note = State(initialValue: item?.note ?? "")
         _transport = State(initialValue: item?.transport ?? .car)
         _distanceText = State(initialValue: item?.distanceText ?? "")
@@ -135,6 +137,12 @@ struct ItemEditorView: View {
                             startTime: $startTime,
                             endTime: $endTime
                         )
+                        VStack(alignment: .leading, spacing: 4) {
+                            Toggle("固定时间", isOn: $isFixedTime)
+                            Text("开启后，排序或拖拽时不会自动调整此安排的时间")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
 
@@ -219,7 +227,10 @@ struct ItemEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }.disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("保存") { save() }.disabled(
+                        title.trimmingCharacters(in: .whitespaces).isEmpty
+                            || (mode == .itinerary && endTime <= startTime)
+                    )
                 }
             }
             .onChange(of: pickerItems) { _, newValue in
@@ -447,11 +458,16 @@ struct ItemEditorView: View {
                 preservingTime: true
             )
             target.completeIfElapsed()
+            target.isFixedTime = isFixedTime
+            if target.endTime <= target.startTime {
+                target.endTime = target.startTime.addingTimeInterval(60)
+            }
         }
         target.note = note
         target.transport = transport
         target.distanceText = distanceText
         target.playDurationMinutes = max(0, Int(target.endTime.timeIntervalSince(target.startTime) / 60))
+        if let targetDay = target.day { JourneyHierarchyService.normalizeItems(targetDay.items) }
         target.cost = Double(costText.replacingOccurrences(of: ",", with: ".")) ?? 0
         target.isFavorite = mode == .favorite
 

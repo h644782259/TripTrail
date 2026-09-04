@@ -61,6 +61,7 @@ struct ItineraryJourneyDayDraft: Identifiable {
 struct ItineraryJourneyItemDraft: Identifiable {
     let id = UUID()
     var isIncluded = true
+    var isFixedTime = false
     var title: String
     var category: PlaceCategory
     var startTime: Date
@@ -1637,6 +1638,7 @@ enum JourneyImportApplyService {
                         endTime: times.end,
                         sortOrder: nextItemSortOrder
                     )
+                    item.isFixedTime = itemDraft.isFixedTime
                     nextItemSortOrder += 1
                     item.locationMode = itemDraft.locationMode
                     item.placeName = JourneyLocationText.entityName(

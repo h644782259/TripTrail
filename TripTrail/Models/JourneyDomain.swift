@@ -311,6 +311,7 @@ enum JourneyHierarchyService {
                 day.sortOrder = index
                 changed = true
             }
+            changed = normalizeItems(day.items) || changed
             if isOrdinalDayTitle(day.title) {
                 let expectedTitle = "第 \(index + 1) 天"
                 if day.title != expectedTitle {
@@ -353,6 +354,26 @@ enum JourneyHierarchyService {
 
     static func sortedPoints<T: JourneyPointNode>(_ points: [T]) -> [T] {
         points.sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    static func sortedItems(_ items: [ItineraryItem]) -> [ItineraryItem] {
+        items.sorted { lhs, rhs in
+            lhs.startTime == rhs.startTime ? lhs.id.uuidString < rhs.id.uuidString : lhs.startTime < rhs.startTime
+        }
+    }
+
+    @discardableResult
+    static func normalizeItems(_ items: [ItineraryItem]) -> Bool {
+        var changed = false
+        for item in items where item.endTime <= item.startTime {
+            item.endTime = item.startTime.addingTimeInterval(60)
+            changed = true
+        }
+        for (index, item) in sortedItems(items).enumerated() where item.sortOrder != index {
+            item.sortOrder = index
+            changed = true
+        }
+        return changed
     }
 
     @discardableResult
@@ -405,17 +426,12 @@ enum JourneyHierarchyService {
 
         if sourceDay.id == targetDay.id {
             let originalItems = sourceDay.sortedItems
-            let slots = originalItems.map { timeSlot(for: $0, calendar: calendar) }
             let moved = movePoint(id: itemID, to: targetItemID, in: sourceDay.items)
             guard moved else { return .unchanged }
-            let adjustments = reconcileTimeSlots(
-                slots,
-                withOriginalOwners: originalItems.map(\.id),
-                to: sourceDay.sortedItems,
-                on: sourceDay.date,
-                calendar: calendar
-            )
-            return ItineraryMoveResult(didMove: true, timeAdjustments: adjustments)
+            // movePoint records the temporary drag order in sortOrder. Read that order
+            // before exchanging times; sortedItems would still reflect the old times.
+            exchangeTimeSlots(originalItems, to: sourceDay.displayItems, calendar: calendar)
+            return ItineraryMoveResult(didMove: true, timeAdjustments: [])
         }
 
         let slotOwners = (targetDay.sortedItems + [item]).sorted {
@@ -496,7 +512,6 @@ enum JourneyHierarchyService {
 
         if sourceDay.id == targetDay.id {
             let originalItems = sourceDay.sortedItems
-            let slots = originalItems.map { timeSlot(for: $0, calendar: calendar) }
             var items = originalItems
             guard let sourceIndex = items.firstIndex(where: { $0.id == itemID }), sourceIndex != items.count - 1 else {
                 return .unchanged
@@ -504,14 +519,8 @@ enum JourneyHierarchyService {
             items.remove(at: sourceIndex)
             items.append(item)
             normalizeSortOrder(items)
-            let adjustments = reconcileTimeSlots(
-                slots,
-                withOriginalOwners: originalItems.map(\.id),
-                to: items,
-                on: sourceDay.date,
-                calendar: calendar
-            )
-            return ItineraryMoveResult(didMove: true, timeAdjustments: adjustments)
+            exchangeTimeSlots(originalItems, to: items, calendar: calendar)
+            return ItineraryMoveResult(didMove: true, timeAdjustments: [])
         }
 
         let slotOwners = (targetDay.sortedItems + [item]).sorted {
@@ -567,6 +576,23 @@ enum JourneyHierarchyService {
         for (index, point) in points.enumerated() {
             point.sortOrder = index
         }
+    }
+
+    /// Moves the original start-time slots with the cards. Each card keeps its own duration;
+    /// fixed-time cards retain their complete range and are never overwritten.
+    private static func exchangeTimeSlots(
+        _ originalItems: [ItineraryItem],
+        to reorderedItems: [ItineraryItem],
+        calendar: Calendar
+    ) {
+        let slots = originalItems.map { timeSlot(for: $0, calendar: calendar) }
+        for (index, item) in reorderedItems.enumerated() where !item.isFixedTime {
+            guard let start = startDate(for: slots[index], on: item.day?.date ?? item.startTime, calendar: calendar) else { continue }
+            let duration = max(60, item.endTime.timeIntervalSince(item.startTime))
+            item.startTime = start
+            item.endTime = start.addingTimeInterval(duration)
+        }
+        normalizeItems(reorderedItems)
     }
 
     private struct ItineraryTimeSlot: Comparable {

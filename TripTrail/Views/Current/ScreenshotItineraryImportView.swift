@@ -145,6 +145,10 @@ struct ScreenshotItineraryImportView: View {
                         showsTimeSelection: true,
                         showsEndpointTitles: false
                     )
+                    Toggle("固定时间", isOn: item.isFixedTime)
+                    Text("开启后，排序或拖拽时不会自动调整此安排的时间")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Picker("地点类型", selection: item.locationMode) {
                         ForEach(ArrangementLocationMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)

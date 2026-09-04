@@ -393,18 +393,12 @@ final class TripDay {
     }
 
     var sortedItems: [ItineraryItem] {
-        JourneyHierarchyService.sortedPoints(items)
+        JourneyHierarchyService.sortedItems(items)
     }
 
     var displayItems: [ItineraryItem] {
-        sortedItems.sorted { lhs, rhs in
-            if (lhs.executionStatus == .completed) != (rhs.executionStatus == .completed) {
-                return lhs.executionStatus != .completed
-            }
-            if lhs.sortOrder != rhs.sortOrder {
-                return lhs.sortOrder < rhs.sortOrder
-            }
-            return lhs.id.uuidString < rhs.id.uuidString
+        items.sorted { lhs, rhs in
+            lhs.sortOrder == rhs.sortOrder ? lhs.startTime < rhs.startTime : lhs.sortOrder < rhs.sortOrder
         }
     }
 
@@ -519,6 +513,7 @@ final class ItineraryItem {
     var isCompleted: Bool = false
     var executionStatusRaw: String = ""
     var isAutomaticCompletionOverridden: Bool = false
+    var isFixedTime: Bool = false
     var sortOrder: Int = 0
     var isFavorite: Bool = false
     var favoriteCreatedAt: Date = Date()

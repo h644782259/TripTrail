@@ -710,6 +710,7 @@ private struct ItineraryItemRecord: Codable {
     let isCompleted: Bool
     let executionStatusRaw: String?
     let isAutomaticCompletionOverridden: Bool?
+    let isFixedTime: Bool?
     let isFavorite: Bool?
     let favoriteCreatedAt: Date?
     let sourceFavoriteID: UUID?
@@ -767,6 +768,7 @@ private struct ItineraryItemRecord: Codable {
         isCompleted = item.isCompleted
         executionStatusRaw = item.executionStatusRaw
         isAutomaticCompletionOverridden = item.isAutomaticCompletionOverridden
+        isFixedTime = item.isFixedTime
         isFavorite = item.isFavorite
         favoriteCreatedAt = item.favoriteCreatedAt
         sourceFavoriteID = item.sourceFavoriteID
@@ -808,6 +810,7 @@ private struct ItineraryItemRecord: Codable {
         item.isCompleted = isCompleted
         item.executionStatusRaw = executionStatusRaw ?? ""
         item.isAutomaticCompletionOverridden = isAutomaticCompletionOverridden ?? false
+        item.isFixedTime = isFixedTime ?? false
         item.isFavorite = forceFavorite || (isFavorite ?? false)
         item.favoriteCreatedAt = favoriteCreatedAt ?? Date()
         item.sourceFavoriteID = sourceFavoriteID

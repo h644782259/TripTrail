@@ -1044,7 +1044,7 @@ func hasOriginalItineraryOrder(
 ) -> Bool {
     days.allSatisfy { day in
         guard let originalItemIDs = originalItemIDsByDay[day.id] else { return false }
-        return day.sortedItems.map(\.id) == originalItemIDs
+        return day.displayItems.map(\.id) == originalItemIDs
     }
 }
 

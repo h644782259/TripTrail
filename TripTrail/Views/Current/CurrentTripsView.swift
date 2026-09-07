@@ -23,6 +23,9 @@ struct CurrentTripsView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Trip.startDate, order: .forward) private var trips: [Trip]
     @State private var showsNewTrip = false
+    @State private var smartNewTextTrip: Trip?
+    @State private var createdSmartTrip: Trip?
+    @State private var isCreatingFromScreenshots = false
     @State private var tripToEdit: Trip?
     @State private var tripToDelete: Trip?
     @State private var tripToArchive: Trip?
@@ -54,6 +57,7 @@ struct CurrentTripsView: View {
                     } actions: {
                         Button("创建第一段旅程") { showsNewTrip = true }
                             .buttonStyle(.borderedProminent)
+
                     }
                     .frame(minHeight: 320)
                 } else {
@@ -72,15 +76,20 @@ struct CurrentTripsView: View {
         .background(Color.tripCanvas)
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: Trip.self) { TripDetailView(trip: $0) }
+        .navigationDestination(item: $createdSmartTrip) { TripDetailView(trip: $0) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button { showsNewTrip = true } label: { Image(systemName: "plus") }
+                .accessibilityLabel("添加旅程")
             }
         }
         .sheet(isPresented: $showsNewTrip, onDismiss: { completeElapsedItems() }) { TripEditorView() }
         .sheet(item: $tripToEdit, onDismiss: { completeElapsedItems() }) { TripEditorView(trip: $0) }
         .sheet(item: $tripToArchive) { ArchiveTripView(trip: $0) }
         .sheet(item: $tripToShare) { ShareExportView(trip: $0) }
+        .sheet(item: $smartNewTextTrip) { trip in
+            TextItineraryImportView(trip: trip, referenceDate: trip.startDate, isCreatingTrip: true, onCreated: openCreatedSmartTrip)
+        }
         .sheet(item: $tripForTextImport) {
             TextItineraryImportView(trip: $0, referenceDate: $0.startDate)
         }
@@ -88,6 +97,8 @@ struct CurrentTripsView: View {
             ScreenshotItineraryImportView(
                 trip: request.trip,
                 draft: request.draft,
+                isCreatingTrip: request.isCreatingTrip,
+                onCreated: openCreatedSmartTrip,
                 onRetryRecognition: request.draft.recognitionNotice == nil ? nil : {
                     retryWholeTripScreenshotRecognition()
                 }
@@ -97,7 +108,7 @@ struct CurrentTripsView: View {
         .photosPicker(
             isPresented: $showsWholeTripScreenshotPicker,
             selection: $wholeTripPickerItems,
-            maxSelectionCount: 10,
+            maxSelectionCount: 6,
             selectionBehavior: .ordered,
             matching: .images,
             photoLibrary: .shared()
@@ -282,13 +293,8 @@ struct CurrentTripsView: View {
                 Button("分享旅程", systemImage: "square.and.arrow.up") {
                     tripToShare = trip
                 }
-                Menu("智能录入", systemImage: "square.and.arrow.down") {
-                    Button("从截图录入", systemImage: "photo.stack") {
-                        requestWholeTripScreenshotSelection(for: trip)
-                    }
-                    Button("从文本录入", systemImage: "text.badge.plus") {
-                        tripForTextImport = trip
-                    }
+                Button("智能录入", systemImage: "square.and.arrow.down") {
+                    tripForTextImport = trip
                 }
                 .disabled(isReadingWholeTripScreenshots)
                 Button("规划全行程路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
@@ -325,7 +331,26 @@ struct CurrentTripsView: View {
         )
     }
 
-    private func requestWholeTripScreenshotSelection(for trip: Trip) {
+    private func openCreatedSmartTrip(_ trip: Trip) {
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            createdSmartTrip = trip
+        }
+    }
+
+    private func prepareSmartTextCreation() {
+        smartNewTextTrip = Trip(title: "", destination: "", startDate: Date(), endDate: Date())
+    }
+
+    private func prepareSmartImageCreation() {
+        requestWholeTripScreenshotSelection(
+            for: Trip(title: "", destination: "", startDate: Date(), endDate: Date()),
+            isCreating: true
+        )
+    }
+
+    private func requestWholeTripScreenshotSelection(for trip: Trip, isCreating: Bool = false) {
+        isCreatingFromScreenshots = isCreating
         Task { @MainActor in
             let authorization = await PhotoLibraryService.requestReadWriteAccessIfNeeded()
             if authorization == .authorized || authorization == .limited {
@@ -364,7 +389,7 @@ struct CurrentTripsView: View {
                 sourceAssetIdentifiers: assetIdentifiers
             )
             wholeTripRetryPickerItems = draft.recognitionNotice == nil ? [] : items
-            presentWholeTripDraft(WholeTripDraftRequest(trip: trip, draft: draft))
+            presentWholeTripDraft(WholeTripDraftRequest(trip: trip, draft: draft, isCreatingTrip: isCreatingFromScreenshots))
         } catch {
             wholeTripRetryPickerItems = items
             presentWholeTripImportMessage(error.localizedDescription)
@@ -383,7 +408,7 @@ struct CurrentTripsView: View {
                         Text("正在识别截图…")
                             .font(.headline)
                             .foregroundStyle(Color.tripInk)
-                        Text("识别完成后会先展示结果，确认后才会保存。")
+                        Text("识别后预览，确认后保存。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -448,7 +473,7 @@ struct CurrentTripsView: View {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(Color.tripMist.opacity(0.46), lineWidth: 0.8)
         }
-        .shadow(color: Color.tripInk.opacity(0.07), radius: 18, y: 8)
+        .shadow(color: Color.black.opacity(0.07), radius: 18, y: 8)
     }
 
     private var journeyBackground: some View {
@@ -463,9 +488,11 @@ private struct WholeTripDraftRequest: Identifiable {
     let id = UUID()
     let trip: Trip
     let draft: ItineraryJourneyDraft
+    let isCreatingTrip: Bool
 }
 
 private struct FeaturedTripHero: View {
+    @Environment(\.colorScheme) private var colorScheme
     let trip: Trip
     let referenceDate: Date
 
@@ -510,7 +537,7 @@ private struct FeaturedTripHero: View {
                         .foregroundStyle(Color.tripLakeText)
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
-                        .background(Color.white.opacity(0.72), in: Capsule())
+                        .background(Color.tripSurface.opacity(0.72), in: Capsule())
                         .overlay {
                             Capsule()
                                 .stroke(Color.tripLake.opacity(0.30), lineWidth: 0.8)
@@ -528,6 +555,10 @@ private struct FeaturedTripHero: View {
                             .lineLimit(1)
                     }
 
+                    if !trip.licensePlate.isEmpty {
+                        Label(trip.licensePlate, systemImage: "car.side")
+                            .lineLimit(1)
+                    }
                     Label(dateRangeText, systemImage: "calendar")
                         .lineLimit(1)
                 }
@@ -563,13 +594,16 @@ private struct FeaturedTripHero: View {
                 Image("JourneyLakeHero")
                     .resizable()
                     .scaledToFill()
+                if colorScheme == .dark {
+                    Color.tripSurface.opacity(0.90)
+                }
 
                 if phase == .current {
                     LinearGradient(
                         stops: [
                             .init(color: .clear, location: 0.42),
-                            .init(color: Color.white.opacity(0.38), location: 0.68),
-                            .init(color: Color.white.opacity(0.88), location: 1)
+                            .init(color: Color.tripSurface.opacity(0.38), location: 0.68),
+                            .init(color: Color.tripSurface.opacity(0.88), location: 1)
                         ],
                         startPoint: .top,
                         endPoint: .bottom
@@ -581,14 +615,14 @@ private struct FeaturedTripHero: View {
         .overlay {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .stroke(
-                    phase == .current ? Color.tripLake.opacity(0.58) : Color.tripMist.opacity(0.48),
-                    lineWidth: phase == .current ? 1.5 : 0.8
+                    phase == .current ? Color.tripLake.opacity(0.30) : Color.tripMist.opacity(0.32),
+                    lineWidth: 0.8
                 )
         }
         .shadow(
-            color: phase == .current ? Color.tripLake.opacity(0.18) : Color.tripInk.opacity(0.08),
-            radius: phase == .current ? 22 : 18,
-            y: phase == .current ? 10 : 8
+            color: Color.black.opacity(0.045),
+            radius: 12,
+            y: 4
         )
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(heroAccessibilityText)
@@ -663,7 +697,7 @@ private struct FeaturedTripHero: View {
             }
         }
         .frame(width: 80, height: 80)
-        .shadow(color: Color.tripInk.opacity(0.08), radius: 8, y: 3)
+        .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
         .accessibilityHidden(true)
     }
 
@@ -727,6 +761,7 @@ private struct FeaturedTripHero: View {
             eyebrowText,
             trip.title,
             destinationText,
+            trip.licensePlate.isEmpty ? nil : trip.licensePlate,
             dateRangeText,
             ringAccessibilityText,
             todayScheduleAccessibilityText,
@@ -757,6 +792,10 @@ private struct TripCard: View {
                     Label(trip.destination.isEmpty ? "待确定目的地" : trip.destination, systemImage: "mappin.circle.fill")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if !trip.licensePlate.isEmpty {
+                        Label(trip.licensePlate, systemImage: "car.side")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
                 }
                 Spacer(minLength: 48)
                 Text(statusText)
@@ -801,23 +840,23 @@ private struct TripCard: View {
         }
         .padding(18)
         .background {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(
-                        LinearGradient(
-                            colors: cardGradientColors,
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: cardGradientColors,
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
                     )
-
-                Circle()
-                    .fill(statusColor.opacity(0.08))
-                    .frame(width: 150, height: 150)
-                    .blur(radius: 24)
-                    .offset(x: 50, y: -78)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                )
+                .overlay(alignment: .topTrailing) {
+                    // Decoration must not impose its 150-point height on compact cards.
+                    Circle()
+                        .fill(statusColor.opacity(0.08))
+                        .frame(width: 150, height: 150)
+                        .blur(radius: 24)
+                        .offset(x: 50, y: -78)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
         }
         .overlay(alignment: .leading) {
             Capsule()
@@ -835,7 +874,7 @@ private struct TripCard: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .stroke(cardBorderColor, lineWidth: 0.9)
         }
-        .shadow(color: Color.tripInk.opacity(0.045), radius: 5, y: 2)
+        .shadow(color: Color.black.opacity(0.045), radius: 5, y: 2)
         .shadow(color: statusColor.opacity(0.08), radius: 18, y: 9)
     }
 
@@ -914,14 +953,17 @@ struct TripEditorView: View {
     @Environment(\.modelContext) private var modelContext
     let trip: Trip?
     @State private var title: String
+    @State private var licensePlate: String
     @State private var destination: String
     @State private var startDate: Date
     @State private var endDate: Date
     @State private var note: String
+    @State private var smartTrip: Trip?
 
     init(trip: Trip? = nil) {
         self.trip = trip
         _title = State(initialValue: trip?.title ?? "")
+        _licensePlate = State(initialValue: trip?.licensePlate ?? "")
         _destination = State(initialValue: trip?.destination ?? "")
         _startDate = State(initialValue: trip?.startDate ?? Date())
         _endDate = State(initialValue: trip?.endDate ?? Calendar.current.date(byAdding: .day, value: 2, to: Date())!)
@@ -931,6 +973,13 @@ struct TripEditorView: View {
     var body: some View {
         TripNavigationStack {
             Form {
+                Section {
+                    Button {
+                        let target = trip ?? Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
+                        if trip == nil { target.licensePlate = licensePlate }
+                        smartTrip = target
+                    } label: { Label("智能录入", systemImage: "wand.and.stars") }
+                }
                 Section("这次旅行") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("旅程名称")
@@ -948,6 +997,14 @@ struct TripEditorView: View {
                     }
                     .padding(.vertical, 4)
 
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("车牌号（选填）").font(.caption).foregroundStyle(.secondary)
+                        TextField("例如：浙A12345", text: $licensePlate)
+                            .textInputAutocapitalization(.characters)
+                            .autocorrectionDisabled()
+                    }
+                    .padding(.vertical, 4)
+
                     TwoTapDateRangePicker(
                         title: "旅行日期",
                         startTitle: "出发",
@@ -962,6 +1019,9 @@ struct TripEditorView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
+            .sheet(item: $smartTrip) { target in
+                TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: trip == nil, onCreated: { _ in dismiss() })
+            }
             .navigationTitle(trip == nil ? "新建旅程" : "编辑旅程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1000,6 +1060,7 @@ struct TripEditorView: View {
             )
             trip.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             trip.destination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
+            trip.licensePlate = licensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             trip.note = note
         } else {
             let newTrip = Trip(
@@ -1009,6 +1070,7 @@ struct TripEditorView: View {
                 endDate: calendar.startOfDay(for: endDate),
                 note: note
             )
+            newTrip.licensePlate = licensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
             modelContext.insert(newTrip)
             for seed in JourneyHierarchyService.daySeeds(from: startDate, through: endDate, calendar: calendar) {
                 let day = TripDay(

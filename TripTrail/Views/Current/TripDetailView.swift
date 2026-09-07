@@ -9,8 +9,6 @@ struct TripDetailView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var trip: Trip
     @State private var dayForNewItem: TripDay?
-    @State private var dayForTextItemImport: TripDay?
-    @State private var dayForImageItemImport: TripDay?
     @State private var dayForFavoriteImport: TripDay?
     @State private var itemToEdit: ItineraryItem?
     @State private var dayToEdit: TripDay?
@@ -66,14 +64,7 @@ struct TripDetailView: View {
                         Button("编辑当天", systemImage: "pencil") {
                             dayToEdit = day
                         }
-                        Menu("录入当天", systemImage: "calendar.badge.plus") {
-                            Button("文字录入", systemImage: "text.badge.plus") {
-                                showsTextImport = true
-                            }
-                            Button("图片录入", systemImage: "photo.stack") {
-                                requestScreenshotSelection()
-                            }
-                        }
+                        Button("新建安排", systemImage: "plus") { dayForNewItem = day }
                         .disabled(isReadingScreenshot)
                         Button("分享当天", systemImage: "square.and.arrow.up") {
                             shareRequest = TripShareRequest(scopeID: day.id)
@@ -98,20 +89,8 @@ struct TripDetailView: View {
     private var sheetContent: some View {
         mainContent
         .sheet(item: $dayForNewItem) { ItemEditorView(day: $0) }
-        .sheet(item: $dayForTextItemImport) {
-            ItemEditorView(
-                day: $0,
-                startsWithSmartImport: true,
-                initialSmartImportMode: .text
-            )
-        }
-        .sheet(item: $dayForImageItemImport) {
-            ItemEditorView(
-                day: $0,
-                startsWithSmartImport: true,
-                initialSmartImportMode: .image
-            )
-        }
+
+
         .sheet(item: $dayForFavoriteImport) { FavoriteImportSelectionView(day: $0) }
         .sheet(item: $itemToEdit) { ItemEditorView(day: $0.day, item: $0) }
         .sheet(item: $dayToEdit, onDismiss: {
@@ -156,7 +135,7 @@ struct TripDetailView: View {
         .photosPicker(
             isPresented: $showsScreenshotPicker,
             selection: $screenshotPickerItems,
-            maxSelectionCount: 10,
+            maxSelectionCount: 3,
             selectionBehavior: .ordered,
             matching: .images,
             photoLibrary: .shared()
@@ -477,7 +456,7 @@ struct TripDetailView: View {
                         Text("正在识别截图…")
                             .font(.headline)
                             .foregroundStyle(Color.tripInk)
-                        Text("识别完成后会先展示结果，确认后才会保存。")
+                        Text("识别后预览，确认后保存。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
@@ -524,9 +503,7 @@ struct TripDetailView: View {
 
         return VStack(alignment: .leading, spacing: 14) {
             if displayedItems.isEmpty {
-                Menu {
-                    addArrangementActions(for: day)
-                } label: {
+                Button { dayForNewItem = day } label: {
                     Label("添加安排", systemImage: "plus.circle")
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(Color.tripLake)
@@ -597,9 +574,7 @@ struct TripDetailView: View {
                 }
                 .animation(.snappy(duration: 0.22), value: displayedItems.map(\.id))
                 .animation(.snappy(duration: 0.22), value: itineraryDragRevision)
-                Menu {
-                    addArrangementActions(for: day)
-                } label: {
+                Button { dayForNewItem = day } label: {
                     Label("添加安排", systemImage: "plus")
                 }
                 .font(.subheadline.bold())
@@ -627,22 +602,6 @@ struct TripDetailView: View {
                 }
             )
         )
-    }
-
-    @ViewBuilder
-    private func addArrangementActions(for day: TripDay) -> some View {
-        Button("手动", systemImage: "square.and.pencil") {
-            dayForNewItem = day
-        }
-        Button("从收藏导入", systemImage: "heart") {
-            dayForFavoriteImport = day
-        }
-        Button("文字录入", systemImage: "text.badge.plus") {
-            dayForTextItemImport = day
-        }
-        Button("图片录入", systemImage: "photo.stack") {
-            dayForImageItemImport = day
-        }
     }
 
     private func displayTitle(for day: TripDay) -> String {
@@ -960,12 +919,10 @@ struct TripDetailView: View {
     }
 
     private func open(_ request: ItineraryNavigationRequest) {
-        let item = request.item
         Task {
             let result = await AmapService.openPlace(
                 name: request.target.name,
-                address: request.target.address,
-                mode: item.transport
+                address: request.target.address
             )
             placeMessage = result.message(destinationName: request.target.displayName)
         }
@@ -1188,8 +1145,8 @@ private struct ItineraryTimeReviewView: View {
                             startTime: $draft.startTime,
                             endTime: $draft.endTime
                         )
-                        if draft.endTime < draft.startTime {
-                            Label("结束时间不能早于开始时间", systemImage: "exclamationmark.triangle.fill")
+                        if draft.endTime <= draft.startTime {
+                            Label("结束时间必须晚于开始时间", systemImage: "exclamationmark.triangle.fill")
                                 .font(.caption)
                                 .foregroundStyle(.red)
                         }
@@ -1221,7 +1178,7 @@ private struct ItineraryTimeReviewView: View {
     }
 
     private var canSave: Bool {
-        drafts.allSatisfy { $0.endTime >= $0.startTime } && !hasOverlap
+        drafts.allSatisfy { $0.endTime > $0.startTime } && !hasOverlap
     }
 
     private var hasOverlap: Bool {
@@ -1313,7 +1270,7 @@ private struct ItineraryCard: View {
                     itineraryTitle
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    Text("\(item.startTime.timeText)–\(item.endTime.timeText)")
+                    Text(item.timeRangeText)
                         .font(.caption.bold())
                         .monospacedDigit()
                         .padding(.horizontal, 11)
@@ -1324,20 +1281,14 @@ private struct ItineraryCard: View {
                             in: Capsule()
                         )
                         .fixedSize()
-                        .accessibilityLabel("时间，开始 \(item.startTime.timeText)，结束 \(item.endTime.timeText)")
+                        .accessibilityLabel(item.timeRangeText)
                         .highPriorityGesture(TapGesture().onEnded {})
                 }
 
                 locationRows
                 VStack(alignment: .leading, spacing: 9) {
-                    if !item.reservationInfo.isEmpty {
-                        Label(item.reservationInfo, systemImage: "ticket")
-                    }
-                    if !item.distanceText.isEmpty || item.cost > 0 {
+                    if item.cost > 0 {
                         HStack(spacing: 12) {
-                            if !item.distanceText.isEmpty {
-                                Label(item.distanceText, systemImage: "arrow.triangle.swap")
-                            }
                             if item.cost > 0 {
                                 Label {
                                     Text(item.cost, format: .currency(code: "CNY"))
@@ -1417,19 +1368,23 @@ private struct ItineraryCard: View {
                 .foregroundStyle(.tertiary)
         } else {
             ForEach(item.locationTargets) { target in
-                Button {
-                    onNavigate(target)
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: target.role == .origin ? "location.circle" : "mappin.circle.fill")
-                        Text("\(target.role.displayName)：\(target.displayName)")
-                            .lineLimit(2)
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Button {
+                        onNavigate(target)
+                    } label: {
+                        HStack(spacing: 7) {
+                            Image(systemName: target.role == .origin ? "location.circle" : "mappin.circle.fill")
+                            Text("\(target.role.displayName)：\(target.displayName)")
+                                .lineLimit(2)
+                        }
+                        .font(.subheadline.weight(locationFontWeight))
+                        .foregroundStyle(locationForegroundColor)
                     }
-                    .font(.subheadline.weight(locationFontWeight))
-                    .foregroundStyle(locationForegroundColor)
+                    .buttonStyle(.plain)
+                    .accessibilityHint("可选择高德地图、小红书或抖音")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    LocationCopyButton(text: target.displayName)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("可选择高德地图、小红书或抖音")
             }
         }
     }
@@ -1658,43 +1613,49 @@ struct AmapRoutePlanningView: View {
                     .buttonStyle(.borderless)
 
                     ForEach(request.points) { point in
-                        Button {
-                            toggle(point)
-                        } label: {
-                            HStack(alignment: .top, spacing: 12) {
-                                Image(systemName: selectedPointIDs.contains(point.id) ? "checkmark.circle.fill" : "circle")
-                                    .font(.title3)
-                                    .foregroundStyle(selectedPointIDs.contains(point.id) ? Color.tripLake : .secondary)
-                                    .padding(.top, 2)
-
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 7) {
-                                        Text(point.target.displayName)
-                                            .font(.headline)
-                                            .foregroundStyle(.primary)
-                                        if selectedPointIDs.contains(point.id) {
-                                            Text(routeRole(for: point))
-                                                .font(.caption2.weight(.semibold))
-                                                .foregroundStyle(Color.tripLake)
-                                                .padding(.horizontal, 7)
-                                                .padding(.vertical, 3)
-                                                .background(Color.tripLake.opacity(0.10), in: Capsule())
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Button {
+                                toggle(point)
+                            } label: {
+                                HStack(alignment: .top, spacing: 12) {
+                                    Image(systemName: selectedPointIDs.contains(point.id) ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(selectedPointIDs.contains(point.id) ? Color.tripLake : .secondary)
+                                        .padding(.top, 2)
+    
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack(spacing: 7) {
+                                            Text(point.target.displayName)
+                                                .font(.headline)
+                                                .foregroundStyle(.primary)
+                                            if selectedPointIDs.contains(point.id) {
+                                                Text(routeRole(for: point))
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(Color.tripLake)
+                                                    .padding(.horizontal, 7)
+                                                    .padding(.vertical, 3)
+                                                    .background(Color.tripLake.opacity(0.10), in: Capsule())
+                                            }
                                         }
+                                        Text("\(point.isTimePending ? "时间待定" : "\(point.startTime.timeText)～\(point.endTime.timeText)") · \(point.arrangementTitle)")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+
                                     }
-                                    Text("\(point.startTime.timeText)～\(point.endTime.timeText) · \(point.arrangementTitle)")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                    if !point.target.address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                        Text(point.target.address)
-                                            .font(.caption2)
-                                            .foregroundStyle(.tertiary)
-                                    }
+                                    Spacer(minLength: 0)
                                 }
-                                Spacer(minLength: 0)
+                                .contentShape(Rectangle())
                             }
-                            .contentShape(Rectangle())
+                            .buttonStyle(.plain)
+                            LocationCopyButton(text: point.target.displayName)
                         }
-                        .buttonStyle(.plain)
+                        let address = point.target.address.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !address.isEmpty, address != point.target.displayName {
+                            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                                Text(address).font(.caption).foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
                 } header: {
                     Text("选择地点（默认全选）")

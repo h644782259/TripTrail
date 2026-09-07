@@ -103,7 +103,7 @@ struct UnifiedTimeRangePicker: View {
             .padding(.horizontal, 4)
 
             if !isValid {
-                Label("结束时间不能早于开始时间", systemImage: "exclamationmark.triangle.fill")
+                Label("结束时间必须晚于开始时间", systemImage: "exclamationmark.triangle.fill")
                     .font(.caption)
                     .foregroundStyle(.red)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -133,7 +133,7 @@ struct UnifiedTimeRangePicker: View {
     }
 
     private var isValid: Bool {
-        draftEndTime >= draftStartTime
+        draftEndTime > draftStartTime
     }
 
     private func openPicker() {

@@ -42,3 +42,9 @@
 分享文件的容器 `kind` 为 `sharedJourney`。同样的容器也用于 `.triptrailbackup` 完整换机备份，其 `kind` 为 `backup`。
 
 完整字段以 [`DataBackupService.swift`](../TripTrail/Services/DataBackupService.swift) 中的 `SharedJourneyFile`、`TripRecord` 和 `StoryRecord` 为准。
+
+## 已移除的路程字段
+
+行程、收藏和足迹不再提供“前往方式”和“路程说明”。`transportRaw` / `transport`、`distanceText`、`routeInfo` 仅兼容读取旧文件，新生成的交换 JSON 不再输出这些字段；接收方必须允许字段缺失。旧版本客户端可能需要升级后导入。本地旧字段仅用于存储兼容，不参与展示、识别、导航方式选择或足迹自动说明。
+
+地点的单地点/起终点、航班车次、预约信息、开始和结束时间继续保留。高德路线规划使用所选地点和规划时的出行方式，不再依赖安排上的旧前往方式。

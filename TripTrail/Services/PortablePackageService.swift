@@ -28,6 +28,7 @@ struct OpenedPortablePackage {
 }
 
 enum PortablePackageError: LocalizedError {
+    case oversizedContent
     case invalidPackage
     case unsupportedVersion(Int)
     case wrongPackageKind
@@ -36,6 +37,8 @@ enum PortablePackageError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .oversizedContent:
+            "备份内容超过 64 MB，请减少凭证文件大小后再导出。"
         case .invalidPackage:
             "这不是有效的旅迹文件。"
         case .unsupportedVersion(let version):
@@ -126,6 +129,7 @@ enum PortablePackageService {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
         let manifestData = try encoder.encode(manifest)
+        guard manifestData.count <= maximumManifestSize else { throw PortablePackageError.oversizedContent }
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("TripTrail-\(UUID().uuidString).\(fileExtension)")
         try await write(manifestData: manifestData, payloads: payloads, to: outputURL)

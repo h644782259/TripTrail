@@ -5,11 +5,17 @@ struct ScreenshotItineraryImportView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     let trip: Trip
+    let isCreatingTrip: Bool
     let draft: ItineraryJourneyDraft
     let targetDay: TripDay?
+    let onCreated: ((Trip) -> Void)?
     let onBack: (() -> Void)?
     let onRetryRecognition: (() -> Void)?
 
+    @State private var newTripTitle: String
+    @State private var newTripLicensePlate = ""
+    @State private var newTripDestination: String
+    @State private var newTripStartDate: Date
     @State private var days: [ItineraryJourneyDayDraft]
     @State private var attachScreenshots: Bool
 
@@ -17,10 +23,19 @@ struct ScreenshotItineraryImportView: View {
         trip: Trip,
         draft: ItineraryJourneyDraft,
         targetDay: TripDay? = nil,
+        isCreatingTrip: Bool = false,
+        onCreated: ((Trip) -> Void)? = nil,
         onBack: (() -> Void)? = nil,
         onRetryRecognition: (() -> Void)? = nil
     ) {
         self.trip = trip
+        self.isCreatingTrip = isCreatingTrip
+        self.onCreated = onCreated
+        let firstPlace = draft.days.flatMap(\.items).map { $0.placeName.isEmpty ? $0.destinationName : $0.placeName }.first { !$0.isEmpty } ?? ""
+        let destination = draft.suggestedDestination.isEmpty ? firstPlace : draft.suggestedDestination
+        _newTripDestination = State(initialValue: destination)
+        _newTripTitle = State(initialValue: draft.suggestedTitle.isEmpty ? (destination.isEmpty ? "我的新旅程" : "\(destination)之旅") : draft.suggestedTitle)
+        _newTripStartDate = State(initialValue: draft.days.compactMap(\.date).min() ?? trip.startDate)
         self.draft = draft
         self.targetDay = targetDay
         self.onBack = onBack
@@ -32,6 +47,21 @@ struct ScreenshotItineraryImportView: View {
     var body: some View {
         TripNavigationStack {
             Form {
+                if isCreatingTrip {
+                    Section("创建旅程") {
+                        TextField("旅程名称", text: $newTripTitle)
+                        TextField("目的地（选填）", text: $newTripDestination)
+                        TextField("车牌号（选填）", text: $newTripLicensePlate).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        if days.allSatisfy({ $0.date == nil }) {
+                            DatePicker("出发日期", selection: $newTripStartDate, displayedComponents: .date)
+                            Text("没有具体日期的安排将从出发日开始按天生成。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else {
+                            Text("按识别到的日期生成旅程；可在下方核对每日安排。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
                 Section {
                     if let recognitionNotice = draft.recognitionNotice {
                         VStack(alignment: .leading, spacing: 10) {
@@ -60,6 +90,12 @@ struct ScreenshotItineraryImportView: View {
                     }
                     .frame(maxWidth: .infinity)
 
+                    Text(targetDay == nil ? "可录入多天、多个安排。" : "请上传一天的行程，支持多个安排。")
+                        .font(.footnote.weight(.medium))
+                    if targetDay != nil && draft.days.count > 1 {
+                        Text("识别到多天内容，当前入口会将安排合并到所选一天。需要保留多天时，请返回整段旅程入口。")
+                            .font(.caption).foregroundStyle(.orange)
+                    }
                     Text(importPreviewText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -93,7 +129,7 @@ struct ScreenshotItineraryImportView: View {
 
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle(targetDay == nil ? "录入整段旅程" : "录入当天")
+            .navigationTitle(isCreatingTrip ? "智能创建旅程" : targetDay == nil ? "录入整段旅程" : "录入当天")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -102,8 +138,8 @@ struct ScreenshotItineraryImportView: View {
                     }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }
-                        .disabled(days.isEmpty)
+                    Button(isCreatingTrip ? "创建旅程" : "保存") { save() }
+                        .disabled(includedItems.isEmpty || includedItems.contains { $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!$0.isTimePending && $0.startTime >= $0.endTime) } || (isCreatingTrip && newTripTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                 }
             }
         }
@@ -135,20 +171,26 @@ struct ScreenshotItineraryImportView: View {
                             Label(category.rawValue, systemImage: category.symbol).tag(category)
                         }
                     }
-                    TwoTapDateRangePicker(
-                        title: "时间",
-                        startTitle: "开始",
-                        endTitle: "结束",
-                        startDate: item.startTime,
-                        endDate: item.endTime,
-                        preservesTimeComponents: true,
-                        showsTimeSelection: true,
-                        showsEndpointTitles: false
-                    )
-                    Toggle("固定时间", isOn: item.isFixedTime)
-                    Text("开启后，排序或拖拽时不会自动调整此安排的时间")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    Toggle("时间待定", isOn: item.isTimePending)
+                        .onChange(of: item.wrappedValue.isTimePending) { _, pending in
+                            if pending { item.wrappedValue.isFixedTime = false }
+                        }
+                    if !item.wrappedValue.isTimePending {
+                        TwoTapDateRangePicker(
+                            title: "时间",
+                            startTitle: "开始",
+                            endTitle: "结束",
+                            startDate: item.startTime,
+                            endDate: item.endTime,
+                            preservesTimeComponents: true,
+                            showsTimeSelection: true,
+                            showsEndpointTitles: false
+                        )
+                        Toggle("固定时间", isOn: item.isFixedTime)
+                        Text("开启后，排序或拖拽时不会自动调整此安排的时间")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Picker("地点类型", selection: item.locationMode) {
                         ForEach(ArrangementLocationMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
@@ -174,26 +216,10 @@ struct ScreenshotItineraryImportView: View {
                         TextField("输入金额", value: item.cost, format: .number)
                             .keyboardType(.decimalPad)
                     }
-                    Picker("前往方式", selection: item.transport) {
-                        ForEach(TransportMode.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("路程说明")
-                        TextField("例如：6.8 km · 25 分钟", text: item.distanceText)
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("预约信息")
-                        TextField("航班号、车次或订单信息", text: item.reservationInfo, axis: .vertical)
-                            .lineLimit(1...4)
-                    }
             }
             .font(.subheadline)
         }
         .padding(.vertical, 4)
-    }
-
-    private var firstTargetDayNumber: Int {
-        trip.sortedDays.count + 1
     }
 
     private var includedItems: [ItineraryJourneyItemDraft] {
@@ -223,7 +249,13 @@ struct ScreenshotItineraryImportView: View {
             rawText: draft.rawText,
             sourceAssetIdentifiers: draft.sourceAssetIdentifiers
         )
-        let preview = JourneyImportApplyService.preview(editedDraft, for: trip)
+        let preview = JourneyImportApplyService.preview(editedDraft, for: planningTrip, replaceEmptySchedule: targetDay == nil)
+        if isCreatingTrip {
+            return "将创建旅程并生成 \(preview.totalDayCount) 天、\(includedItems.count) 个安排。"
+        }
+        if preview.reusedEmptyDayCount > 0 {
+            return "将填入 \(preview.reusedEmptyDayCount) 个空白天，并新增 \(preview.newDayCount) 天；已有安排会保留。"
+        }
         if preview.existingDayCount > 0 {
             return "将合并到 \(preview.existingDayCount) 个已有日期，并新增 \(preview.newDayCount) 天。"
         }
@@ -265,35 +297,32 @@ struct ScreenshotItineraryImportView: View {
     }
 
     private func dayHeaderText(for day: ItineraryJourneyDayDraft, dayIndex: Int) -> String {
-        let targetNumber = targetDayNumber(for: day, fallbackIndex: dayIndex)
-        guard let date = day.date else { return "第 \(targetNumber) 天" }
-        return "\(date.formatted(.dateTime.month().day().weekday())) · 第 \(targetNumber) 天"
+        let edited = ItineraryJourneyDraft(days: days, rawText: draft.rawText, sourceAssetIdentifiers: [])
+        guard let date = JourneyImportApplyService.plannedDate(for: day, in: edited, trip: planningTrip) else {
+            return "第 \(dayIndex + 1) 天"
+        }
+        let calendar = Calendar.current
+        let firstDate = JourneyImportApplyService.preview(edited, for: planningTrip, replaceEmptySchedule: targetDay == nil).dates.min() ?? planningTrip.startDate
+        let resetsEmpty = targetDay == nil && planningTrip.days.allSatisfy { $0.items.isEmpty && $0.note.isEmpty } && days.contains { $0.date != nil }
+        let first = resetsEmpty ? firstDate : min(calendar.startOfDay(for: planningTrip.startDate), firstDate)
+        let number = (calendar.dateComponents([.day], from: first, to: date).day ?? dayIndex) + 1
+        return "\(date.formatted(.dateTime.month().day().weekday())) · 第 \(number) 天"
     }
 
-    private func targetDayNumber(
-        for day: ItineraryJourneyDayDraft,
-        fallbackIndex: Int
-    ) -> Int {
-        guard let date = day.date else { return firstTargetDayNumber + fallbackIndex }
-        let calendar = Calendar.current
-        let editedDraft = ItineraryJourneyDraft(
-            days: days,
-            rawText: draft.rawText,
-            sourceAssetIdentifiers: draft.sourceAssetIdentifiers
-        )
-        let plannedDates = JourneyImportApplyService.preview(editedDraft, for: trip).dates
-        var dates = trip.days.map { calendar.startOfDay(for: $0.date) }
-        for plannedDate in plannedDates where !dates.contains(where: {
-            calendar.isDate($0, inSameDayAs: plannedDate)
-        }) {
-            dates.append(calendar.startOfDay(for: plannedDate))
-        }
-        dates.sort()
-        let targetDate = calendar.startOfDay(for: date)
-        return (dates.firstIndex { calendar.isDate($0, inSameDayAs: targetDate) } ?? fallbackIndex) + 1
+    private var planningTrip: Trip {
+        guard isCreatingTrip else { return trip }
+        return Trip(title: newTripTitle, destination: newTripDestination, startDate: newTripStartDate, endDate: newTripStartDate)
     }
 
     private func save() {
+        if isCreatingTrip {
+            trip.title = newTripTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+            trip.destination = newTripDestination.trimmingCharacters(in: .whitespacesAndNewlines)
+            trip.licensePlate = newTripLicensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            trip.startDate = newTripStartDate
+            trip.endDate = newTripStartDate
+            modelContext.insert(trip)
+        }
         let editedDraft = ItineraryJourneyDraft(
             days: days,
             rawText: draft.rawText,
@@ -302,12 +331,15 @@ struct ScreenshotItineraryImportView: View {
         let result = JourneyImportApplyService.append(
             editedDraft,
             to: trip,
-            attachSourceImages: attachScreenshots
+            attachSourceImages: attachScreenshots,
+            replaceEmptySchedule: targetDay == nil
         )
+        for day in result.removedEmptyDays { modelContext.delete(day) }
         for day in result.createdDays { modelContext.insert(day) }
         for item in result.createdItems { modelContext.insert(item) }
         for media in result.createdMedia { modelContext.insert(media) }
         dismiss()
+        onCreated?(trip)
     }
 
     private func editorFieldLabel(_ title: String) -> some View {

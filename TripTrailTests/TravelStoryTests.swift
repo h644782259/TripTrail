@@ -1461,7 +1461,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(archivedEntry.note, "")
         XCTAssertEqual(
             archivedEntry.sourceMemoryPrefill,
-            "类型：景点；地点：拙政园；地址：东北街178号；步行前往，路程 1.2 公里 · 18 分钟；花费：¥80；补充：提前十分钟到入口。"
+            "类型：景点；地点：拙政园；地址：东北街178号；花费：¥80；补充：提前十分钟到入口。"
         )
         XCTAssertEqual(stories[0].syncScope, .item)
         XCTAssertEqual(stories[0].sourceSelectionIDs, [first.id, second.id])
@@ -1556,7 +1556,7 @@ final class TravelStoryTests: XCTestCase {
         let start = Date()
         let trip = Trip(title: "杭州周末", destination: "杭州", startDate: start, endDate: start)
         let day = TripDay(date: start, title: "西湖一天", sortOrder: 0, trip: trip)
-        let first = ItineraryItem(title: "西湖", category: .attraction, startTime: start, endTime: start, sortOrder: 0)
+        let first = ItineraryItem(title: "西湖", category: .attraction, startTime: start, endTime: start.addingTimeInterval(1800), sortOrder: 0)
         first.day = day
         day.items = [first]
         trip.days = [day]
@@ -1587,7 +1587,7 @@ final class TravelStoryTests: XCTestCase {
         first.transport = .walk
         first.distanceText = "2.6 公里 · 35 分钟"
         first.cost = 20
-        let second = ItineraryItem(title: "雷峰塔", category: .attraction, startTime: start, endTime: start, sortOrder: 1)
+        let second = ItineraryItem(title: "雷峰塔", category: .attraction, startTime: start.addingTimeInterval(3600), endTime: start.addingTimeInterval(7200), sortOrder: 1)
         second.day = day
         day.items.append(second)
 
@@ -1603,7 +1603,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(result.story.sortedEntries[1].note, "")
         XCTAssertEqual(
             result.story.sortedEntries[1].sourceMemoryPrefill,
-            "类型：景点；地点：雷峰塔；前往方式：驾车。"
+            "类型：景点；地点：雷峰塔。"
         )
         XCTAssertEqual(savedEntry.media.map(\.localIdentifier), ["user-photo"])
         XCTAssertEqual(savedDay.note, "西湖边的一天")
@@ -1840,7 +1840,7 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedTrip.id, trip.id)
         XCTAssertEqual(savedTrip.note, "慢慢逛")
         XCTAssertEqual(savedItem.address, "东北街178号")
-        XCTAssertEqual(savedItem.transport, .walk)
+        XCTAssertEqual(savedItem.transport, .car)
         XCTAssertEqual(savedItem.cost, 80)
         XCTAssertEqual(savedItem.executionStatus, .inProgress)
         XCTAssertFalse(savedItem.isAutomaticCompletionOverridden)
@@ -1865,8 +1865,8 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(savedEntry.endTime, start.addingTimeInterval(7_200))
         XCTAssertEqual(savedEntry.address, "东北街178号")
         XCTAssertEqual(savedEntry.supplementalInfo, "提前预约")
-        XCTAssertEqual(savedEntry.transport, .walk)
-        XCTAssertEqual(savedEntry.distanceText, "1.2 公里 · 18 分钟")
+        XCTAssertEqual(savedEntry.transport, .car)
+        XCTAssertEqual(savedEntry.distanceText, "")
         XCTAssertEqual(savedEntry.cost, 80)
         XCTAssertEqual(savedEntry.note, "值得再来")
         XCTAssertEqual(savedEntry.media.first?.localIdentifier, "story-video")

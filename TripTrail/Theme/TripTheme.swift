@@ -3,39 +3,24 @@ import UIKit
 import ObjectiveC
 
 extension Color {
-    static let tripInk = Color(red: 0.10, green: 0.23, blue: 0.21)
-    static let tripLake = Color(red: 0.30, green: 0.58, blue: 0.59)
-    static let tripLakeText = Color(
-        uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor(red: 0.56, green: 0.79, blue: 0.80, alpha: 1)
-                : UIColor(red: 0.16, green: 0.43, blue: 0.44, alpha: 1)
-        }
-    )
+    private static func tripAdaptive(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(uiColor: UIColor { traits in
+            let value = traits.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: CGFloat((value >> 16) & 0xff) / 255,
+                           green: CGFloat((value >> 8) & 0xff) / 255,
+                           blue: CGFloat(value & 0xff) / 255, alpha: 1)
+        })
+    }
+
+    static let tripInk = tripAdaptive(0x24332F, 0xEDF2EF)
+    static let tripLake = tripAdaptive(0x4D9496, 0x8FC9CB)
+    static let tripLakeText = tripAdaptive(0x296E70, 0x8FC9CB)
     static let tripSage = Color(red: 0.43, green: 0.61, blue: 0.49)
-    static let tripMist = Color(red: 0.74, green: 0.84, blue: 0.84)
+    static let tripMist = tripAdaptive(0xBDD6D6, 0x536C65)
     static let tripSand = Color(red: 0.82, green: 0.72, blue: 0.56)
-    static let tripCanvas = Color(
-        uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor.secondarySystemGroupedBackground
-                : UIColor(red: 0.97, green: 0.96, blue: 0.93, alpha: 1)
-        }
-    )
-    static let tripSurface = Color(
-        uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor.tertiarySystemGroupedBackground
-                : UIColor(red: 0.995, green: 0.99, blue: 0.975, alpha: 1)
-        }
-    )
-    static let tripItemSurface = Color(
-        uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark
-                ? UIColor.secondarySystemGroupedBackground
-                : UIColor(red: 0.965, green: 0.955, blue: 0.925, alpha: 1)
-        }
-    )
+    static let tripCanvas = tripAdaptive(0xF4F6F3, 0x151B18)
+    static let tripSurface = tripAdaptive(0xFFFFFF, 0x202824)
+    static let tripItemSurface = tripAdaptive(0xEDF2EF, 0x29332E)
 }
 
 struct CardSurface: ViewModifier {
@@ -47,7 +32,7 @@ struct CardSurface: ViewModifier {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(Color.tripMist.opacity(0.32), lineWidth: 0.8)
             }
-            .shadow(color: Color.tripInk.opacity(0.055), radius: 14, y: 6)
+            .shadow(color: Color.black.opacity(0.035), radius: 10, y: 4)
     }
 }
 

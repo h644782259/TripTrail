@@ -15,6 +15,7 @@ struct ItemEditorView: View {
     let item: ItineraryItem?
     let mode: ItemEditorMode
 
+    @State private var favoriteCity: String
     @State private var title: String
     @State private var locationMode: ArrangementLocationMode
     @State private var placeName: String
@@ -26,11 +27,12 @@ struct ItemEditorView: View {
     @State private var category: PlaceCategory
     @State private var startTime: Date
     @State private var endTime: Date
+    @State private var isTimePending: Bool
+    @State private var targetDayID: UUID?
     @State private var isFixedTime: Bool
     @State private var note: String
-    @State private var transport: TransportMode
-    @State private var distanceText: String
     @State private var costText: String
+    @State private var showsFavoriteImport = false
     @State private var showsSmartImport = false
     @State private var smartImportMode: SingleSmartImportMode
     @State private var smartImportFeedback: String?
@@ -69,6 +71,7 @@ struct ItemEditorView: View {
             calendar: calendar
         )
         _title = State(initialValue: item?.title ?? "")
+        _favoriteCity = State(initialValue: item?.favoriteCity ?? "")
         let isLegacyItem = item?.locationModeRaw.isEmpty != false
         _locationMode = State(initialValue: item?.locationMode ?? .single)
         _placeName = State(initialValue: item.map {
@@ -85,9 +88,9 @@ struct ItemEditorView: View {
         _startTime = State(initialValue: initialStartTime)
         _endTime = State(initialValue: initialEndTime)
         _isFixedTime = State(initialValue: item?.isFixedTime ?? false)
+        _isTimePending = State(initialValue: item?.isTimePending ?? false)
+        _targetDayID = State(initialValue: day?.id ?? item?.day?.id)
         _note = State(initialValue: item?.note ?? "")
-        _transport = State(initialValue: item?.transport ?? .car)
-        _distanceText = State(initialValue: item?.distanceText ?? "")
         _costText = State(initialValue: item.map { $0.cost == 0 ? "" : String($0.cost) } ?? "")
         _showsSmartImport = State(initialValue: startsWithSmartImport && item == nil)
         _smartImportMode = State(initialValue: initialSmartImportMode)
@@ -100,6 +103,9 @@ struct ItemEditorView: View {
                     Section {
                         Button { showsSmartImport = true } label: {
                             Label("智能录入", systemImage: "wand.and.stars")
+                        }
+                        if mode == .itinerary, day != nil {
+                            Button { showsFavoriteImport = true } label: { Label("从收藏导入", systemImage: "heart") }
                         }
                         if let smartImportFeedback {
                             Label(
@@ -116,9 +122,9 @@ struct ItemEditorView: View {
 
                 Section("安排") {
                     VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("安排名称/说明")
+                        editorFieldLabel("安排名称")
                         TextField("例如：广州 → 上海、游览世纪公园", text: $title)
-                            .accessibilityLabel("安排名称或说明")
+                            .accessibilityLabel("安排名称")
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("补充说明")
@@ -130,23 +136,40 @@ struct ItemEditorView: View {
                         ForEach(PlaceCategory.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
                     }
                     if mode == .itinerary {
-                        UnifiedTimeRangePicker(
-                            title: "时间",
-                            startTitle: "开始",
-                            endTitle: "结束",
-                            startTime: $startTime,
-                            endTime: $endTime
-                        )
-                        VStack(alignment: .leading, spacing: 4) {
-                            Toggle("固定时间", isOn: $isFixedTime)
-                            Text("开启后，排序或拖拽时不会自动调整此安排的时间")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if let trip = (day ?? item?.day)?.trip, trip.sortedDays.count > 1 {
+                            Picker("安排日期", selection: $targetDayID) {
+                                ForEach(trip.sortedDays) { value in
+                                    Text(value.date.formatted(date: .abbreviated, time: .omitted)).tag(Optional(value.id))
+                                }
+                            }
+                        }
+                        Toggle("时间待定", isOn: $isTimePending)
+                            .onChange(of: isTimePending) { _, pending in if pending { isFixedTime = false } }
+                        if !isTimePending {
+                            UnifiedTimeRangePicker(
+                                title: "时间",
+                                startTitle: "开始",
+                                endTitle: "结束",
+                                startTime: $startTime,
+                                endTime: $endTime
+                            )
+                            VStack(alignment: .leading, spacing: 4) {
+                                Toggle("固定时间", isOn: $isFixedTime)
+                                Text("开启后，排序或拖拽时不会自动调整此安排的时间")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
                 }
 
                 Section("地点") {
+                    if mode == .favorite {
+                        VStack(alignment: .leading, spacing: 6) {
+                            editorFieldLabel("城市（选填）")
+                            TextField("例如：杭州，用于筛选收藏", text: $favoriteCity)
+                        }
+                    }
                     Picker("地点类型", selection: $locationMode) {
                         ForEach(ArrangementLocationMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
@@ -190,35 +213,12 @@ struct ItemEditorView: View {
                     }
                 }
 
-                Section {
-                    Picker("前往方式", selection: $transport) {
-                        ForEach(TransportMode.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("路程说明")
-                        TextField("例如：6.8 km · 25 分钟", text: $distanceText)
-                            .accessibilityLabel("路程说明")
-                    }
-                } header: {
-                    Text("路程")
-                }
-
                 Section("照片与视频") {
                     let visibleMedia = (item?.media ?? [])
                         .filter { !removedMediaIDs.contains($0.id) }
                         .sorted { $0.sortOrder < $1.sortOrder }
-                    if !visibleMedia.isEmpty || !pickedAssets.isEmpty {
-                        mediaGrid(existing: visibleMedia, picked: pickedAssets)
-                    }
-                    PermissionAwarePhotosPicker(
-                        selection: $pickerItems,
-                        maxSelectionCount: 20,
-                        matching: .any(of: [.images, .videos])
-                    ) {
-                        Label("从系统相簿选择", systemImage: "photo.on.rectangle.angled")
-                    }
-                    Text("删除相簿原素材后，这里将无法显示。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    mediaGrid(existing: visibleMedia, picked: pickedAssets)
+                        .listRowSeparator(.hidden)
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -229,7 +229,7 @@ struct ItemEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }.disabled(
                         title.trimmingCharacters(in: .whitespaces).isEmpty
-                            || (mode == .itinerary && endTime <= startTime)
+                            || (mode == .itinerary && !isTimePending && endTime <= startTime)
                     )
                 }
             }
@@ -240,7 +240,13 @@ struct ItemEditorView: View {
                 guard item == nil else { return }
                 locationMode = newValue == .transport ? .route : .single
             }
+            .sheet(isPresented: $showsFavoriteImport) {
+                if let day { FavoriteImportSelectionView(day: day) }
+            }
             .sheet(isPresented: $showsSmartImport) {
+                if mode == .itinerary, let day, let trip = day.trip {
+                    TextItineraryImportView(trip: trip, referenceDate: day.date, targetDay: day, onCreated: { _ in dismiss() })
+                } else {
                 SingleItinerarySmartImportView(
                     initialMode: smartImportMode,
                     referenceDate: startTime,
@@ -251,6 +257,7 @@ struct ItemEditorView: View {
                         showsSmartImport = false
                     }
                 )
+                }
             }
             .alert("相簿提示", isPresented: Binding(get: { mediaWarning != nil }, set: { if !$0 { mediaWarning = nil } })) {
                 Button("知道了", role: .cancel) { mediaWarning = nil }
@@ -314,10 +321,8 @@ struct ItemEditorView: View {
             placeName = draft.title
             placeAddress = draft.address
         }
-        transport = draft.transport
-        if !draft.distanceText.isEmpty { distanceText = draft.distanceText }
         if draft.cost > 0 { costText = String(draft.cost) }
-        for detail in [draft.reservationInfo, draft.note] where !detail.isEmpty && !note.contains(detail) {
+        for detail in [draft.note] where !detail.isEmpty && !note.contains(detail) {
             note = [note, detail].filter { !$0.isEmpty }.joined(separator: "\n")
         }
         let existingIDs = Set(pickedAssets.map(\.id))
@@ -335,7 +340,7 @@ struct ItemEditorView: View {
 
     @ViewBuilder
     private func mediaGrid(existing: [MediaReference], picked: [PickedAsset]) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(existing) { reference in
                 removableThumbnail(identifier: reference.localIdentifier, kind: reference.kind) {
                     removedMediaIDs.insert(reference.id)
@@ -346,6 +351,21 @@ struct ItemEditorView: View {
                     pickedAssets.removeAll { $0.id == asset.id }
                 }
             }
+            let remaining = max(0, 20 - existing.count - picked.count)
+            if remaining > 0 {
+                PermissionAwarePhotosPicker(selection: $pickerItems, maxSelectionCount: remaining, matching: .any(of: [.images, .videos])) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.tripLake.opacity(0.045))
+                        .aspectRatio(1, contentMode: .fit)
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 12)
+                                .stroke(Color.tripLake.opacity(0.52), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5]))
+                        }
+                        .overlay { Image(systemName: "plus").font(.title2.weight(.medium)).foregroundStyle(Color.tripLake) }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("添加照片或视频")
+            }
         }
     }
 
@@ -354,9 +374,13 @@ struct ItemEditorView: View {
         kind: MediaKind,
         onRemove: @escaping () -> Void
     ) -> some View {
-        let thumbnail = AssetThumbnail(identifier: identifier, showsVideoBadge: kind == .video)
-            .frame(height: 88)
+        let thumbnail = Color.clear
+            .aspectRatio(1, contentMode: .fit)
+            .overlay {
+                AssetThumbnail(identifier: identifier, showsVideoBadge: kind == .video)
+            }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
         return ZStack(alignment: .topTrailing) {
             Button {
@@ -445,8 +469,18 @@ struct ItemEditorView: View {
         target.destinationAddress = destinationAddress.trimmingCharacters(in: .whitespacesAndNewlines)
         target.address = locationMode == .single ? target.placeAddress : target.destinationAddress
         target.category = category
+        if isTimePending && !target.isTimePending { target.executionStatus = .notStarted }
+        target.isTimePending = isTimePending
         if mode == .itinerary {
-            let scheduleDay = day?.date ?? target.day?.date ?? startTime
+            if let source = target.day,
+               let destination = source.trip?.days.first(where: { $0.id == targetDayID }), destination.id != source.id {
+                source.items.removeAll { $0.id == target.id }
+                target.day = destination
+                target.sortOrder = destination.items.count
+                destination.items.append(target)
+                JourneyHierarchyService.normalizeItems(source.items)
+            }
+            let scheduleDay = target.day?.date ?? day?.date ?? startTime
             target.startTime = DateRangeDateService.applyingDay(
                 scheduleDay,
                 to: startTime,
@@ -458,18 +492,17 @@ struct ItemEditorView: View {
                 preservingTime: true
             )
             target.completeIfElapsed()
-            target.isFixedTime = isFixedTime
+            target.isFixedTime = isFixedTime && !isTimePending
             if target.endTime <= target.startTime {
                 target.endTime = target.startTime.addingTimeInterval(60)
             }
         }
         target.note = note
-        target.transport = transport
-        target.distanceText = distanceText
         target.playDurationMinutes = max(0, Int(target.endTime.timeIntervalSince(target.startTime) / 60))
         if let targetDay = target.day { JourneyHierarchyService.normalizeItems(targetDay.items) }
         target.cost = Double(costText.replacingOccurrences(of: ",", with: ".")) ?? 0
         target.isFavorite = mode == .favorite
+        if mode == .favorite { target.favoriteCity = favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines) }
 
         for reference in target.media where removedMediaIDs.contains(reference.id) {
             modelContext.delete(reference)
@@ -488,7 +521,7 @@ struct ItemEditorView: View {
 
 enum SingleSmartImportMode: String, CaseIterable, Identifiable {
     case text = "文字"
-    case image = "图片"
+    case image = "截图"
 
     var id: String { rawValue }
 }
@@ -539,7 +572,7 @@ private struct SingleItinerarySmartImportView: View {
                     Section("安排内容") {
                         ZStack(alignment: .topLeading) {
                             if inputText.isEmpty {
-                                Text("粘贴这一段安排的订单、导航或描述")
+                                Text("粘贴 1 个安排或地点的描述")
                                     .foregroundStyle(.tertiary)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 8)
@@ -556,6 +589,8 @@ private struct SingleItinerarySmartImportView: View {
                     }
                 } else {
                     Section("安排截图") {
+                        Text("上传 1 个安排或地点的截图")
+                            .font(.subheadline).foregroundStyle(.secondary)
                         imageSelectionGrid
                     }
                 }
@@ -564,7 +599,7 @@ private struct SingleItinerarySmartImportView: View {
             .photosPicker(
                 isPresented: $showsImagePicker,
                 selection: $imageItems,
-                maxSelectionCount: 10,
+                maxSelectionCount: 1,
                 selectionBehavior: .ordered,
                 matching: .images,
                 photoLibrary: .shared()
@@ -578,7 +613,7 @@ private struct SingleItinerarySmartImportView: View {
                     requestImageSelection()
                 }
             }
-            .navigationTitle("智能录入安排")
+            .navigationTitle("智能录入")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -595,7 +630,7 @@ private struct SingleItinerarySmartImportView: View {
                 } label: {
                     HStack {
                         if isRecognizing { ProgressView().controlSize(.small) }
-                        Label(isRecognizing ? "识别中…" : "识别并预填", systemImage: "wand.and.stars")
+                        Label(isRecognizing ? "识别中…" : "开始识别", systemImage: "wand.and.stars")
                     }
                     .frame(maxWidth: .infinity)
                     .font(.headline)
@@ -658,14 +693,21 @@ private struct SingleItinerarySmartImportView: View {
     }
 
     private var imageSelectionGrid: some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 88), spacing: 8)], spacing: 8) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
             ForEach(selectedImageAssets) { asset in
                 AssetThumbnail(identifier: asset.id)
                     .frame(maxWidth: .infinity)
                     .aspectRatio(1, contentMode: .fit)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(alignment: .topTrailing) {
+                        Button { imageItems.removeAll { $0.itemIdentifier == asset.id } } label: {
+                            Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                                .foregroundStyle(.white, .black.opacity(0.55)).frame(width: 36, height: 36)
+                        }.buttonStyle(.plain).accessibilityLabel("移除截图")
+                    }
             }
 
+            if selectedImageAssets.isEmpty {
             Button {
                 requestImageSelection()
             } label: {
@@ -687,6 +729,7 @@ private struct SingleItinerarySmartImportView: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(selectedImageAssets.isEmpty ? "选择截图" : "重新选择截图")
+            }
         }
     }
 

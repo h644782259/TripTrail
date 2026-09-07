@@ -186,18 +186,14 @@ struct ItineraryRoutePoint: Identifiable, Equatable {
     let startTime: Date
     let endTime: Date
     let target: JourneyLocationTarget
+    var isTimePending: Bool = false
 }
 
 enum ItineraryRoutePlanning {
     static func points(in days: [TripDay]) -> [ItineraryRoutePoint] {
         let orderedDays = JourneyHierarchyService.sortedDays(days)
         let rawPoints = orderedDays.flatMap { day in
-            day.items
-                .sorted { lhs, rhs in
-                    if lhs.startTime != rhs.startTime { return lhs.startTime < rhs.startTime }
-                    if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
-                    return lhs.id.uuidString < rhs.id.uuidString
-                }
+            day.sortedItems
                 .flatMap { item in
                     item.locationTargets.map { target in
                         ItineraryRoutePoint(
@@ -206,7 +202,8 @@ enum ItineraryRoutePlanning {
                             arrangementTitle: item.title,
                             startTime: item.startTime,
                             endTime: item.endTime,
-                            target: target
+                            target: target,
+                            isTimePending: item.isTimePending
                         )
                     }
                 }
@@ -273,6 +270,7 @@ enum HierarchyDeletionCopy {
 
 @Model
 final class Trip {
+    var licensePlate: String = ""
     var id: UUID = UUID()
     var title: String = ""
     var destination: String = ""
@@ -301,7 +299,8 @@ final class Trip {
     }
 
     var nextUnfinishedItem: ItineraryItem? {
-        allItems.first { $0.executionStatus != .completed }
+        allItems.first { !$0.isTimePending && $0.executionStatus != .completed }
+            ?? allItems.first { $0.executionStatus != .completed }
     }
 
     var completedCount: Int { allItems.filter { $0.executionStatus == .completed }.count }
@@ -434,7 +433,7 @@ final class TripDay {
     }
 
     func suggestedStartTime(calendar: Calendar = .current) -> Date {
-        if let previousEndTime = sortedItems.last?.endTime {
+        if let previousEndTime = sortedItems.filter({ !$0.isTimePending }).map(\.endTime).max() {
             return previousEndTime
         }
 
@@ -505,6 +504,7 @@ final class ItineraryItem {
     var originAddress: String = ""
     var destinationName: String = ""
     var destinationAddress: String = ""
+    // Retained for SwiftData compatibility with existing stores; no longer a user-facing field.
     var transportRaw: String = TransportMode.car.rawValue
     var distanceText: String = ""
     var playDurationMinutes: Int = 60
@@ -514,8 +514,11 @@ final class ItineraryItem {
     var executionStatusRaw: String = ""
     var isAutomaticCompletionOverridden: Bool = false
     var isFixedTime: Bool = false
+    var isTimePending: Bool = false
+    @Attribute(.externalStorage) var voucherData: Data? = nil
     var sortOrder: Int = 0
     var isFavorite: Bool = false
+    var favoriteCity: String = ""
     var favoriteCreatedAt: Date = Date()
     var sourceFavoriteID: UUID?
     var day: TripDay?
@@ -618,12 +621,20 @@ final class ItineraryItem {
         }
     }
 
+    var vouchers: [TravelVoucher] {
+        get { voucherData.flatMap { try? JSONDecoder().decode([TravelVoucher].self, from: $0) } ?? [] }
+        set { voucherData = try? JSONEncoder().encode(newValue) }
+    }
+
+    var timeRangeText: String { isTimePending ? "时间待定" : "\(startTime.timeText)–\(endTime.timeText)" }
+
     func hasElapsed(relativeTo date: Date = Date()) -> Bool {
-        endTime <= date
+        !isTimePending && endTime <= date
     }
 
     @discardableResult
     func completeIfElapsed(relativeTo date: Date = Date()) -> Bool {
+        guard !isTimePending else { return false }
         let hadLegacyOverride = isAutomaticCompletionOverridden
         isAutomaticCompletionOverridden = false
 
@@ -782,6 +793,7 @@ final class StoryEntry {
     var originAddress: String = ""
     var destinationName: String = ""
     var destinationAddress: String = ""
+    // Retained for SwiftData compatibility with existing stores; no longer a user-facing field.
     var transportRaw: String = TransportMode.car.rawValue
     var routeInfo: String = ""
     var cost: Double = 0
@@ -865,4 +877,12 @@ final class StoryEntry {
             lhs.sortOrder == rhs.sortOrder ? lhs.createdAt < rhs.createdAt : lhs.sortOrder < rhs.sortOrder
         }
     }
+}
+
+
+struct TravelVoucher: Codable, Identifiable, Equatable {
+    var id: String = UUID().uuidString
+    let name: String
+    let mimeType: String
+    let dataBase64: String
 }

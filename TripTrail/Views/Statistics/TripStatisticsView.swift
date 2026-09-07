@@ -123,7 +123,7 @@ struct TripStatisticsView: View {
             ),
             in: RoundedRectangle(cornerRadius: 24, style: .continuous)
         )
-        .shadow(color: Color.tripInk.opacity(0.12), radius: 16, y: 8)
+        .shadow(color: Color.black.opacity(0.12), radius: 16, y: 8)
     }
 
     private func dailyChartCard(summary: TripExpenseSummary) -> some View {
@@ -153,7 +153,7 @@ struct TripStatisticsView: View {
             RoundedRectangle(cornerRadius: 22, style: .continuous)
                 .stroke(Color.tripMist.opacity(0.38), lineWidth: 0.8)
         }
-        .shadow(color: Color.tripInk.opacity(0.055), radius: 14, y: 6)
+        .shadow(color: Color.black.opacity(0.055), radius: 14, y: 6)
     }
 
     private func expenseChart(_ expenses: [DailyTripExpense]) -> some View {

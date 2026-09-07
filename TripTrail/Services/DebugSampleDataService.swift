@@ -157,8 +157,6 @@ enum DebugSampleDataService {
             order: 0,
             address: "抵达后从东广场出站，乘地铁前往酒店。",
             note: "从东广场出站，乘地铁前往酒店。",
-            transport: .train,
-            distance: "高铁 1 小时 5 分",
             duration: 30,
             reservation: "G7311 · 08车12A",
             cost: 73,
@@ -175,8 +173,6 @@ enum DebugSampleDataService {
             order: 1,
             address: "先寄存行李，下午两点后办理入住。",
             note: "先寄存行李，下午两点后领取房卡。",
-            transport: .bus,
-            distance: "地铁 6 站",
             duration: 30,
             reservation: "预订号 TT20260830",
             cost: 688,
@@ -193,8 +189,6 @@ enum DebugSampleDataService {
             order: 2,
             address: "补充防晒与雨具，并检查充电宝、纸巾和备用电池。",
             note: "检查充电宝、纸巾和备用电池。",
-            transport: .walk,
-            distance: "步行 350 米",
             duration: 15,
             reservation: "",
             cost: 96.5,
@@ -213,8 +207,6 @@ enum DebugSampleDataService {
             order: 0,
             address: "从北山街入口慢慢走到平湖秋月，适合拍湖面晨光。",
             note: "从北山街慢慢走到平湖秋月，拍一段湖面晨光。",
-            transport: .walk,
-            distance: "步行 1.8 公里",
             duration: 90,
             reservation: "无需预约",
             cost: 0,
@@ -234,8 +226,6 @@ enum DebugSampleDataService {
             order: 1,
             address: "预留临窗位，尝试西湖醋鱼与龙井虾仁。",
             note: "预留临窗位，尝试西湖醋鱼与龙井虾仁。",
-            transport: .walk,
-            distance: "步行 900 米",
             duration: 90,
             reservation: "12:00 · 2人 · 手机尾号 0830",
             cost: 328,
@@ -252,8 +242,6 @@ enum DebugSampleDataService {
             order: 2,
             address: "挑选茶叶和桂花糕，控制在一个手提袋内。",
             note: "茶叶和桂花糕控制在一个手提袋内。",
-            transport: .ride,
-            distance: "骑行 3.2 公里",
             duration: 100,
             reservation: "",
             cost: 180,
@@ -272,8 +260,6 @@ enum DebugSampleDataService {
             order: 0,
             address: "天气合适就沿十里琅珰走一小段。",
             note: "天气合适就沿十里琅珰走一小段。",
-            transport: .car,
-            distance: "驾车约 11 公里",
             duration: 150,
             reservation: "茶室预约 09:30",
             cost: 120,
@@ -290,8 +276,6 @@ enum DebugSampleDataService {
             order: 1,
             address: "提前四十分钟到站，乘坐返程高铁。",
             note: "提前四十分钟到站。",
-            transport: .train,
-            distance: "高铁 1 小时 5 分",
             duration: 65,
             reservation: "G7590 · 05车06F",
             cost: 73,
@@ -322,8 +306,6 @@ enum DebugSampleDataService {
             order: 0,
             address: "在出发层集合，留意登机口变更。",
             note: "测试飞机交通方式与预约信息。",
-            transport: .flight,
-            distance: "机场线",
             duration: 60,
             reservation: "MU5101 · 登机口 C52",
             cost: 860,
@@ -341,8 +323,6 @@ enum DebugSampleDataService {
             order: 1,
             address: "蓝调时刻前到达，沿中山东一路慢慢散步。",
             note: "蓝调时刻前到达，测试城市照片展示。",
-            transport: .bus,
-            distance: "公交约 25 分钟",
             duration: 120,
             reservation: "",
             cost: 0,
@@ -373,8 +353,6 @@ enum DebugSampleDataService {
             order: 0,
             address: "刷身份证登船，提前留意候船区提示。",
             note: "刷身份证登船。",
-            transport: .car,
-            distance: "轮渡约 25 分钟",
             duration: 25,
             reservation: "08:10 船票",
             cost: 35,
@@ -391,8 +369,6 @@ enum DebugSampleDataService {
             order: 1,
             address: "从菽庄花园入园，顺路参观钢琴博物馆。",
             note: "旧旅程全部完成。",
-            transport: .walk,
-            distance: "步行 1.4 公里",
             duration: 140,
             reservation: "",
             cost: 30,
@@ -426,7 +402,7 @@ enum DebugSampleDataService {
             time: "08:00–09:30",
             address: brokenBridge.address,
             note: "风不大，适合慢慢走，也拍下了一段动态素材。",
-            route: "沿北山街步行 1.8 公里",
+
             order: 0,
             sourceItemID: brokenBridge.id,
             story: linkedStory,
@@ -458,7 +434,7 @@ enum DebugSampleDataService {
             time: "18:42",
             address: "蓝调时刻前到达，沿江记录城市夜色。",
             note: "这张图用于检查足迹卡片封面、轮播与跨设备媒体恢复。",
-            route: "地铁 2 号线后步行 700 米",
+
             order: 0,
             sourceItemID: nil,
             story: cityStory,
@@ -489,7 +465,7 @@ enum DebugSampleDataService {
             time: "09:20–11:40",
             address: "从菽庄花园入园，顺路参观钢琴博物馆。",
             note: "没有照片也能完整保留文字、说明与路线。",
-            route: "从三丘田码头步行约 20 分钟",
+
             order: 0,
             sourceItemID: nil,
             story: journalStory,
@@ -522,8 +498,7 @@ enum DebugSampleDataService {
         order: Int,
         address: String,
         note: String,
-        transport: TransportMode,
-        distance: String,
+
         duration: Int,
         reservation: String,
         cost: Double,
@@ -537,8 +512,7 @@ enum DebugSampleDataService {
         result.placeAddress = placeAddress
         result.address = placeAddress
         result.note = note
-        result.transport = transport
-        result.distanceText = distance
+
         result.playDurationMinutes = duration
         result.reservationInfo = reservation
         result.cost = cost
@@ -594,21 +568,21 @@ enum DebugSampleDataService {
         let samples: [(id: Int, title: String, origin: String, originAddress: String,
                        destination: String, destinationAddress: String,
                        startHour: Int, startMinute: Int, endHour: Int, endMinute: Int,
-                       order: Int, transport: TransportMode, distance: String)] = [
+                       order: Int)] = [
             (
                 302, "前往厦鼓码头", "厦门站", "厦门市思明区厦禾路900号",
                 "厦门邮轮中心厦鼓码头", "厦门市湖里区东港路2号",
-                7, 10, 8, 0, 0, .car, "驾车约 25 分钟"
+                7, 10, 8, 0, 0
             ),
             (
                 303, "岛上漫步", "三丘田码头", "厦门市思明区鼓浪屿延平路199号",
                 "菽庄花园", "厦门市思明区鼓浪屿港后路7号",
-                8, 40, 9, 10, 2, .walk, "步行约 1.6 公里"
+                8, 40, 9, 10, 2
             ),
             (
                 304, "海边返程", "菽庄花园", "厦门市思明区鼓浪屿港后路7号",
                 "厦门站", "厦门市思明区厦禾路900号",
-                12, 0, 12, 45, 4, .car, "轮渡 + 驾车约 45 分钟"
+                12, 0, 12, 45, 4
             )
         ]
 
@@ -654,8 +628,6 @@ enum DebugSampleDataService {
                 || item.startTime != start
                 || item.endTime != end
                 || item.sortOrder != sample.order
-                || item.transport != sample.transport
-                || item.distanceText != sample.distance
                 || item.executionStatus != .completed
             if valuesDiffer {
                 item.title = sample.title
@@ -668,8 +640,7 @@ enum DebugSampleDataService {
                 item.startTime = start
                 item.endTime = end
                 item.sortOrder = sample.order
-                item.transport = sample.transport
-                item.distanceText = sample.distance
+
                 item.executionStatus = .completed
                 changed = true
             }
@@ -723,7 +694,7 @@ enum DebugSampleDataService {
         time: String,
         address: String,
         note: String,
-        route: String,
+
         order: Int,
         sourceItemID: UUID?,
         story: TravelStory,
@@ -737,7 +708,7 @@ enum DebugSampleDataService {
         result.timeLabel = time
         result.address = address
         result.note = note
-        result.routeInfo = route
+
         result.sourceItemID = sourceItemID
         result.story = story
         result.storyDay = day

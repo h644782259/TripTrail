@@ -191,6 +191,7 @@ enum StorySyncService {
     private static func updateSkeleton(_ entry: StoryEntry, from item: ItineraryItem, sortOrder: Int) {
         var skeleton = item.footprintSkeleton
         skeleton = JourneyPointSkeleton(
+            isTimePending: skeleton.isTimePending,
             sourceID: skeleton.sourceID,
             title: skeleton.title,
             category: skeleton.category,
@@ -205,8 +206,6 @@ enum StorySyncService {
             destinationName: skeleton.destinationName,
             destinationAddress: skeleton.destinationAddress,
             supplementalInfo: skeleton.supplementalInfo,
-            transport: skeleton.transport,
-            distanceText: skeleton.distanceText,
             cost: skeleton.cost,
             sortOrder: sortOrder
         )

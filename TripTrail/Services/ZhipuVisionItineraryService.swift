@@ -571,6 +571,8 @@ enum ZhipuVisionItineraryService {
             .filter { !$0.isEmpty }
             .joined(separator: "\n")
         return ItineraryJourneyDraft(
+            suggestedTitle: payload.title?.trimmed ?? "",
+            suggestedDestination: payload.destination?.trimmed ?? "",
             days: groupedDays,
             rawText: rawText.isEmpty ? "由大模型增强识别生成" : rawText,
             sourceAssetIdentifiers: sourceAssetIdentifiers
@@ -636,8 +638,6 @@ enum ZhipuVisionItineraryService {
             originAddress: item.originAddress,
             destinationName: item.destinationName,
             destinationAddress: item.destinationAddress,
-            transport: item.transport,
-            distanceText: item.distanceText,
             travelDurationMinutes: duration,
             reservationInfo: item.reservationInfo,
             cost: item.cost,
@@ -646,7 +646,6 @@ enum ZhipuVisionItineraryService {
             addressCandidates: item.address.isEmpty ? [] : [item.address],
             startTimeCandidates: [item.startTime],
             endTimeCandidates: [item.endTime],
-            distanceTextCandidates: item.distanceText.isEmpty ? [] : [item.distanceText],
             costCandidates: item.cost > 0 ? [item.cost] : [],
             orderNumber: "",
             rawText: journey.rawText,
@@ -662,7 +661,6 @@ enum ZhipuVisionItineraryService {
     ) -> ItineraryJourneyItemDraft {
         let calendar = configuredCalendar
         let category = category(from: payload.category)
-        let transport = transport(from: payload.transport)
         let suppliedTitle = payload.title?.trimmed ?? ""
         let origin = JourneyLocationText.entityName(
             from: payload.origin?.trimmed ?? "",
@@ -699,10 +697,12 @@ enum ZhipuVisionItineraryService {
         if let parsedEnd {
             end = parsedEnd
         } else if category == .hotel {
-            let nextDay = calendar.date(byAdding: .day, value: 1, to: dayDate) ?? dayDate
-            end = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: nextDay) ?? nextDay
+            end = start.addingTimeInterval(3600)
         } else {
             end = calendar.date(byAdding: .hour, value: 1, to: start) ?? start
+        }
+        if category == .hotel && !calendar.isDate(start, inSameDayAs: end) {
+            end = start.addingTimeInterval(3600)
         }
         if end <= start {
             if category == .transport,
@@ -710,7 +710,7 @@ enum ZhipuVisionItineraryService {
                nextDay > start {
                 end = nextDay
             } else {
-                end = calendar.date(byAdding: .hour, value: category == .hotel ? 22 : 1, to: start) ?? start
+                end = calendar.date(byAdding: .hour, value: 1, to: start) ?? start
             }
         }
 
@@ -739,8 +739,6 @@ enum ZhipuVisionItineraryService {
             originAddress: payload.originAddress?.trimmed ?? "",
             destinationName: destination,
             destinationAddress: payload.destinationAddress?.trimmed ?? "",
-            transport: transport,
-            distanceText: payload.distanceText?.trimmed ?? "",
             reservationInfo: payload.reservationInfo?.trimmed ?? "",
             cost: max(0, payload.cost ?? 0),
             note: suppliedNote
@@ -796,17 +794,6 @@ enum ZhipuVisionItineraryService {
         case "special", "特殊位置": .special
         case "other", "其他": .other
         default: .attraction
-        }
-    }
-
-    private static func transport(from value: String?) -> TransportMode {
-        switch value?.lowercased() {
-        case "walk", "步行": .walk
-        case "ride", "骑行": .ride
-        case "bus", "公交": .bus
-        case "train", "火车", "高铁": .train
-        case "flight", "飞机", "航班": .flight
-        default: .car
         }
     }
 
@@ -895,6 +882,8 @@ enum ZhipuVisionItineraryService {
         {
           "schemaVersion": 2,
           "kind": "itinerary_journey",
+          "title": "旅程名称，根据已识别内容概括",
+          "destination": "明确的旅行目的地，未知则为空字符串",
           "days": [{
             "dayNumber": 1,
             "date": "yyyy-MM-dd 或 null",
@@ -908,12 +897,10 @@ enum ZhipuVisionItineraryService {
               "locationMode": "单地点|起终点",
               "placeName": "单地点名称",
               "placeAddress": "单地点详细地址",
-              "transport": "car|walk|ride|bus|train|flight",
               "origin": "出发位置",
               "originAddress": "出发地详细地址",
               "destination": "到达位置",
               "destinationAddress": "目的地详细地址",
-              "distanceText": "路程或时长",
               "reservationInfo": "航班号、车次、房型或订单信息",
               "cost": 0,
               "note": "补充说明",
@@ -947,12 +934,14 @@ enum ZhipuVisionItineraryService {
         6. 时间区间的第一个时间是开始时间、第二个时间是结束时间；航班使用起飞和到达时间，车次使用发车和到站时间，允许跨日。
         7. title 是独立的安排名称/说明，例如“游览羊卓雍措”“办理边防证”“入住岗嘎镇酒店”；不要把整天路线合成唯一 item。
         8. locationMode 为 single 时填写 placeName/placeAddress；为 route 时填写 origin/originAddress 和 destination/destinationAddress。地点必须是可被地图检索的实体名称，并去掉“游览、夜景、集合、入住、用餐”等动作前后缀。
-        9. 门票、区间车、证件、路况、建议和注意事项放入最相关 item 的 note；金额放 cost，路程或时长放 distanceText，不要因为信息不完整而返回空 items。
+        9. 住宿安排默认只预留 1 小时办理入住，不使用次日退房时间作为结束时间。门票、区间车、证件、路况、建议和注意事项放入最相关 item 的 note；金额放 cost；不返回前往方式、路程或通勤时长字段，也不要推测上一地点，不要因为信息不完整而返回空 items。
         10. 未出现的字段用空字符串或 null，不要虚构。每个 day 的 items 必须至少有一项。
         11. 只输出下面结构的 JSON，不要 Markdown，不要解释，不要输出 reasoning_content。字段值不能确定时使用 null、空字符串或 0；startAt 和 endAt 也允许为 null：
         {
           "schemaVersion": 2,
           "kind": "itinerary_journey",
+          "title": "旅程名称，根据已识别内容概括",
+          "destination": "明确的旅行目的地，未知则为空字符串",
           "days": [{
             "dayNumber": 1,
             "date": "yyyy-MM-dd 或 null",
@@ -966,12 +955,10 @@ enum ZhipuVisionItineraryService {
               "locationMode": "单地点|起终点",
               "placeName": "单地点名称",
               "placeAddress": "单地点详细地址",
-              "transport": "car|walk|ride|bus|train|flight",
               "origin": "出发位置",
               "originAddress": "出发地详细地址",
               "destination": "到达位置",
               "destinationAddress": "目的地详细地址",
-              "distanceText": "路程或时长",
               "reservationInfo": "航班号、车次、房型或订单信息",
               "cost": 0,
               "note": "补充说明",
@@ -1010,7 +997,7 @@ enum ZhipuVisionItineraryService {
         """
         你是旅行 App 的单条截图录入助手。请综合理解所有图片，它们共同描述同一个安排或想去的地点。当前参考日期为 \(formattedReferenceDate(referenceDate))，时区为 Asia/Shanghai。
 
-        不要只做逐行 OCR；根据布局判断字段归属。不要返回 days 数组，不要拆成多条。导航截图中的目的地、路程和时长必须分别放入对应地点与 distanceText 字段。
+        不要只做逐行 OCR；根据布局判断字段归属。不要返回 days 数组，不要拆成多条。导航截图只提取明确的地点信息，不生成前往方式或路程字段。
         \(singleItemProtocolInstructions(purpose: purpose))
         """
     }
@@ -1021,7 +1008,7 @@ enum ZhipuVisionItineraryService {
         switch purpose {
         case .itinerary:
             return """
-            这是“行程安排”录入协议 itinerary_item_v2。需要时间、预约、花费和路程；未出现的字段用 null、空字符串或 0，不要虚构。只输出 JSON：
+            这是“行程安排”录入协议 itinerary_item_v2。需要时间、预约和花费；未出现的字段用 null、空字符串或 0，不要虚构。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
             {
               "schemaVersion": 2,
               "kind": "itinerary_item",
@@ -1037,8 +1024,6 @@ enum ZhipuVisionItineraryService {
                 "originAddress": "出发地详细地址",
                 "destination": "目的地实体名称",
                 "destinationAddress": "目的地详细地址",
-                "transport": "car|walk|ride|bus|train|flight",
-                "distanceText": "路程或时长",
                 "reservationInfo": "预约、航班、车次或订单信息",
                 "cost": 0,
                 "note": "补充说明",
@@ -1048,7 +1033,7 @@ enum ZhipuVisionItineraryService {
             """
         case .favorite:
             return """
-            这是“收藏地点”录入协议 favorite_item_v2。用户尚未计划出行，不得生成日期、开始时间、结束时间、执行状态或预约信息。重点提取地点、类型、想去理由、花费参考和路程信息。只输出 JSON：
+            这是“收藏地点”录入协议 favorite_item_v2。用户尚未计划出行，不得生成日期、开始时间、结束时间、执行状态或预约信息。重点提取地点、类型、想去理由和花费参考。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
             {
               "schemaVersion": 2,
               "kind": "favorite_item",
@@ -1062,8 +1047,6 @@ enum ZhipuVisionItineraryService {
                 "originAddress": "出发地详细地址",
                 "destination": "目的地实体名称",
                 "destinationAddress": "目的地详细地址",
-                "transport": "car|walk|ride|bus|train|flight",
-                "distanceText": "路程或时长",
                 "cost": 0,
                 "note": "想去理由或补充说明",
                 "sourceText": "支持判断的用户原文"
@@ -1173,6 +1156,8 @@ private struct ErrorEnvelope: Decodable {
 }
 
 private struct JourneyPayload: Decodable {
+    let title: String?
+    let destination: String?
     let schemaVersion: Int?
     let kind: String?
     let days: [JourneyDayPayload]
@@ -1202,12 +1187,10 @@ private struct JourneyItemPayload: Decodable {
     let locationMode: String?
     let placeName: String?
     let placeAddress: String?
-    let transport: String?
     let origin: String?
     let originAddress: String?
     let destination: String?
     let destinationAddress: String?
-    let distanceText: String?
     let reservationInfo: String?
     let cost: Double?
     let note: String?
@@ -1215,8 +1198,8 @@ private struct JourneyItemPayload: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case title, category, startAt, endAt, address, locationMode, placeName, placeAddress
-        case transport, origin, originAddress, destination, destinationAddress
-        case distanceText, reservationInfo, cost, note, sourceText
+        case origin, originAddress, destination, destinationAddress
+        case reservationInfo, cost, note, sourceText
     }
 
     init(from decoder: Decoder) throws {
@@ -1229,12 +1212,10 @@ private struct JourneyItemPayload: Decodable {
         locationMode = try container.decodeIfPresent(String.self, forKey: .locationMode)
         placeName = try container.decodeIfPresent(String.self, forKey: .placeName)
         placeAddress = try container.decodeIfPresent(String.self, forKey: .placeAddress)
-        transport = try container.decodeIfPresent(String.self, forKey: .transport)
         origin = try container.decodeIfPresent(String.self, forKey: .origin)
         originAddress = try container.decodeIfPresent(String.self, forKey: .originAddress)
         destination = try container.decodeIfPresent(String.self, forKey: .destination)
         destinationAddress = try container.decodeIfPresent(String.self, forKey: .destinationAddress)
-        distanceText = try container.decodeIfPresent(String.self, forKey: .distanceText)
         reservationInfo = try container.decodeIfPresent(String.self, forKey: .reservationInfo)
         note = try container.decodeIfPresent(String.self, forKey: .note)
         sourceText = try container.decodeIfPresent(String.self, forKey: .sourceText)

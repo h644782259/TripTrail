@@ -349,6 +349,11 @@ struct StoryDetailView: View {
                             }
                         ) {
                             entryCard(entry)
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    entryEditRequest = StoryEntryEditRequest(entry: entry, isNew: false)
+                                }
+                                .accessibilityHint("轻点编辑记录")
                         }
                     }
                     Button { addEntry(to: day) } label: {
@@ -575,27 +580,27 @@ struct StoryDetailView: View {
             }
 
             ForEach(entry.locationTargets) { target in
-                Button {
-                    entryNavigationRequest = StoryNavigationRequest(entry: entry, target: target)
-                } label: {
-                    HStack(alignment: .top, spacing: 7) {
-                        Image(systemName: target.role == .origin ? "location.circle" : "mappin.circle.fill")
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(target.role.displayName)：\(target.displayName)")
-                            let address = target.address.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if !address.isEmpty, address != target.displayName {
-                                Text(address)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Button {
+                            entryNavigationRequest = StoryNavigationRequest(entry: entry, target: target)
+                        } label: {
+                            Label("\(target.role.displayName)：\(target.displayName)", systemImage: target.role == .origin ? "location.circle" : "mappin.circle.fill")
+                                .font(.subheadline).foregroundStyle(Color.tripLake)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("可选择高德地图、小红书或抖音")
+                        LocationCopyButton(text: target.displayName)
+                    }
+                    let address = target.address.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !address.isEmpty, address != target.displayName {
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Text(address).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
                     }
-                    .font(.subheadline)
-                    .foregroundStyle(Color.tripLake)
                 }
-                .buttonStyle(.plain)
-                .accessibilityHint("可选择高德地图、小红书或抖音")
             }
 
             StoryEntryMediaGallery(entry: entry) { media in
@@ -625,6 +630,8 @@ struct StoryDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.leading)
                         .padding(.top, 6)
                 } label: {
                     Label("来自原旅程", systemImage: "link")

@@ -296,7 +296,7 @@ struct SettingsView: View {
             do {
                 let result = try await DataBackupService.makeBackupPackage(from: modelContext)
                 preparedBackupMediaCount = result.mediaCount
-                let filename = "TripTrail-Backup-\(Self.backupDateFormatter.string(from: Date())).triptrailbackup"
+                let filename = "旅迹-完整备份.triptrailbackup"
                 let namedURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
                 try FileManager.default.moveItem(at: result.url, to: namedURL)
                 backupExportRequest = BackupExportRequest(url: namedURL)
@@ -469,8 +469,7 @@ struct SettingsView: View {
 
         let train = sampleItem(
             title: "高铁前往杭州", category: .transport,
-            start: at(8, 0, on: firstDate), end: at(9, 5, on: firstDate), order: 0, day: arrivalDay,
-            transport: .train, distance: "高铁 1 小时 5 分", duration: 65,
+            start: at(8, 0, on: firstDate), end: at(9, 5, on: firstDate), order: 0, day: arrivalDay, duration: 65,
             reservation: "G7311 · 08车12A", cost: 73,
             note: "提前 30 分钟到站，抵达后从东广场出站。"
         )
@@ -483,8 +482,7 @@ struct SettingsView: View {
         let hotel = sampleItem(
             title: "办理酒店入住", category: .hotel,
             start: at(10, 0, on: firstDate), end: at(10, 30, on: firstDate), order: 1, day: arrivalDay,
-            place: "杭州西湖湖滨酒店", address: "杭州市上城区湖滨路",
-            transport: .bus, distance: "地铁 1 号线·龙翔桥站", duration: 30,
+            place: "杭州西湖湖滨酒店", address: "杭州市上城区湖滨路", duration: 30,
             reservation: "大床房 · 含早", cost: 688,
             note: "先寄存行李，14:00 后取房卡。"
         )
@@ -492,7 +490,7 @@ struct SettingsView: View {
         let packing = sampleItem(
             title: "整理随身物品", category: .other,
             start: at(10, 40, on: firstDate), end: at(11, 0, on: firstDate), order: 2, day: arrivalDay,
-            place: "杭州西湖湖滨酒店", transport: .walk, distance: "酒店内", duration: 20,
+            place: "杭州西湖湖滨酒店", duration: 20,
             reservation: "", cost: 0,
             note: "只带相机、雨伞和充电宝，大件行李留在酒店。"
         )
@@ -501,8 +499,7 @@ struct SettingsView: View {
         let bridge = sampleItem(
             title: "沿白堤看西湖晨光", category: .attraction,
             start: at(7, 30, on: today), end: at(9, 0, on: today), order: 0, day: lakeDay,
-            place: "断桥残雪", address: "杭州市西湖区白堤东端",
-            transport: .walk, distance: "步行 1.8 公里", duration: 90,
+            place: "断桥残雪", address: "杭州市西湖区白堤东端", duration: 90,
             reservation: "无需预约", cost: 0,
             note: "从断桥慢慢走到平湖秋月，清晨人少，适合拍湖面反光。"
         )
@@ -512,8 +509,7 @@ struct SettingsView: View {
         let lunch = sampleItem(
             title: "品尝杭帮菜", category: .restaurant,
             start: at(11, 30, on: today), end: at(13, 0, on: today), order: 1, day: lakeDay,
-            place: "楼外楼（孤山店）", address: "杭州市西湖区孤山路30号",
-            transport: .walk, distance: "步行 900 米", duration: 90,
+            place: "楼外楼（孤山店）", address: "杭州市西湖区孤山路30号", duration: 90,
             reservation: "12:00 · 2人 · 临窗位", cost: 328,
             note: "尝试西湖醋鱼和龙井虾仁，用餐后可在孤山稍作休息。"
         )
@@ -523,8 +519,7 @@ struct SettingsView: View {
         let currentWalk = sampleItem(
             title: "湖畔自由漫步", category: .attraction,
             start: currentWalkStart, end: currentWalkEnd, order: 2, day: lakeDay,
-            place: "曲院风荷", address: "杭州市西湖区北山街89号",
-            transport: .walk, distance: "环湖步行约 2.4 公里", duration: 90,
+            place: "曲院风荷", address: "杭州市西湖区北山街89号", duration: 90,
             reservation: "", cost: 0,
             note: "这段安排示范“进行中”状态，状态会随当前时间自动更新。"
         )
@@ -532,8 +527,7 @@ struct SettingsView: View {
         let sunset = sampleItem(
             title: "湖滨散步与拍照", category: .special,
             start: lakesideStart, end: endOfToday, order: 3, day: lakeDay,
-            place: "集贤亭", address: "杭州市上城区湖滨路",
-            transport: .ride, distance: "骑行约 3.2 公里", duration: 60,
+            place: "集贤亭", address: "杭州市上城区湖滨路", duration: 60,
             reservation: "日落前 30 分钟到达", cost: 15,
             note: "沿湖滨慢慢走，记录城市灯光与湖面；如果下雨就改成室内散步。"
         )
@@ -543,23 +537,20 @@ struct SettingsView: View {
         let teaGarden = sampleItem(
             title: "漫步龙井村茶园", category: .special,
             start: at(9, 0, on: lastDate), end: at(11, 30, on: lastDate), order: 0, day: teaDay,
-            place: "龙井村", address: "杭州市西湖区龙井村",
-            transport: .car, distance: "驾车约 11 公里", duration: 150,
+            place: "龙井村", address: "杭州市西湖区龙井村", duration: 150,
             reservation: "茶室 09:30", cost: 120,
             note: "沿十里琅珰走一小段，穿防滑的鞋，留意山间天气。"
         )
         let shopping = sampleItem(
             title: "挑选杭州伴手礼", category: .other,
             start: at(14, 0, on: lastDate), end: at(15, 0, on: lastDate), order: 1, day: teaDay,
-            place: "河坊街", address: "杭州市上城区河坊街",
-            transport: .bus, distance: "公交约 35 分钟", duration: 60,
+            place: "河坊街", address: "杭州市上城区河坊街", duration: 60,
             reservation: "", cost: 180,
             note: "茶叶和桂花糕控制在一个手提袋内。"
         )
         let station = sampleItem(
             title: "前往杭州东站", category: .transport,
-            start: at(16, 0, on: lastDate), end: at(16, 45, on: lastDate), order: 2, day: teaDay,
-            transport: .bus, distance: "地铁约 35 分钟", duration: 45,
+            start: at(16, 0, on: lastDate), end: at(16, 45, on: lastDate), order: 2, day: teaDay, duration: 45,
             reservation: "G7590 · 17:30 开车", cost: 6,
             note: "提前 40 分钟到站，进站前确认检票口。"
         )
@@ -586,8 +577,7 @@ struct SettingsView: View {
         day: TripDay,
         place: String = "",
         address: String = "",
-        transport: TransportMode,
-        distance: String,
+
         duration: Int,
         reservation: String,
         cost: Double,
@@ -598,8 +588,7 @@ struct SettingsView: View {
         item.placeName = place
         item.placeAddress = address
         item.address = address
-        item.transport = transport
-        item.distanceText = distance
+
         item.playDurationMinutes = duration
         item.reservationInfo = reservation
         item.cost = cost

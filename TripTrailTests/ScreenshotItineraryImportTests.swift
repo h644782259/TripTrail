@@ -42,7 +42,7 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(start.minute, 0)
         XCTAssertEqual(end.year, 2026)
         XCTAssertEqual(end.month, 9)
-        XCTAssertEqual(end.day, 26)
+        XCTAssertEqual(end.day, 25)
         XCTAssertEqual(end.hour, 12)
         XCTAssertEqual(end.minute, 0)
     }
@@ -75,8 +75,6 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(draft.locationMode, .single)
         XCTAssertEqual(draft.placeName, "深圳北站（西进站口）")
         XCTAssertEqual(draft.address, "")
-        XCTAssertEqual(draft.transport, .car)
-        XCTAssertEqual(draft.distanceText, "4.4 公里 · 11 分钟")
         XCTAssertEqual(draft.travelDurationMinutes, 11)
         XCTAssertEqual(draft.note, "夜间宽敞大路")
         XCTAssertEqual(Int(draft.endTime.timeIntervalSince(draft.startTime) / 60), 11)
@@ -109,8 +107,8 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         let end = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: draft.endTime)
         XCTAssertEqual(start.day, 25)
         XCTAssertEqual(start.hour, 11)
-        XCTAssertEqual(end.day, 26)
-        XCTAssertEqual(end.hour, 10)
+        XCTAssertEqual(end.day, 25)
+        XCTAssertEqual(end.hour, 12)
     }
 
     func testParsesUserEnteredNavigationTextWithoutWhitespaceBeforeDuration() throws {
@@ -124,7 +122,6 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(draft.title, "前往深圳北站（西进站口）")
         XCTAssertEqual(draft.placeName, "深圳北站（西进站口）")
         XCTAssertEqual(draft.address, "")
-        XCTAssertEqual(draft.distanceText, "4.4 公里 · 11 分钟")
     }
 
     func testParsesSingleArrangementFieldsForSmartPrefill() throws {
@@ -196,7 +193,6 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertTrue(draft.days[3].items.contains { $0.placeName == "红海子" })
         XCTAssertTrue(draft.days[4].items.contains { $0.placeName == "泸定桥" })
         XCTAssertFalse(draft.days[4].note.contains("自驾路况"))
-        XCTAssertEqual(draft.days[0].items.first?.distanceText, "200 公里 · 4.5–5 小时")
     }
 
     func testParsesChineseNumberedAndCompactDayHeadings() throws {
@@ -481,8 +477,7 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(firstHotel.address, "上海长宁区空港一路366号")
         XCTAssertEqual(calendar.component(.day, from: firstHotel.startTime), 25)
         XCTAssertEqual(calendar.component(.hour, from: firstHotel.startTime), 14)
-        XCTAssertEqual(calendar.component(.day, from: firstHotel.endTime), 26)
-        XCTAssertEqual(calendar.component(.hour, from: firstHotel.endTime), 12)
+        XCTAssertEqual(firstHotel.endTime, firstHotel.startTime.addingTimeInterval(3600))
 
         let september27Hotel = try XCTUnwrap(draft.days[1].items.first)
         XCTAssertEqual(september27Hotel.category, .hotel)
@@ -515,7 +510,7 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(calendar.component(.day, from: trip.endDate), 28)
     }
 
-    func testJourneyImportCreatesAllDaysForEmptyTripAndAppendsAfterExistingDays() throws {
+    func testJourneyImportCreatesAllDaysAndReusesExistingEmptyDays() throws {
         let calendar = Calendar(identifier: .gregorian)
         let start = calendar.date(from: DateComponents(year: 2026, month: 9, day: 1))!
         let draft = try ScreenshotItineraryImportService.parseJourneyInputText(
@@ -551,8 +546,8 @@ final class ScreenshotItineraryImportTests: XCTestCase {
             attachSourceImages: false,
             calendar: calendar
         )
-        XCTAssertEqual(appended.createdDays.count, 5)
-        XCTAssertEqual(existingTrip.sortedDays.count, 8)
+        XCTAssertEqual(appended.createdDays.count, 2)
+        XCTAssertEqual(existingTrip.sortedDays.count, 5)
         XCTAssertEqual(appended.createdDays.first?.sortOrder, 3)
         XCTAssertEqual(
             calendar.dateComponents([.day], from: start, to: appended.createdDays.first!.date).day,
@@ -560,11 +555,11 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         )
         XCTAssertEqual(
             calendar.dateComponents([.day], from: start, to: appended.createdDays.last!.date).day,
-            7
+            4
         )
     }
 
-    func testJourneyImportRepairsExistingGapBeforeAppending() throws {
+    func testJourneyImportRepairsExistingGapAndReusesFirstEmptyDay() throws {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
         let start = calendar.date(from: DateComponents(year: 2026, month: 8, day: 25))!
@@ -580,8 +575,9 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         ]
 
         let preview = JourneyImportApplyService.preview(draft, for: trip, calendar: calendar)
-        let expectedThirdDate = calendar.date(byAdding: .day, value: 2, to: start)!
-        XCTAssertEqual(preview.dates, [expectedThirdDate])
+        let expectedEndDate = calendar.date(byAdding: .day, value: 1, to: start)!
+        XCTAssertEqual(preview.dates, [start])
+        XCTAssertEqual(preview.reusedEmptyDayCount, 1)
 
         let result = JourneyImportApplyService.append(
             draft,
@@ -590,10 +586,10 @@ final class ScreenshotItineraryImportTests: XCTestCase {
             calendar: calendar
         )
 
-        let expectedDates = (0..<3).map { calendar.date(byAdding: .day, value: $0, to: start)! }
+        let expectedDates = (0..<2).map { calendar.date(byAdding: .day, value: $0, to: start)! }
         XCTAssertEqual(trip.sortedDays.map(\.date), expectedDates)
-        XCTAssertEqual(result.createdDays.map(\.date), [expectedThirdDate])
-        XCTAssertEqual(trip.endDate, expectedThirdDate)
+        XCTAssertTrue(result.createdDays.isEmpty)
+        XCTAssertEqual(trip.endDate, expectedEndDate)
     }
 
     func testParsesMultipleTimedArrangementsOnOneDateWithSingleAndRouteLocations() throws {
@@ -637,6 +633,58 @@ final class ScreenshotItineraryImportTests: XCTestCase {
         XCTAssertEqual(calendar.component(.hour, from: transfer.endTime), 15)
     }
 
+    func testDatedImportReplacesBlankScheduleButSingleDayImportKeepsOtherDays() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let start = calendar.startOfDay(for: Date())
+        let importedDate = calendar.date(byAdding: .day, value: 10, to: start)!
+        var draft = try ScreenshotItineraryImportService.parseJourneyInputText("Day 1: 西湖", referenceDate: start)
+        draft.days[0].date = importedDate
+        func blankTrip() -> Trip {
+            let trip = Trip(title: "杭州", destination: "杭州", startDate: start, endDate: start)
+            trip.days = (0..<3).map { TripDay(date: calendar.date(byAdding: .day, value: $0, to: start)!, title: "", sortOrder: $0, trip: trip) }
+            return trip
+        }
+        let trip = blankTrip()
+        let firstID = trip.sortedDays[0].id
+        let result = JourneyImportApplyService.append(draft, to: trip, attachSourceImages: false, calendar: calendar)
+        XCTAssertEqual(result.removedEmptyDays.count, 2)
+        XCTAssertEqual(trip.days.count, 1)
+        XCTAssertEqual(trip.days[0].id, firstID)
+        XCTAssertEqual(trip.startDate, importedDate)
+        XCTAssertEqual(trip.endDate, importedDate)
+        let other = blankTrip()
+        draft.days[0].date = other.sortedDays[1].date
+        let scoped = JourneyImportApplyService.append(draft, to: other, attachSourceImages: false, replaceEmptySchedule: false, calendar: calendar)
+        XCTAssertTrue(scoped.removedEmptyDays.isEmpty)
+        XCTAssertEqual(other.days.count, 3)
+        XCTAssertEqual(other.sortedDays[1].items.count, 1)
+    }
+
+    func testRelativeImportFillsEmptyDaysBeforeAppendingAndPreservesOccupiedDay() throws {
+        let calendar = Calendar(identifier: .gregorian)
+        let start = calendar.startOfDay(for: Date())
+        let trip = Trip(title: "测试", destination: "杭州", startDate: start, endDate: start)
+        for index in 0..<3 {
+            let date = calendar.date(byAdding: .day, value: index, to: start)!
+            trip.days.append(TripDay(date: date, title: "", sortOrder: index, trip: trip))
+        }
+        let busy = trip.days[1]
+        let existing = ItineraryItem(title: "原安排", category: .other, startTime: busy.date, endTime: busy.date.addingTimeInterval(3600), sortOrder: 0)
+        existing.day = busy
+        busy.items = [existing]
+        let draft = try ScreenshotItineraryImportService.parseJourneyInputText("Day 1: 西湖\nDay 2: 灵隐寺\nDay 3: 龙井村", referenceDate: start)
+        let before = trip.days.map(\.id)
+        let result = JourneyImportApplyService.append(draft, to: trip, attachSourceImages: false, calendar: calendar)
+        XCTAssertEqual(result.createdDays.count, 1)
+        XCTAssertEqual(trip.sortedDays.count, 4)
+        XCTAssertEqual(Array(trip.sortedDays.prefix(3)).map(\.id), before)
+        XCTAssertEqual(busy.items.map(\.title), ["原安排"])
+        XCTAssertEqual(trip.sortedDays.map { $0.items.count }, [1, 1, 1, 1])
+        for item in result.createdItems {
+            XCTAssertTrue(calendar.isDate(item.startTime, inSameDayAs: item.day!.date))
+        }
+    }
+
     func testJourneyImportMergesIntoExistingDateWithoutReplacingExistingContent() {
         let calendar = Calendar(identifier: .gregorian)
         let date = calendar.date(from: DateComponents(year: 2026, month: 9, day: 1))!
@@ -661,8 +709,6 @@ final class ScreenshotItineraryImportTests: XCTestCase {
             endTime: calendar.date(bySettingHour: 13, minute: 0, second: 0, of: date)!,
             address: "",
             placeName: "南京大牌档",
-            transport: .walk,
-            distanceText: "",
             reservationInfo: "",
             cost: 120,
             note: "识别安排备注"

@@ -70,6 +70,7 @@ struct JourneyDaySeed {
 }
 
 struct JourneyPointSkeleton {
+    var isTimePending: Bool = false
     let sourceID: UUID
     let title: String
     let category: PlaceCategory
@@ -84,8 +85,6 @@ struct JourneyPointSkeleton {
     let destinationName: String
     let destinationAddress: String
     let supplementalInfo: String
-    let transport: TransportMode
-    let distanceText: String
     let cost: Double
     let sortOrder: Int
 
@@ -106,13 +105,6 @@ struct JourneyPointSkeleton {
         let trimmedAddress = Self.cleanedPhrase(address)
         if !trimmedAddress.isEmpty {
             parts.append("地址：\(trimmedAddress)")
-        }
-
-        let trimmedDistance = Self.cleanedPhrase(distanceText)
-        if trimmedDistance.isEmpty {
-            parts.append("前往方式：\(transport.rawValue)")
-        } else {
-            parts.append("\(transport.rawValue)前往，路程 \(trimmedDistance)")
         }
 
         if cost > 0 {
@@ -356,9 +348,25 @@ enum JourneyHierarchyService {
         points.sorted { $0.sortOrder < $1.sortOrder }
     }
 
+    static func moveKeepingTime(_ item: ItineraryItem, to target: TripDay) {
+        guard let source = item.day, source.id != target.id else { return }
+        let duration = max(60, item.endTime.timeIntervalSince(item.startTime))
+        item.startTime = DateRangeDateService.applyingDay(target.date, to: item.startTime, preservingTime: true)
+        item.endTime = item.startTime.addingTimeInterval(duration)
+        source.items.removeAll { $0.id == item.id }
+        item.day = target
+        item.sortOrder = target.items.count
+        target.items.append(item)
+        normalizeItems(source.items)
+        normalizeItems(target.items)
+        item.completeIfElapsed()
+    }
+
     static func sortedItems(_ items: [ItineraryItem]) -> [ItineraryItem] {
         items.sorted { lhs, rhs in
-            lhs.startTime == rhs.startTime ? lhs.id.uuidString < rhs.id.uuidString : lhs.startTime < rhs.startTime
+            if lhs.isTimePending != rhs.isTimePending { return !lhs.isTimePending }
+            if lhs.isTimePending { return lhs.sortOrder == rhs.sortOrder ? lhs.id.uuidString < rhs.id.uuidString : lhs.sortOrder < rhs.sortOrder }
+            return lhs.startTime == rhs.startTime ? lhs.id.uuidString < rhs.id.uuidString : lhs.startTime < rhs.startTime
         }
     }
 
@@ -434,26 +442,8 @@ enum JourneyHierarchyService {
             return ItineraryMoveResult(didMove: true, timeAdjustments: [])
         }
 
-        let slotOwners = (targetDay.sortedItems + [item]).sorted {
-            timeSlot(for: $0, calendar: calendar) < timeSlot(for: $1, calendar: calendar)
-        }
-        let targetSlots = slotOwners.map { timeSlot(for: $0, calendar: calendar) }
-        var targetItems = targetDay.sortedItems
-        guard let targetIndex = targetItems.firstIndex(where: { $0.id == targetItemID }) else { return .unchanged }
-        sourceDay.items.removeAll { $0.id == itemID }
-        item.day = targetDay
-        targetDay.items.append(item)
-        targetItems.insert(item, at: targetIndex)
-        normalizeSortOrder(sourceDay.sortedItems)
-        normalizeSortOrder(targetItems)
-        let adjustments = reconcileTimeSlots(
-            targetSlots,
-            withOriginalOwners: slotOwners.map(\.id),
-            to: targetItems,
-            on: targetDay.date,
-            calendar: calendar
-        )
-        return ItineraryMoveResult(didMove: true, timeAdjustments: adjustments)
+        moveKeepingTime(item, to: targetDay)
+        return ItineraryMoveResult(didMove: true, timeAdjustments: [])
     }
 
     @discardableResult
@@ -523,23 +513,8 @@ enum JourneyHierarchyService {
             return ItineraryMoveResult(didMove: true, timeAdjustments: [])
         }
 
-        let slotOwners = (targetDay.sortedItems + [item]).sorted {
-            timeSlot(for: $0, calendar: calendar) < timeSlot(for: $1, calendar: calendar)
-        }
-        let targetSlots = slotOwners.map { timeSlot(for: $0, calendar: calendar) }
-        sourceDay.items.removeAll { $0.id == itemID }
-        item.day = targetDay
-        targetDay.items.append(item)
-        normalizeSortOrder(sourceDay.sortedItems)
-        normalizeSortOrder(targetDay.sortedItems)
-        let adjustments = reconcileTimeSlots(
-            targetSlots,
-            withOriginalOwners: slotOwners.map(\.id),
-            to: targetDay.sortedItems,
-            on: targetDay.date,
-            calendar: calendar
-        )
-        return ItineraryMoveResult(didMove: true, timeAdjustments: adjustments)
+        moveKeepingTime(item, to: targetDay)
+        return ItineraryMoveResult(didMove: true, timeAdjustments: [])
     }
 
     @discardableResult
@@ -585,8 +560,8 @@ enum JourneyHierarchyService {
         to reorderedItems: [ItineraryItem],
         calendar: Calendar
     ) {
-        let slots = originalItems.map { timeSlot(for: $0, calendar: calendar) }
-        for (index, item) in reorderedItems.enumerated() where !item.isFixedTime {
+        let slots = originalItems.filter { !$0.isTimePending }.map { timeSlot(for: $0, calendar: calendar) }
+        for (index, item) in reorderedItems.filter({ !$0.isTimePending }).enumerated() where !item.isFixedTime {
             guard let start = startDate(for: slots[index], on: item.day?.date ?? item.startTime, calendar: calendar) else { continue }
             let duration = max(60, item.endTime.timeIntervalSince(item.startTime))
             item.startTime = start
@@ -836,6 +811,7 @@ extension StoryEntry: JourneyPointNode {}
 extension ItineraryItem {
     var footprintSkeleton: JourneyPointSkeleton {
         JourneyPointSkeleton(
+            isTimePending: isTimePending,
             sourceID: id,
             title: title,
             category: category,
@@ -852,8 +828,6 @@ extension ItineraryItem {
             destinationName: destinationName,
             destinationAddress: destinationAddress,
             supplementalInfo: note,
-            transport: transport,
-            distanceText: distanceText,
             cost: cost,
             sortOrder: sortOrder
         )
@@ -870,9 +844,9 @@ extension StoryEntry {
         sourceItemID = skeleton.sourceID
         title = skeleton.title
         category = skeleton.category
-        startTime = skeleton.startTime
-        endTime = skeleton.endTime
-        timeLabel = "\(skeleton.startTime.timeText)～\(skeleton.endTime.timeText)"
+        startTime = skeleton.isTimePending ? nil : skeleton.startTime
+        endTime = skeleton.isTimePending ? nil : skeleton.endTime
+        timeLabel = skeleton.isTimePending ? "时间待定" : "\(skeleton.startTime.timeText)～\(skeleton.endTime.timeText)"
         sourceMemoryPrefill = skeleton.sourceFootprintDetails
         if !hasUserMemory {
             note = ""

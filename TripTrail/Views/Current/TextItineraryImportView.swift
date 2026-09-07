@@ -1,19 +1,27 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
 struct TextItineraryImportView: View {
     @Environment(\.dismiss) private var dismiss
+    let onCreated: ((Trip) -> Void)?
+    let isCreatingTrip: Bool
     let trip: Trip
     let referenceDate: Date
     let targetDay: TripDay?
 
+    @State private var imagePreviews: [UIImage?] = []
+    @State private var imageMode = false
+    @State private var imageItems: [PhotosPickerItem] = []
     @State private var inputText = ""
     @State private var parsedDraft: ItineraryJourneyDraft?
     @State private var importError: String?
     @State private var isRecognizing = false
     @FocusState private var isInputFocused: Bool
 
-    init(trip: Trip, referenceDate: Date, targetDay: TripDay? = nil) {
+    init(trip: Trip, referenceDate: Date, targetDay: TripDay? = nil, isCreatingTrip: Bool = false, onCreated: ((Trip) -> Void)? = nil) {
+        self.onCreated = onCreated
+        self.isCreatingTrip = isCreatingTrip
         self.trip = trip
         self.referenceDate = referenceDate
         self.targetDay = targetDay
@@ -26,6 +34,8 @@ struct TextItineraryImportView: View {
                     trip: trip,
                     draft: parsedDraft,
                     targetDay: targetDay,
+                    isCreatingTrip: isCreatingTrip,
+                    onCreated: onCreated,
                     onBack: { self.parsedDraft = nil },
                     onRetryRecognition: {
                         self.parsedDraft = nil
@@ -42,20 +52,63 @@ struct TextItineraryImportView: View {
         TripNavigationStack {
             Form {
                 Section {
-                    HStack(spacing: 14) {
-                        recognitionCapability(targetDay == nil ? "多天行程" : "当天安排", symbol: "calendar")
-                        recognitionCapability("时间区间", symbol: "clock")
-                        recognitionCapability("起终点", symbol: "arrow.left.arrow.right")
-                    }
-                    .frame(maxWidth: .infinity)
-                } footer: {
-                    Text("识别后会先展示完整结果，确认后才会保存。")
+                    Picker("录入方式", selection: $imageMode) {
+                        Text("文字").tag(false)
+                        Text("截图").tag(true)
+                    }.pickerStyle(.segmented)
                 }
-
+                if imageMode {
+                    Section("安排截图") {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if imageItems.isEmpty {
+                                Text(targetDay == nil ? "上传多天行程，可包含多个安排" : "上传一天的行程，可包含多个安排")
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                            }
+                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+                                ForEach(imageItems.indices, id: \.self) { index in
+                                    Color.clear.aspectRatio(1, contentMode: .fit)
+                                        .overlay {
+                                            if index < imagePreviews.count, let image = imagePreviews[index] {
+                                                Image(uiImage: image).resizable().scaledToFill()
+                                            } else { ProgressView() }
+                                        }
+                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                                        .overlay(alignment: .topTrailing) {
+                                            Button { imageItems.remove(at: index) } label: {
+                                                Image(systemName: "xmark.circle.fill").symbolRenderingMode(.palette)
+                                                    .foregroundStyle(.white, .black.opacity(0.55))
+                                                    .frame(width: 36, height: 36)
+                                            }.buttonStyle(.plain).accessibilityLabel("移除截图")
+                                        }
+                                }
+                                if imageItems.count < (targetDay == nil ? 6 : 3) {
+                                    PhotosPicker(selection: $imageItems, maxSelectionCount: targetDay == nil ? 6 : 3, matching: .images) {
+                                        RoundedRectangle(cornerRadius: 12).fill(Color.tripLake.opacity(0.045))
+                                            .aspectRatio(1, contentMode: .fit)
+                                            .overlay { RoundedRectangle(cornerRadius: 12).stroke(Color.tripLake.opacity(0.52), style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])) }
+                                            .overlay { Image(systemName: "plus").font(.title2).foregroundStyle(Color.tripLake) }
+                                    }.buttonStyle(.plain).accessibilityLabel("添加截图")
+                                }
+                            }
+                        }
+                        .listRowSeparator(.hidden)
+                        .task(id: imageItems) {
+                            imagePreviews = []
+                            var previews: [UIImage?] = []
+                            for item in imageItems {
+                                if let data = try? await item.loadTransferable(type: Data.self), let image = UIImage(data: data) {
+                                    previews.append(image)
+                                } else { previews.append(nil) }
+                            }
+                            guard !Task.isCancelled else { return }
+                            imagePreviews = previews
+                        }
+                    }
+                } else {
                 Section {
                     ZStack(alignment: .topLeading) {
                         if inputText.isEmpty {
-                            Text("粘贴一整段旅程文本\n支持 Day 1、Day 2…或第1天、第2天…\n也可以只输入一段安排")
+                            Text(targetDay == nil ? "粘贴多天行程，可包含多个安排" : "粘贴一天的行程，可包含多个安排")
                                 .foregroundStyle(.tertiary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 8)
@@ -70,34 +123,14 @@ struct TextItineraryImportView: View {
                     .frame(height: 230)
                     .clipped()
 
-                    HStack {
-                        Button {
-                            pasteFromClipboard()
-                        } label: {
-                            Label("粘贴剪贴板", systemImage: "doc.on.clipboard")
-                        }
-
-                        Button {
-                            inputText = Self.exampleText
-                            isInputFocused = false
-                        } label: {
-                            Label("填入示例", systemImage: "text.badge.plus")
-                        }
-
-                        Spacer(minLength: 8)
-                        if !inputText.isEmpty {
-                            Button("清空", role: .destructive) { inputText = "" }
-                                .font(.caption)
-                        }
-                    }
                 } header: {
-                    Text("粘贴或输入")
-                } footer: {
-                    Text(targetDay == nil ? "会按日期合并或接续到当前旅程。" : "识别结果只会添加到当前选中的这一天。")
+                    Text("安排内容")
+                }
                 }
             }
+            .disabled(isRecognizing)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle(targetDay == nil ? "录入整段旅程" : "录入当天")
+            .navigationTitle("智能录入")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -114,7 +147,7 @@ struct TextItineraryImportView: View {
                 } label: {
                     HStack {
                         if isRecognizing { ProgressView().controlSize(.small) }
-                        Label(isRecognizing ? "识别中…" : "识别内容", systemImage: "wand.and.stars")
+                        Label(isRecognizing ? "识别中…" : "开始识别", systemImage: "wand.and.stars")
                     }
                     .frame(maxWidth: .infinity)
                     .font(.headline)
@@ -134,7 +167,7 @@ struct TextItineraryImportView: View {
                 .buttonStyle(.plain)
                 .disabled(
                     isRecognizing
-                        || inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || trimmedInputIsEmpty
                 )
                 .padding(.horizontal)
                 .padding(.vertical, 10)
@@ -158,7 +191,7 @@ struct TextItineraryImportView: View {
     }
 
     private var trimmedInputIsEmpty: Bool {
-        inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        imageMode ? imageItems.isEmpty : inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func recognitionCapability(_ title: String, symbol: String) -> some View {
@@ -202,10 +235,25 @@ struct TextItineraryImportView: View {
         Task { @MainActor in
             defer { isRecognizing = false }
             do {
+                if imageMode {
+                    var images: [Data] = []
+                    var identifiers: [String] = []
+                    for item in imageItems {
+                        if let data = try await item.loadTransferable(type: Data.self) {
+                            images.append(data)
+                            if let id = item.itemIdentifier { identifiers.append(id) }
+                        }
+                    }
+                    guard !images.isEmpty else { throw ScreenshotItineraryImportError.unreadableImage }
+                    parsedDraft = try await SmartItineraryRecognitionService.recognizeJourney(
+                        imageDatas: images, referenceDate: referenceDate, sourceAssetIdentifiers: identifiers
+                    )
+                } else {
                 parsedDraft = try await SmartItineraryRecognitionService.recognizeJourneyText(
                     inputText,
                     referenceDate: referenceDate
                 )
+                }
             } catch {
                 importError = error.localizedDescription
             }

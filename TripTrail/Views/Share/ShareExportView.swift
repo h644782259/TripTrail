@@ -69,9 +69,9 @@ struct ShareCardData {
                 items: day.sortedItems.map {
                     ShareCardItem(
                         id: $0.id,
-                        time: "\($0.startTime.timeText)–\($0.endTime.timeText)",
+                        time: $0.timeRangeText,
                         title: $0.title,
-                        detail: [$0.locationSummary, $0.category.rawValue, $0.distanceText, $0.note]
+                        detail: [$0.locationSummary, $0.category.rawValue, $0.note]
                             .filter { !$0.isEmpty }
                             .joined(separator: " · "),
                         completed: $0.executionStatus == .completed,
@@ -159,6 +159,13 @@ private struct ShareScopeOption: Identifiable {
 }
 
 private enum ShareExportSource {
+    var fileTypeLabel: String {
+        switch self {
+        case .trip: return "旅程"
+        case .story: return "足迹"
+        }
+    }
+
     case trip(Trip)
     case story(TravelStory)
 
@@ -245,7 +252,7 @@ struct ShareExportView: View {
     @State private var coverImage: UIImage?
     @State private var photoImages: [String: UIImage] = [:]
     @State private var renderedImage: UIImage?
-    @State private var fileURL: URL?
+    @State private var showsImageShare = false
     @State private var isPreparingPortableFile = false
     @State private var showsPortableOptions = false
     @State private var portableShareItem: PortableShareItem?
@@ -274,8 +281,10 @@ struct ShareExportView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
 
-                    if let fileURL, let renderedImage {
-                        ShareLink(item: fileURL, preview: SharePreview(data.title, image: Image(uiImage: renderedImage))) {
+                    if renderedImage != nil {
+                        Button {
+                            showsImageShare = true
+                        } label: {
                             Label("分享精美长图", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
                         }
@@ -306,6 +315,12 @@ struct ShareExportView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
             .task(id: selectedScopeID) { await renderLongImage() }
+            .sheet(isPresented: $showsImageShare) {
+                if let renderedImage {
+                    // Share the image itself so receiving apps do not treat it as a document URL.
+                    SystemShareSheet(items: [renderedImage])
+                }
+            }
             .confirmationDialog("是否包含照片与视频？", isPresented: $showsPortableOptions, titleVisibility: .visible) {
                 let mediaCount = source.mediaCount(for: selectedScopeID)
                 Button("包含照片与视频（\(mediaCount)）") {
@@ -354,13 +369,13 @@ struct ShareExportView: View {
                 if includeMedia {
                     let result = try await source.portablePackage(for: currentData.scopeID)
                     let namedURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
+                        .appendingPathComponent("旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
                     try FileManager.default.copyItem(at: result.url, to: namedURL)
                     generatedURL = namedURL
                 } else {
                     let portableData = try source.portableData(for: currentData.scopeID)
                     let portableURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("旅迹收藏-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).triptrail")
+                        .appendingPathComponent("旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).triptrail")
                     try portableData.write(to: portableURL, options: .atomic)
                     generatedURL = portableURL
                 }
@@ -375,7 +390,6 @@ struct ShareExportView: View {
     @MainActor
     private func renderLongImage() async {
         renderedImage = nil
-        fileURL = nil
         coverImage = nil
         photoImages = [:]
         let currentData = data
@@ -406,22 +420,12 @@ struct ShareExportView: View {
                 data: currentData,
                 coverImage: loadedCover,
                 photoImages: loadedPhotos
-            ),
-            let png = image.pngData()
+            )
         else {
             message = "分享图生成失败，请稍后重试。"
             return
         }
-        let safeName = currentData.title.replacingOccurrences(of: "/", with: "-")
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("旅迹-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).png")
-        do {
-            try png.write(to: url, options: .atomic)
-            renderedImage = image
-            fileURL = url
-        } catch {
-            message = "分享文件保存失败：\(error.localizedDescription)"
-        }
+        renderedImage = image
     }
 
 }
@@ -636,7 +640,7 @@ private struct ShareCard: View {
                                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                                         .stroke(Color.tripLake.opacity(0.18), lineWidth: 1)
                                 }
-                                .shadow(color: Color.tripInk.opacity(0.075), radius: 8, y: 4)
+                                .shadow(color: Color.black.opacity(0.075), radius: 8, y: 4)
                             }
                         }
                     }

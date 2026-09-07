@@ -8,6 +8,17 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
         super.tearDown()
     }
 
+    func testRetiredRouteFieldsAreIgnoredEvenWithUnexpectedTypes() throws {
+        let content = #"{"schemaVersion":2,"kind":"itinerary_journey","title":"杭州周末","destination":"杭州","days":[{"items":[{"title":"游览西湖","category":"attraction","placeName":"西湖","transport":{"unexpected":true},"distanceText":["旧路程"],"routeInfo":42,"cost":80}]}]}"#
+        let journey = try ZhipuVisionItineraryService.decodeJourneyContent(content, referenceDate: Date())
+        let item = try XCTUnwrap(journey.days.first?.items.first)
+        XCTAssertEqual(journey.suggestedTitle, "杭州周末")
+        XCTAssertEqual(journey.suggestedDestination, "杭州")
+        XCTAssertEqual(item.title, "游览西湖")
+        XCTAssertEqual(item.placeName, "西湖")
+        XCTAssertEqual(item.cost, 80)
+    }
+
     func testLargeModelDefaultsFollowAPIKeyAvailability() {
         XCTAssertFalse(
             EnhancedRecognitionSettings.resolvedIsEnabled(
@@ -142,7 +153,7 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
 
         let firstDay = draft.days[0]
         XCTAssertEqual(firstDay.items.count, 2)
-        let outboundFlight = try XCTUnwrap(firstDay.items.first(where: { $0.transport == .flight }))
+        let outboundFlight = try XCTUnwrap(firstDay.items.first(where: { $0.category == .transport }))
         XCTAssertEqual(outboundFlight.title, "春秋航空 9C8932")
         XCTAssertEqual(outboundFlight.locationMode, .route)
         XCTAssertEqual(outboundFlight.originName, "广州 白云T3")
@@ -155,13 +166,11 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
 
         let firstHotel = try XCTUnwrap(firstDay.items.first(where: { $0.category == .hotel }))
         XCTAssertEqual(firstHotel.address, "上海长宁区空港一路366号")
-        XCTAssertEqual(calendar.component(.day, from: firstHotel.endTime), 26)
-        XCTAssertEqual(calendar.component(.hour, from: firstHotel.endTime), 12)
+        XCTAssertEqual(firstHotel.endTime, firstHotel.startTime.addingTimeInterval(3600))
 
         let secondHotel = try XCTUnwrap(draft.days[1].items.first)
         XCTAssertEqual(calendar.component(.hour, from: secondHotel.startTime), 14)
-        XCTAssertEqual(calendar.component(.day, from: secondHotel.endTime), 28)
-        XCTAssertEqual(calendar.component(.hour, from: secondHotel.endTime), 12)
+        XCTAssertEqual(secondHotel.endTime, secondHotel.startTime.addingTimeInterval(3600))
 
         let returnFlight = try XCTUnwrap(draft.days[2].items.first)
         XCTAssertEqual(returnFlight.title, "春秋航空 9C8917")
@@ -183,7 +192,6 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
 
         XCTAssertEqual(item.title, "东方明珠")
         XCTAssertEqual(item.category, .attraction)
-        XCTAssertEqual(item.transport, .walk)
         XCTAssertEqual(item.travelDurationMinutes, 120)
         XCTAssertEqual(item.address, "上海市浦东新区世纪大道1号")
     }
@@ -266,7 +274,6 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
         XCTAssertEqual(draft.days[0].items[0].title, "春秋航空9C8932")
         XCTAssertEqual(draft.days[0].items[0].originName, "广州 白云T3")
         XCTAssertEqual(draft.days[0].items[0].destinationName, "上海 虹桥T1")
-        XCTAssertEqual(draft.days[0].items[0].transport, .flight)
         XCTAssertEqual(draft.sourceAssetIdentifiers, ["asset"])
     }
 

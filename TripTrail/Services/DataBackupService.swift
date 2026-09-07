@@ -406,7 +406,7 @@ enum SharedJourneyService {
                                 category: entry.categoryRaw,
                                 time: entry.timeLabel,
                                 address: entry.previewLocationText,
-                                note: [entry.note, entry.routeInfo].filter { !$0.isEmpty }.joined(separator: " · ")
+                                note: entry.note
                             )
                         }
                     )
@@ -609,6 +609,7 @@ private struct TripRecord: Codable {
     let id: UUID
     let title: String
     let destination: String
+    let licensePlate: String?
     let startDate: Date
     let endDate: Date
     let note: String
@@ -626,6 +627,7 @@ private struct TripRecord: Codable {
             day.title.isEmpty ? trip.title : "\(trip.title) · \(day.title)"
         } ?? trip.title
         destination = trip.destination
+        licensePlate = trip.licensePlate
         startDate = selectedDay?.date ?? trip.startDate
         endDate = selectedDay?.date ?? trip.endDate
         note = selectedDay?.note ?? trip.note
@@ -642,6 +644,7 @@ private struct TripRecord: Codable {
     func makeModel() -> Trip {
         let trip = Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
         trip.id = id
+        trip.licensePlate = licensePlate ?? ""
         trip.createdAt = createdAt
         for dayRecord in days {
             let day = dayRecord.makeModel(trip: trip)
@@ -702,8 +705,8 @@ private struct ItineraryItemRecord: Codable {
     let originAddress: String?
     let destinationName: String?
     let destinationAddress: String?
-    let transportRaw: String
-    let distanceText: String
+    let transportRaw: String?
+    let distanceText: String?
     let playDurationMinutes: Int
     let reservationInfo: String
     let cost: Double
@@ -711,7 +714,10 @@ private struct ItineraryItemRecord: Codable {
     let executionStatusRaw: String?
     let isAutomaticCompletionOverridden: Bool?
     let isFixedTime: Bool?
+    let isTimePending: Bool?
+    let vouchers: [TravelVoucher]?
     let isFavorite: Bool?
+    let favoriteCity: String?
     let favoriteCreatedAt: Date?
     let sourceFavoriteID: UUID?
     let sortOrder: Int
@@ -760,8 +766,8 @@ private struct ItineraryItemRecord: Codable {
         originAddress = item.originAddress
         destinationName = item.destinationName
         destinationAddress = item.destinationAddress
-        transportRaw = item.transportRaw
-        distanceText = item.distanceText
+        transportRaw = nil
+        distanceText = nil
         playDurationMinutes = item.playDurationMinutes
         reservationInfo = item.reservationInfo
         cost = item.cost
@@ -769,7 +775,10 @@ private struct ItineraryItemRecord: Codable {
         executionStatusRaw = item.executionStatusRaw
         isAutomaticCompletionOverridden = item.isAutomaticCompletionOverridden
         isFixedTime = item.isFixedTime
+        isTimePending = item.isTimePending
+        vouchers = includeLocalMediaIdentifiers ? item.vouchers : nil
         isFavorite = item.isFavorite
+        favoriteCity = item.favoriteCity
         favoriteCreatedAt = item.favoriteCreatedAt
         sourceFavoriteID = item.sourceFavoriteID
         sortOrder = item.sortOrder
@@ -802,8 +811,8 @@ private struct ItineraryItemRecord: Codable {
         item.originAddress = originAddress ?? ""
         item.destinationName = destinationName ?? ""
         item.destinationAddress = destinationAddress ?? ""
-        item.transportRaw = transportRaw
-        item.distanceText = distanceText
+        item.transportRaw = transportRaw ?? TransportMode.car.rawValue
+        item.distanceText = distanceText ?? ""
         item.playDurationMinutes = playDurationMinutes
         item.reservationInfo = reservationInfo
         item.cost = cost
@@ -811,7 +820,10 @@ private struct ItineraryItemRecord: Codable {
         item.executionStatusRaw = executionStatusRaw ?? ""
         item.isAutomaticCompletionOverridden = isAutomaticCompletionOverridden ?? false
         item.isFixedTime = isFixedTime ?? false
+        item.isTimePending = isTimePending ?? false
+        item.vouchers = vouchers ?? []
         item.isFavorite = forceFavorite || (isFavorite ?? false)
+        item.favoriteCity = favoriteCity ?? ""
         item.favoriteCreatedAt = favoriteCreatedAt ?? Date()
         item.sourceFavoriteID = sourceFavoriteID
         item.day = day
@@ -983,7 +995,7 @@ private struct StoryEntryRecord: Codable {
     let destinationName: String?
     let destinationAddress: String?
     let transportRaw: String?
-    let routeInfo: String
+    let routeInfo: String?
     let cost: Double?
     let didPrefillSourceMemory: Bool?
     let sourceMemoryPrefill: String?
@@ -1042,8 +1054,8 @@ private struct StoryEntryRecord: Codable {
         originAddress = entry.originAddress
         destinationName = entry.destinationName
         destinationAddress = entry.destinationAddress
-        transportRaw = entry.transportRaw
-        routeInfo = entry.routeInfo
+        transportRaw = nil
+        routeInfo = nil
         cost = entry.cost
         didPrefillSourceMemory = entry.didPrefillSourceMemory
         sourceMemoryPrefill = entry.sourceMemoryPrefill
@@ -1074,7 +1086,7 @@ private struct StoryEntryRecord: Codable {
         entry.destinationName = destinationName ?? ""
         entry.destinationAddress = destinationAddress ?? ""
         entry.transportRaw = transportRaw ?? TransportMode.car.rawValue
-        entry.routeInfo = routeInfo
+        entry.routeInfo = routeInfo ?? ""
         entry.cost = cost ?? 0
         entry.didPrefillSourceMemory = didPrefillSourceMemory ?? false
         entry.sourceMemoryPrefill = sourceMemoryPrefill

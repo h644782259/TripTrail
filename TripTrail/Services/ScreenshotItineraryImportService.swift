@@ -17,8 +17,6 @@ struct ItineraryScreenshotDraft: Identifiable {
     var originAddress: String = ""
     var destinationName: String = ""
     var destinationAddress: String = ""
-    var transport: TransportMode
-    var distanceText: String
     var travelDurationMinutes: Int
     var reservationInfo: String
     var cost: Double
@@ -27,7 +25,6 @@ struct ItineraryScreenshotDraft: Identifiable {
     var addressCandidates: [String]
     var startTimeCandidates: [Date]
     var endTimeCandidates: [Date]
-    var distanceTextCandidates: [String]
     var costCandidates: [Double]
     let orderNumber: String
     let rawText: String
@@ -37,6 +34,8 @@ struct ItineraryScreenshotDraft: Identifiable {
 struct ItineraryJourneyDraft: Identifiable {
     let id = UUID()
     var recognitionNotice: String? = nil
+    var suggestedTitle: String = ""
+    var suggestedDestination: String = ""
     var days: [ItineraryJourneyDayDraft]
     let rawText: String
     let sourceAssetIdentifiers: [String]
@@ -62,6 +61,7 @@ struct ItineraryJourneyItemDraft: Identifiable {
     let id = UUID()
     var isIncluded = true
     var isFixedTime = false
+    var isTimePending = false
     var title: String
     var category: PlaceCategory
     var startTime: Date
@@ -74,8 +74,6 @@ struct ItineraryJourneyItemDraft: Identifiable {
     var originAddress: String = ""
     var destinationName: String = ""
     var destinationAddress: String = ""
-    var transport: TransportMode
-    var distanceText: String
     var reservationInfo: String
     var cost: Double
     var note: String
@@ -349,7 +347,6 @@ enum ScreenshotItineraryImportService {
         let end = journeyDate(endDay, minutes: endMinutes)
         let flightNumber = firstCapture(in: segmentText, pattern: #"(9C\s*[0-9]{4})"#)?
             .replacingOccurrences(of: " ", with: "") ?? ""
-        let duration = segment.first(where: { $0.contains("小时") || $0.contains("分钟") }) ?? ""
 
         return StructuredJourneyEntry(
             date: Calendar.current.startOfDay(for: start),
@@ -362,8 +359,6 @@ enum ScreenshotItineraryImportService {
                 locationMode: .route,
                 originName: origin,
                 destinationName: destination,
-                transport: .flight,
-                distanceText: duration,
                 reservationInfo: flightNumber.isEmpty ? "" : "航班：\(flightNumber)",
                 cost: 0,
                 note: ""
@@ -434,8 +429,6 @@ enum ScreenshotItineraryImportService {
                 locationMode: .single,
                 placeName: title,
                 placeAddress: address,
-                transport: .car,
-                distanceText: "",
                 reservationInfo: room,
                 cost: 0,
                 note: ""
@@ -575,14 +568,11 @@ enum ScreenshotItineraryImportService {
         mergedDraft.addressCandidates = uniqueStrings(
             [mergedDraft.address] + individualDrafts.map(\.address).filter { !$0.isEmpty }
         )
-        mergedDraft.distanceTextCandidates = uniqueStrings(
-            [mergedDraft.distanceText] + individualDrafts.map(\.distanceText).filter { !$0.isEmpty }
-        )
         mergedDraft.costCandidates = uniqueDoubles(
             [mergedDraft.cost] + individualDrafts.map(\.cost).filter { $0 > 0 }
         )
         let timedDrafts = individualDrafts.filter {
-            !$0.distanceText.isEmpty || ($0.rawText.contains("月") && $0.rawText.contains("日")) ||
+            ($0.rawText.contains("月") && $0.rawText.contains("日")) ||
             $0.rawText.contains("入住") || $0.rawText.contains("离店")
         }
         mergedDraft.startTimeCandidates = uniqueDates([mergedDraft.startTime] + timedDrafts.map(\.startTime))
@@ -659,7 +649,6 @@ enum ScreenshotItineraryImportService {
             ? .single
             : .route
         let travelDurationMinutes = Int(firstCapture(in: rawText, pattern: "([0-9]{1,3})\\s*分钟") ?? "") ?? 0
-        let routeDistance = firstCapture(in: rawText, pattern: "([0-9]+(?:\\.[0-9]+)?)\\s*公里") ?? ""
         let orderNumber = firstCapture(
             in: rawText,
             pattern: "(?:订单号|订单编号|预订号|预约号)\\s*[:：]?\\s*([A-Za-z0-9-]{6,})"
@@ -709,11 +698,6 @@ enum ScreenshotItineraryImportService {
             placeAddress: locationMode == .single ? address : "",
             originName: transportOrigin ?? "",
             destinationName: transportDestination ?? "",
-            transport: transport,
-            distanceText: [
-                routeDistance.isEmpty ? "" : "\(routeDistance) 公里",
-                travelDurationMinutes > 0 ? "\(travelDurationMinutes) 分钟" : ""
-            ].filter { !$0.isEmpty }.joined(separator: " · "),
             travelDurationMinutes: travelDurationMinutes,
             reservationInfo: reservationParts.joined(separator: "\n"),
             cost: cost,
@@ -722,10 +706,6 @@ enum ScreenshotItineraryImportService {
             addressCandidates: address.isEmpty ? [] : [address],
             startTimeCandidates: [dates.start],
             endTimeCandidates: [dates.end],
-            distanceTextCandidates: routeDistance.isEmpty && travelDurationMinutes == 0 ? [] : [[
-                routeDistance.isEmpty ? "" : "\(routeDistance) 公里",
-                travelDurationMinutes > 0 ? "\(travelDurationMinutes) 分钟" : ""
-            ].filter { !$0.isEmpty }.joined(separator: " · ")],
             costCandidates: cost > 0 ? [cost] : [],
             orderNumber: orderNumber,
             rawText: rawText,
@@ -909,8 +889,6 @@ enum ScreenshotItineraryImportService {
                     locationMode: .route,
                     originName: endpoints.first ?? "",
                     destinationName: endpoints.last ?? "",
-                    transport: .car,
-                    distanceText: metrics.text,
                     reservationInfo: "",
                     cost: 0,
                     note: ""
@@ -958,8 +936,6 @@ enum ScreenshotItineraryImportService {
                         address: "",
                         locationMode: .single,
                         placeName: place.name,
-                        transport: .car,
-                        distanceText: "",
                         reservationInfo: "",
                         cost: 0,
                         note: place.note
@@ -984,8 +960,6 @@ enum ScreenshotItineraryImportService {
                     address: "",
                     locationMode: .single,
                     placeName: stay,
-                    transport: .car,
-                    distanceText: "",
                     reservationInfo: "",
                     cost: 0,
                     note: "住宿：\(stay)"
@@ -1023,8 +997,6 @@ enum ScreenshotItineraryImportService {
             originAddress: draft.originAddress,
             destinationName: draft.destinationName,
             destinationAddress: draft.destinationAddress,
-            transport: draft.transport,
-            distanceText: draft.distanceText,
             reservationInfo: draft.reservationInfo,
             cost: draft.cost,
             note: draft.note
@@ -1341,7 +1313,7 @@ enum ScreenshotItineraryImportService {
 
         let defaultStartDay = uniqueDates.first ?? calendar.startOfDay(for: referenceDate)
         let defaultEndDay = uniqueDates.dropFirst().first
-            ?? (category == .hotel ? calendar.date(byAdding: .day, value: 1, to: defaultStartDay)! : defaultStartDay)
+            ?? defaultStartDay
         let timeRange = firstTimeRange(in: text)
         let rawTimes = validTimes(in: text)
         var seenTimes = Set<String>()
@@ -1360,13 +1332,15 @@ enum ScreenshotItineraryImportService {
             ?? time(after: "离店", in: text)
             ?? timeRange?.end
             ?? orderedTimes.dropFirst().first
-            ?? (category == .hotel ? (12, 0) : (checkInTime.0 + 1, checkInTime.1))
+            ?? (checkInTime.0 + 1, checkInTime.1)
         let start = calendar.date(bySettingHour: min(checkInTime.0, 23), minute: checkInTime.1, second: 0, of: defaultStartDay) ?? defaultStartDay
         if category == .transport && travelDurationMinutes > 0 {
             return (start, calendar.date(byAdding: .minute, value: travelDurationMinutes, to: start) ?? start)
         }
         var end = calendar.date(bySettingHour: min(checkOutTime.0, 23), minute: checkOutTime.1, second: 0, of: defaultEndDay) ?? defaultEndDay
-        if end <= start { end = calendar.date(byAdding: .hour, value: category == .hotel ? 24 : 1, to: start) ?? start }
+        if end <= start || (category == .hotel && !calendar.isDate(start, inSameDayAs: end)) {
+            end = start.addingTimeInterval(3600)
+        }
         return (start, end)
     }
 
@@ -1532,6 +1506,7 @@ struct JourneyImportPreview {
     let dates: [Date]
     let existingDayCount: Int
     let emptyDayCount: Int
+    var reusedEmptyDayCount: Int = 0
 
     var totalDayCount: Int { dates.count }
     var newDayCount: Int { max(0, totalDayCount - existingDayCount) }
@@ -1542,6 +1517,7 @@ struct JourneyImportApplyResult {
     let createdDays: [TripDay]
     let createdItems: [ItineraryItem]
     let createdMedia: [MediaReference]
+    var removedEmptyDays: [TripDay] = []
 }
 
 enum JourneyImportApplyService {
@@ -1553,6 +1529,7 @@ enum JourneyImportApplyService {
     static func preview(
         _ draft: ItineraryJourneyDraft,
         for trip: Trip,
+        replaceEmptySchedule: Bool = true,
         calendar: Calendar = .current
     ) -> JourneyImportPreview {
         let plan = plannedDays(for: draft, in: trip, calendar: calendar)
@@ -1560,19 +1537,38 @@ enum JourneyImportApplyService {
         let existingDates = trip.sortedDays.indices.map { index in
             calendar.date(byAdding: .day, value: index, to: tripStart) ?? tripStart
         }
+        if replaceEmptySchedule && canReplaceEmptySchedule(trip, draft: draft) {
+            return JourneyImportPreview(
+                dates: plan.map(\.date), existingDayCount: min(plan.count, trip.days.count),
+                emptyDayCount: plan.filter(\.drafts.isEmpty).count,
+                reusedEmptyDayCount: min(plan.filter { !$0.drafts.isEmpty }.count, trip.days.count)
+            )
+        }
         return JourneyImportPreview(
             dates: plan.map(\.date),
             existingDayCount: plan.filter { planned in
                 existingDates.contains { calendar.isDate($0, inSameDayAs: planned.date) }
             }.count,
-            emptyDayCount: plan.filter(\.drafts.isEmpty).count
+            emptyDayCount: plan.filter(\.drafts.isEmpty).count,
+            reusedEmptyDayCount: plan.filter { planned in
+                !planned.drafts.isEmpty && trip.sortedDays.enumerated().contains { index, day in
+                    day.items.isEmpty && calendar.isDate(existingDates[index], inSameDayAs: planned.date)
+                }
+            }.count
         )
+    }
+
+    static func plannedDate(for day: ItineraryJourneyDayDraft, in draft: ItineraryJourneyDraft, trip: Trip) -> Date? {
+        plannedDays(for: draft, in: trip, calendar: .current).first { planned in
+            planned.drafts.contains { $0.id == day.id }
+        }?.date
     }
 
     static func append(
         _ draft: ItineraryJourneyDraft,
         to trip: Trip,
         attachSourceImages: Bool,
+        replaceEmptySchedule: Bool = true,
         calendar: Calendar = .current
     ) -> JourneyImportApplyResult {
         JourneyHierarchyService.normalizeTripDaySchedule(trip, calendar: calendar)
@@ -1587,8 +1583,20 @@ enum JourneyImportApplyService {
         }
 
         let existingDays = trip.sortedDays
+        let replacesEmptySchedule = replaceEmptySchedule && canReplaceEmptySchedule(trip, draft: draft)
+        var removedEmptyDays: [TripDay] = []
+        if replacesEmptySchedule {
+            for (index, day) in existingDays.enumerated() {
+                if index < plan.count {
+                    day.date = plan[index].date
+                } else {
+                    removedEmptyDays.append(day)
+                    trip.days.removeAll { $0.id == day.id }
+                }
+            }
+        }
         var daysByDate: [Date: TripDay] = [:]
-        for day in existingDays {
+        for day in trip.sortedDays {
             let date = calendar.startOfDay(for: day.date)
             if daysByDate[date] == nil { daysByDate[date] = day }
         }
@@ -1615,11 +1623,15 @@ enum JourneyImportApplyService {
                 createdDays.append(day)
             }
 
+            if day.items.isEmpty, day.title.isEmpty,
+               let heading = plannedDay.drafts.first?.routeTitle.trimmingCharacters(in: .whitespacesAndNewlines), !heading.isEmpty {
+                day.title = heading
+            }
             var nextItemSortOrder = (day.items.map(\.sortOrder).max() ?? -1) + 1
             for dayDraft in plannedDay.drafts {
                 day.note = mergedDayNote(
                     existing: day.note,
-                    additions: [dayDraft.routeTitle, dayDraft.note]
+                    additions: [dayDraft.routeTitle == day.title ? "" : dayDraft.routeTitle, dayDraft.note]
                 )
 
                 for itemDraft in dayDraft.items where itemDraft.isIncluded {
@@ -1638,7 +1650,8 @@ enum JourneyImportApplyService {
                         endTime: times.end,
                         sortOrder: nextItemSortOrder
                     )
-                    item.isFixedTime = itemDraft.isFixedTime
+                    item.isFixedTime = itemDraft.isFixedTime && !itemDraft.isTimePending
+                    item.isTimePending = itemDraft.isTimePending
                     nextItemSortOrder += 1
                     item.locationMode = itemDraft.locationMode
                     item.placeName = JourneyLocationText.entityName(
@@ -1666,8 +1679,6 @@ enum JourneyImportApplyService {
                         item.placeAddress = itemDraft.address.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
                     item.address = item.locationMode == .single ? item.placeAddress : item.destinationAddress
-                    item.transport = itemDraft.transport
-                    item.distanceText = itemDraft.distanceText.trimmingCharacters(in: .whitespacesAndNewlines)
                     item.reservationInfo = itemDraft.reservationInfo.trimmingCharacters(in: .whitespacesAndNewlines)
                     item.cost = itemDraft.cost
                     item.note = itemDraft.note.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1701,7 +1712,7 @@ enum JourneyImportApplyService {
 
         if let firstPlannedDate = plan.map(\.date).min(),
            let lastPlannedDate = plan.map(\.date).max() {
-            if existingDays.isEmpty {
+            if existingDays.isEmpty || replacesEmptySchedule {
                 trip.startDate = firstPlannedDate
                 trip.endDate = lastPlannedDate
             } else {
@@ -1718,8 +1729,14 @@ enum JourneyImportApplyService {
             affectedDays: affectedDays,
             createdDays: createdDays,
             createdItems: createdItems,
-            createdMedia: createdMedia
+            createdMedia: createdMedia,
+            removedEmptyDays: removedEmptyDays
         )
+    }
+
+    private static func canReplaceEmptySchedule(_ trip: Trip, draft: ItineraryJourneyDraft) -> Bool {
+        !trip.days.isEmpty && trip.days.allSatisfy { $0.items.isEmpty && $0.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && draft.days.contains { $0.date != nil }
     }
 
     private static func plannedDays(
@@ -1729,17 +1746,14 @@ enum JourneyImportApplyService {
     ) -> [PlannedDay] {
         guard !draft.days.isEmpty else { return [] }
 
-        let fallbackFirstDate: Date
-        if !trip.sortedDays.isEmpty {
-            let tripStart = calendar.startOfDay(for: trip.startDate)
-            fallbackFirstDate = calendar.date(
-                byAdding: .day,
-                value: trip.sortedDays.count,
-                to: tripStart
-            ) ?? tripStart
-        } else {
-            fallbackFirstDate = calendar.startOfDay(for: trip.startDate)
+        let tripStart = calendar.startOfDay(for: trip.startDate)
+        // Use normalized date positions in both preview and apply, without mutating during preview.
+        let existingDays = trip.sortedDays
+        let emptyDates = existingDays.enumerated().compactMap { index, day -> Date? in
+            guard day.items.isEmpty else { return nil }
+            return calendar.date(byAdding: .day, value: index, to: tripStart)
         }
+        let appendDate = calendar.date(byAdding: .day, value: existingDays.count, to: tripStart) ?? tripStart
 
         let sourceDayNumbers = draft.days.map(\.sourceDayNumber)
         let firstSourceDayNumber = sourceDayNumbers.min() ?? 1
@@ -1762,8 +1776,11 @@ enum JourneyImportApplyService {
             } else {
                 let sourceOffset = dayDraft.sourceDayNumber - firstSourceDayNumber
                 let offset = sourceOffset >= 0 ? sourceOffset : index
-                date = calendar.date(byAdding: .day, value: offset, to: fallbackFirstDate)
-                    ?? fallbackFirstDate
+                if offset < emptyDates.count {
+                    date = emptyDates[offset]
+                } else {
+                    date = calendar.date(byAdding: .day, value: offset - emptyDates.count, to: appendDate) ?? appendDate
+                }
             }
             draftsByDate[date, default: []].append(dayDraft)
         }

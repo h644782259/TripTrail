@@ -1,5 +1,6 @@
 import SwiftData
 import SwiftUI
+import UIKit
 
 struct FavoritesView: View {
     @Environment(\.modelContext) private var modelContext
@@ -10,6 +11,8 @@ struct FavoritesView: View {
     @State private var showsNewFavorite = false
     @State private var favoriteToEdit: ItineraryItem?
     @State private var favoriteToDelete: ItineraryItem?
+    @State private var locationToOpen: JourneyLocationTarget?
+    @State private var placeMessage: String?
 
     private let columns = [
         GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 12, alignment: .top)
@@ -54,7 +57,8 @@ struct FavoritesView: View {
                                     FavoriteArrangementCard(
                                         favorite: favorite,
                                         onEdit: { favoriteToEdit = favorite },
-                                        onDelete: { favoriteToDelete = favorite }
+                                        onDelete: { favoriteToDelete = favorite },
+                                        onNavigate: { locationToOpen = $0 }
                                     )
                                 }
                             }
@@ -67,7 +71,7 @@ struct FavoritesView: View {
         }
         .background(Color.tripCanvas.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "搜索名称、地点或备注")
+        .searchable(text: $searchText, prompt: "搜索名称、城市、地点或备注")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
@@ -84,6 +88,26 @@ struct FavoritesView: View {
         .sheet(item: $favoriteToEdit) {
             ItemEditorView(day: nil, item: $0, mode: .favorite)
         }
+        .sheet(item: $locationToOpen) { target in
+            NavigationOptionsSheet(
+                onAmap: {
+                    Task {
+                        let result = await AmapService.openPlace(name: target.name, address: target.address)
+                        placeMessage = result.message(destinationName: target.displayName)
+                    }
+                },
+                onXiaohongshu: { openDiscovery(.xiaohongshu, target: target) },
+                onDouyin: { openDiscovery(.douyin, target: target) }
+            )
+        }
+        .alert("提示", isPresented: Binding(
+            get: { placeMessage != nil },
+            set: { if !$0 { placeMessage = nil } }
+        )) {
+            Button("知道了", role: .cancel) { placeMessage = nil }
+        } message: {
+            Text(placeMessage ?? "")
+        }
         .alert("删除收藏？", isPresented: Binding(
             get: { favoriteToDelete != nil },
             set: { if !$0 { favoriteToDelete = nil } }
@@ -95,6 +119,15 @@ struct FavoritesView: View {
             Button("取消", role: .cancel) { favoriteToDelete = nil }
         } message: { favorite in
             Text("“\(favorite.title)”将从收藏中删除，已导入旅程的安排不受影响。")
+        }
+    }
+
+    private func openDiscovery(_ platform: PlaceDiscoveryPlatform, target: JourneyLocationTarget) {
+        Task {
+            let opened = await PlaceDiscoveryService.open(platform, name: target.name, address: target.address)
+            if !opened {
+                placeMessage = "暂时无法打开\(platform.displayName)，请检查网络或稍后重试。"
+            }
         }
     }
 
@@ -138,14 +171,15 @@ struct FavoritesView: View {
 }
 
 private struct FavoriteArrangementCard: View {
+    @ScaledMetric(relativeTo: .body) private var cardHeight: CGFloat = 280
     let favorite: ItineraryItem
     let onEdit: () -> Void
     let onDelete: () -> Void
+    let onNavigate: (JourneyLocationTarget) -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            Button(action: onEdit) {
-                VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
                     HStack(spacing: 7) {
                         Image(systemName: favorite.category.symbol)
                         Text(favorite.category.rawValue)
@@ -160,26 +194,39 @@ private struct FavoriteArrangementCard: View {
                         .font(.headline)
                         .foregroundStyle(.primary)
                         .multilineTextAlignment(.leading)
-                        .lineLimit(2)
+                        .lineLimit(1)
 
-                    if !favorite.locationSummary.isEmpty {
-                        Label(favorite.locationSummary, systemImage: "mappin.and.ellipse")
-                            .lineLimit(2)
+                    let city = FavoriteArrangementService.city(for: favorite)
+                    if !city.isEmpty, city != "未设置城市" {
+                        Label(city, systemImage: "building.2")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+
+                    ForEach(favorite.locationTargets) { target in
+                        HStack(alignment: .firstTextBaseline, spacing: 4) {
+                            Button { onNavigate(target) } label: {
+                                Label(target.displayName, systemImage: target.role == .origin ? "location.circle" : "mappin.and.ellipse")
+                                    .lineLimit(1)
+                                    .multilineTextAlignment(.leading)
+                                    .foregroundStyle(Color.tripLakeText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityHint("选择地图或搜索平台打开地点")
+                            LocationCopyButton(text: target.displayName)
+                        }
                     }
 
                     if !favorite.note.isEmpty {
                         Text(favorite.note)
-                            .lineLimit(3)
+                            .lineLimit(2)
                     }
 
                     Spacer(minLength: 0)
 
-                    if !favorite.distanceText.isEmpty || favorite.cost > 0 {
+                    if favorite.cost > 0 {
                         HStack(spacing: 8) {
-                            if !favorite.distanceText.isEmpty {
-                                Label(favorite.distanceText, systemImage: "arrow.triangle.turn.up.right.diamond")
-                                    .lineLimit(1)
-                            }
                             if favorite.cost > 0 {
                                 Text("¥\(favorite.cost, specifier: "%.0f")")
                             }
@@ -188,7 +235,8 @@ private struct FavoriteArrangementCard: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .frame(height: cardHeight - 28, alignment: .topLeading)
                 .padding(14)
                 .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .overlay {
@@ -196,9 +244,8 @@ private struct FavoriteArrangementCard: View {
                         .stroke(Color.tripMist.opacity(0.38), lineWidth: 0.8)
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("打开编辑收藏")
+                .onTapGesture(perform: onEdit)
+                .accessibilityAction(named: "编辑收藏", onEdit)
 
             Menu {
                 Button("编辑收藏", systemImage: "pencil", action: onEdit)
@@ -234,7 +281,7 @@ struct FavoriteImportSelectionView: View {
 
     private var selectedFavorites: [ItineraryItem] {
         FavoriteArrangementService.filtered(
-            itineraryItems.filter { selectedIDs.contains($0.id) },
+            itineraryItems.filter { favorite in selectedIDs.contains(favorite.id) && !day.items.contains { $0.sourceFavoriteID == favorite.id } },
             searchText: "",
             category: nil
         )
@@ -247,8 +294,9 @@ struct FavoriteImportSelectionView: View {
                     List {
                         Section {
                             categoryPicker
+
                         } footer: {
-                            Text("可多选；导入后会按当天已有安排的结束时间依次排入，时间仍可逐项编辑。")
+                            Text("可多选，接在当天安排之后，时间可调整。")
                         }
 
                         Section("收藏安排") {
@@ -265,6 +313,10 @@ struct FavoriteImportSelectionView: View {
                                         )
                                     }
                                     .buttonStyle(.plain)
+                                    .disabled(day.items.contains { $0.sourceFavoriteID == favorite.id })
+                                    if day.items.contains(where: { $0.sourceFavoriteID == favorite.id }) {
+                                        Text("已在当天").font(.caption).foregroundStyle(.secondary)
+                                    }
                                 }
                             }
                         }
@@ -285,8 +337,8 @@ struct FavoriteImportSelectionView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("导入 \(selectedIDs.count) 项") { importSelected() }
-                        .disabled(selectedIDs.isEmpty)
+                    Button("导入 \(selectedFavorites.count) 项") { importSelected() }
+                        .disabled(selectedFavorites.isEmpty)
                 }
             }
         }
@@ -349,5 +401,41 @@ private struct FavoriteSelectionRow: View {
         .contentShape(Rectangle())
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(favorite.title)，\(isSelected ? "已选择" : "未选择")")
+    }
+}
+
+
+struct LocationCopyButton: View {
+    let text: String
+    @State private var copied = false
+    @State private var copyCount = 0
+
+    var body: some View {
+        Button {
+            UIPasteboard.general.string = text
+            copied = true
+            copyCount += 1
+        } label: {
+            Text(Image(systemName: copied ? "checkmark" : "doc.on.doc"))
+                .font(.caption)
+                .foregroundStyle(Color.tripLakeText)
+                .frame(width: 36, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(copied ? "已复制" : "复制\(text)")
+        .overlay(alignment: .topTrailing) {
+            if copied {
+                Text("已复制").font(.caption2).foregroundStyle(.primary)
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(.regularMaterial, in: Capsule())
+                    .fixedSize().offset(y: -24).allowsHitTesting(false)
+            }
+        }
+        .task(id: copyCount) {
+            guard copyCount > 0 else { return }
+            do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
+            copied = false
+        }
     }
 }

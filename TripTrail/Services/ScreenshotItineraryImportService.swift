@@ -121,20 +121,20 @@ enum ScreenshotItineraryImportService {
         referenceDate: Date,
         sourceAssetIdentifiers: [String]
     ) async throws -> ItineraryJourneyDraft {
-        let cgImages = imageDatas.compactMap { UIImage(data: $0)?.cgImage }
-        guard !cgImages.isEmpty else {
+        let readableImages = imageDatas.filter { UIImage(data: $0) != nil }
+        guard !readableImages.isEmpty else {
             throw ScreenshotItineraryImportError.unreadableImage
         }
 
         let lineGroups = try await Task.detached(priority: .userInitiated) {
             var groups: [[String]] = []
-            for cgImage in cgImages {
+            for imageData in readableImages {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
                 request.recognitionLanguages = ["zh-Hans", "en-US"]
                 request.usesLanguageCorrection = true
                 request.minimumTextHeight = 0.012
-                try VNImageRequestHandler(cgImage: cgImage, orientation: .up).perform([request])
+                try VNImageRequestHandler(data: imageData).perform([request])
                 let observations = (request.results ?? []).sorted { lhs, rhs in
                     if abs(lhs.boundingBox.midY - rhs.boundingBox.midY) > 0.012 {
                         return lhs.boundingBox.midY > rhs.boundingBox.midY
@@ -516,20 +516,20 @@ enum ScreenshotItineraryImportService {
         referenceDate: Date,
         sourceAssetIdentifiers: [String]
     ) async throws -> ItineraryScreenshotDraft {
-        let cgImages = imageDatas.compactMap { UIImage(data: $0)?.cgImage }
-        guard !cgImages.isEmpty else {
+        let readableImages = imageDatas.filter { UIImage(data: $0) != nil }
+        guard !readableImages.isEmpty else {
             throw ScreenshotItineraryImportError.unreadableImage
         }
 
         let lineGroups = try await Task.detached(priority: .userInitiated) {
             var groups: [[String]] = []
-            for cgImage in cgImages {
+            for imageData in readableImages {
                 let request = VNRecognizeTextRequest()
                 request.recognitionLevel = .accurate
                 request.recognitionLanguages = ["zh-Hans", "en-US"]
                 request.usesLanguageCorrection = true
                 request.minimumTextHeight = 0.012
-                try VNImageRequestHandler(cgImage: cgImage, orientation: .up).perform([request])
+                try VNImageRequestHandler(data: imageData).perform([request])
                 let observations = (request.results ?? []).sorted { lhs, rhs in
                     if abs(lhs.boundingBox.midY - rhs.boundingBox.midY) > 0.012 {
                         return lhs.boundingBox.midY > rhs.boundingBox.midY
@@ -1133,7 +1133,7 @@ enum ScreenshotItineraryImportService {
             text.contains("游览") || text.contains("参观") || text.contains("门票") || text.contains("入园") {
             return .attraction
         }
-        return .special
+        return .other
     }
 
     private static func inferTitle(from lines: [String], category: PlaceCategory) -> String {

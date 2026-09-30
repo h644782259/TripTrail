@@ -198,45 +198,32 @@ private struct FavoriteArrangementCard: View {
                         }
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 } else {
-                    let city = FavoriteArrangementService.city(for: favorite)
-                    if !city.isEmpty, city != "未设置城市" {
-                        Label(city, systemImage: "building.2")
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    ForEach(favorite.locationTargets) { target in
-                        Label {
-                            Text(target.displayName)
-                                .lineLimit(2).truncationMode(.tail)
-                        } icon: {
-                            Image(systemName: target.role == .origin ? "location.circle" : target.role == .destination ? "flag.checkered" : "mappin.and.ellipse")
-                                .accessibilityLabel(target.role == .origin ? "起点" : target.role == .destination ? "终点" : "地点")
-                        }
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.tripLakeText)
-                    }
+                    FavoriteDefaultCover(category: favorite.category)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 if !favorite.note.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if favorite.media.isEmpty {
-                            Text("补充说明").font(.caption2.weight(.medium)).foregroundStyle(.tertiary)
-                        }
-                        Text(favorite.note)
-                            .font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(favorite.media.isEmpty ? 12 : 2)
-                            .truncationMode(.tail)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: favorite.media.isEmpty ? .infinity : nil, alignment: .topLeading)
+                    Text(favorite.note)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .lineLimit(2).truncationMode(.tail)
                 }
-                if favorite.media.isEmpty && favorite.note.isEmpty { Spacer(minLength: 0) }
                 HStack(spacing: 6) {
                     Label(favorite.category.rawValue, systemImage: favorite.category.symbol)
                         .font(.caption.weight(.semibold))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .foregroundStyle(Color.tripLakeText)
                         .padding(.horizontal, 8).padding(.vertical, 5)
                         .background(Color.tripLake.opacity(0.11), in: Capsule())
-                    Spacer(minLength: 0)
+                    let city = FavoriteArrangementService.city(for: favorite)
+                    if !city.isEmpty, city != "未设置城市" {
+                        Text(city)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    } else {
+                        Spacer(minLength: 0)
+                    }
                     if favorite.cost > 0 {
                         Text("¥\(favorite.cost, specifier: "%.0f")")
                             .font(.caption.weight(.semibold))
@@ -446,5 +433,36 @@ struct LocationCopyButton: View {
             do { try await Task.sleep(nanoseconds: 1_500_000_000) } catch { return }
             copied = false
         }
+    }
+}
+
+private struct FavoriteDefaultCover: View {
+    let category: PlaceCategory
+    private var style: (Color, String) {
+        switch category {
+        case .attraction: (Color(red: 0.24, green: 0.55, blue: 0.46), "mountain.2.fill")
+        case .restaurant: (Color(red: 0.78, green: 0.43, blue: 0.27), "fork.knife")
+        case .hotel: (Color(red: 0.43, green: 0.46, blue: 0.68), "bed.double.fill")
+        case .transport: (Color(red: 0.28, green: 0.52, blue: 0.70), "tram.fill")
+        default: (Color(red: 0.67, green: 0.52, blue: 0.32), "suitcase.rolling.fill")
+        }
+    }
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack {
+                LinearGradient(colors: [style.0.opacity(0.18), style.0.opacity(0.55)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Circle().fill(.white.opacity(0.3)).frame(width: proxy.size.width * 0.8)
+                    .offset(x: proxy.size.width * 0.4, y: -proxy.size.height * 0.3)
+                Circle().fill(style.0.opacity(0.14)).frame(width: proxy.size.width * 1.4)
+                    .offset(x: -proxy.size.width * 0.3, y: proxy.size.height * 0.5)
+                Image(systemName: style.1).resizable().scaledToFit()
+                    .frame(width: proxy.size.width * 0.43, height: proxy.size.height * 0.45)
+                    .foregroundStyle(.white.opacity(0.95))
+                    .shadow(color: style.0.opacity(0.2), radius: 10, y: 5)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .clipped()
+        }
+        .accessibilityLabel("\(category.rawValue)默认封面")
     }
 }

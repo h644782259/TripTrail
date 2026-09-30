@@ -28,7 +28,6 @@ struct CurrentTripsView: View {
     @State private var isCreatingFromScreenshots = false
     @State private var tripToEdit: Trip?
     @State private var tripToDelete: Trip?
-    @State private var tripToArchive: Trip?
     @State private var tripToShare: Trip?
     @State private var tripForTextImport: Trip?
     @State private var tripForScreenshotImport: Trip?
@@ -83,7 +82,6 @@ struct CurrentTripsView: View {
         }
         .cloudEditSheet(isPresented: $showsNewTrip, onDismiss: { completeElapsedItems() }) { TripEditorView() }
         .cloudEditSheet(item: $tripToEdit, onDismiss: { completeElapsedItems() }) { TripEditorView(trip: $0) }
-        .cloudEditSheet(item: $tripToArchive) { ArchiveTripView(trip: $0) }
         .cloudEditSheet(item: $tripToShare) { ShareExportView(trip: $0) }
         .cloudEditSheet(item: $smartNewTextTrip) { trip in
             TextItineraryImportView(trip: trip, referenceDate: trip.startDate, isCreatingTrip: true, onCreated: openCreatedSmartTrip)
@@ -291,9 +289,6 @@ struct CurrentTripsView: View {
                 }
                 Button("规划全行程路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     requestRoutePlanning(for: trip)
-                }
-                Button("整理成足迹", systemImage: "book.closed") {
-                    tripToArchive = trip
                 }
                 CloudModeAction(id: trip.id, kind: "trip")
                 Divider()

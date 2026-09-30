@@ -470,6 +470,7 @@ struct StoryDetailView: View {
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
+        .frame(minHeight: 200, alignment: .bottomLeading)
         .background {
             StoryCoverArtwork(story: story)
                 .overlay(Color.black.opacity(story.coverMedia == nil ? 0 : 0.34))

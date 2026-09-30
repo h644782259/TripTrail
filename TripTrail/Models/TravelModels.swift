@@ -17,7 +17,6 @@ enum PlaceCategory: String, CaseIterable, Identifiable, Codable {
         .restaurant,
         .hotel,
         .transport,
-        .special,
         .other
     ]
 
@@ -25,7 +24,7 @@ enum PlaceCategory: String, CaseIterable, Identifiable, Codable {
 
     static func resolved(rawValue: String) -> PlaceCategory {
         switch PlaceCategory(rawValue: rawValue) {
-        case .shopping, .note:
+        case .shopping, .special, .note:
             .other
         case let category?:
             category

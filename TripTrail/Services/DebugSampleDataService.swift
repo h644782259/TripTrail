@@ -254,7 +254,7 @@ enum DebugSampleDataService {
             id: 120,
             title: "漫步龙井村茶园",
             placeName: "龙井村茶园",
-            category: .special,
+            category: .other,
             start: time(9, 0, on: teaDay.date),
             end: time(11, 30, on: teaDay.date),
             order: 0,

@@ -37,15 +37,20 @@ struct RootTabView: View {
             guard selectedTab != "settings" else { return }
             await CloudSyncService.shared.sync(context: modelContext, kind: selectedTab, automatic: true)
         }
-        .task(id: trips.map { "\($0.id):\($0.endDate.timeIntervalSince1970)" }.joined(separator: ",")) {
+        .task(id: trips.map { "\($0.id):\($0.startDate.timeIntervalSince1970):\($0.endDate.timeIntervalSince1970)" }.joined(separator: ",")) {
             await CloudSyncService.shared.archiveFinishedTrips(context: modelContext)
         }
         .task(id: scenePhase) {
             guard scenePhase == .active else { return }
-            while !Task.isCancelled {
-                await CloudSyncService.shared.archiveFinishedTrips(context: modelContext)
-                do { try await Task.sleep(nanoseconds: 30_000_000_000) } catch { break }
-            }
+            await CloudSyncService.shared.archiveFinishedTrips(context: modelContext)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+            guard scenePhase == .active else { return }
+            Task { await CloudSyncService.shared.archiveFinishedTrips(context: modelContext) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.significantTimeChangeNotification)) { _ in
+            guard scenePhase == .active else { return }
+            Task { await CloudSyncService.shared.archiveFinishedTrips(context: modelContext) }
         }
         .onOpenURL(perform: openSharedJourney)
         .task {

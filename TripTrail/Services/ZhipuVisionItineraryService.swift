@@ -792,7 +792,7 @@ enum ZhipuVisionItineraryService {
         case "restaurant", "餐饮", "餐厅": .restaurant
         case "hotel", "住宿", "酒店": .hotel
         case "transport", "交通": .transport
-        case "special", "特殊位置": .special
+        case "special", "特殊位置": .other
         case "other", "其他": .other
         default: .attraction
         }
@@ -892,7 +892,7 @@ enum ZhipuVisionItineraryService {
             "note": "",
             "items": [{
               "title": "地点、酒店名称或安排名称",
-              "category": "attraction|restaurant|hotel|transport|special|other",
+              "category": "attraction|restaurant|hotel|transport|other",
               "startAt": "yyyy-MM-dd HH:mm",
               "endAt": "yyyy-MM-dd HH:mm",
               "locationMode": "单地点|起终点",
@@ -951,7 +951,7 @@ enum ZhipuVisionItineraryService {
             "note": "",
             "items": [{
               "title": "地点、酒店名称或安排名称",
-              "category": "attraction|restaurant|hotel|transport|special|other",
+              "category": "attraction|restaurant|hotel|transport|other",
               "startAt": "yyyy-MM-dd HH:mm 或 null",
               "endAt": "yyyy-MM-dd HH:mm 或 null",
               "locationMode": "单地点|起终点",
@@ -1017,7 +1017,7 @@ enum ZhipuVisionItineraryService {
               "kind": "itinerary_item",
               "item": {
                 "title": "安排名称/说明",
-                "category": "attraction|restaurant|hotel|transport|special|other",
+                "category": "attraction|restaurant|hotel|transport|other",
                 "startAt": "yyyy-MM-dd HH:mm 或 null",
                 "endAt": "yyyy-MM-dd HH:mm 或 null",
                 "locationMode": "单地点|起终点",
@@ -1043,7 +1043,7 @@ enum ZhipuVisionItineraryService {
               "kind": "favorite_item",
               "item": {
                 "title": "想去的地点或安排名称",
-                "category": "attraction|restaurant|hotel|transport|special|other",
+                "category": "attraction|restaurant|hotel|transport|other",
                 "locationMode": "单地点|起终点",
                 "placeName": "单地点实体名称",
                 "placeAddress": "单地点详细地址",

@@ -3,11 +3,16 @@ import PhotosUI
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct TripDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @Bindable var trip: Trip
+    @State private var showsTripInfo = false
+    @State private var tripInfoScrollOrigin: CGFloat?
+    @State private var infoDraftStart: Date?
+    @State private var activeInfoField: String?
     @State private var dayForNewItem: TripDay?
     @State private var dayForFavoriteImport: TripDay?
     @State private var itemToEdit: ItineraryItem?
@@ -30,8 +35,19 @@ struct TripDetailView: View {
     @State private var selectedDayID: UUID?
     @State private var itineraryDrag: ItineraryDragState?
     @State private var itineraryDragRevision = 0
+    @State private var itemDragOrder: [UUID] = []
+    @State private var itemDragFrames: [UUID: CGRect] = [:]
+    @State private var itemDragLocation: CGPoint?
+    @State private var itemDragGrabOffset: CGSize = .zero
+    @State private var itemDragSize: CGSize = .zero
     @State private var dayDrag: TripDayDragState?
     @State private var dayDragRevision = 0
+    @State private var previewDayIDs: [UUID] = []
+    @State private var dayTabFrames: [UUID: CGRect] = [:]
+    @State private var dayTabFingerX: CGFloat?
+    @State private var dayTabGrabOffset: CGFloat = 0
+    @State private var dayTabViewport: CGRect = .zero
+    private let dayTabScrollTimer = Timer.publish(every: 0.2, on: .main, in: .common).autoconnect()
     @State private var dragCleanupTask: Task<Void, Never>?
     @State private var progressReferenceDate = Date()
     private let completionTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -48,15 +64,64 @@ struct TripDetailView: View {
             }
             .padding()
             .padding(.bottom, 84)
+            .background(GeometryReader { geometry in
+                Color.clear.preference(key: TripInfoPullOffsetKey.self, value: geometry.frame(in: .named("tripDetailScroll")).minY)
+            })
+            .background(Color.tripCanvas.contentShape(Rectangle()).onTapGesture { activeInfoField = nil })
+        }
+        .coordinateSpace(name: "tripDetailScroll")
+        .scrollBounceBehavior(.always)
+        .onPreferenceChange(TripInfoPullOffsetKey.self) { offset in
+            guard !showsTripInfo, itineraryDrag == nil else { return }
+            guard let origin = tripInfoScrollOrigin else { tripInfoScrollOrigin = offset; return }
+            if offset - origin > 48 {
+                withAnimation(.easeInOut(duration: 0.2)) { showsTripInfo = true }
+            }
         }
         .safeAreaInset(edge: .top, spacing: 0) {
-            dayNavigator
+            VStack(spacing: 0) {
+                if showsTripInfo { tripInfoPanel }
+                dayNavigator
+            }
         }
         .scrollDismissesKeyboard(.interactively)
-        .background(Color.tripCanvas)
+        .background(Color.tripCanvas.contentShape(Rectangle()).onTapGesture { activeInfoField = nil })
+        .onDisappear { CloudSyncService.shared.uploadAfterEdit(context: modelContext) }
+        .task(id: trip.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "trip", recordID: trip.id, automatic: true) }
         .navigationTitle(trip.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbarBackground(Color.tripCanvas, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Button { toggleTripInfo() } label: {
+                    HStack(spacing: 5) {
+                        Text(trip.title).font(.headline).lineLimit(1)
+                        Image(systemName: showsTripInfo ? "chevron.up" : "chevron.down").font(.caption2)
+                    }
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("旅程信息")
+                .accessibilityValue(showsTripInfo ? "已展开" : "已收起")
+                .simultaneousGesture(DragGesture(minimumDistance: 18).onEnded { value in
+                    guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                    withAnimation(.easeInOut(duration: 0.2)) { showsTripInfo = value.translation.height > 0 }
+                })
+            }
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    CloudBadge(id: trip.id, kind: "trip").font(.system(size: 20))
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    CloudBadge(id: trip.id, kind: "trip").font(.system(size: 20))
+                }
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let selection = selectedDaySelection {
@@ -75,30 +140,111 @@ struct TripDetailView: View {
                                 title: "\(displayTitle(for: day))路线"
                             )
                         }
-                        Divider()
+                    CloudModeAction(id: trip.id, kind: "trip")
+                    Divider()
                         Button("删除当天", systemImage: "trash", role: .destructive) {
                             dayToDelete = day
                         }
                     }
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: { Image(systemName: "ellipsis") }
+                .font(.system(size: 20))
                 .accessibilityLabel("当天更多操作")
             }
         }
     }
 
+    private func toggleTripInfo() {
+        withAnimation(.easeInOut(duration: 0.2)) { showsTripInfo.toggle() }
+    }
+
+    private var tripInfoPanel: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .top, spacing: 16) {
+                    TripInfoEditableField(title: "目的地", value: trip.destination, activeField: $activeInfoField, icon: "mappin.and.ellipse") { value in
+                        trip.destination = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                        return saveTripInfo()
+                    }
+                    TripInfoEditableField(title: "车牌号", value: trip.licensePlateDisplay, activeField: $activeInfoField, icon: "car") { value in
+                        trip.licensePlate = value.formattedLicensePlate
+                        return saveTripInfo()
+                    }
+                }
+                TwoTapDateRangePicker(
+                    title: "旅行日期", startTitle: "出发", endTitle: "返程",
+                    startDate: Binding(get: { trip.startDate }, set: { infoDraftStart = $0 }),
+                    endDate: Binding(get: { trip.endDate }, set: { end in
+                        JourneyHierarchyService.updateTripDateRange(trip, startDate: infoDraftStart ?? trip.startDate, endDate: end)
+                        infoDraftStart = nil
+                        if let error = saveTripInfo() { placeMessage = error }
+                    }),
+                    displayStyle: .compact, showsEndpointTitles: false, onOpen: { activeInfoField = nil }
+                )
+                TripInfoEditableField(title: "旅程备注", value: trip.note, activeField: $activeInfoField, multiline: true) { value in
+                    trip.note = value
+                    return saveTripInfo()
+                }
+            }
+            .padding(.horizontal, 18).padding(.vertical, 12)
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxHeight: 170)
+        .simultaneousGesture(DragGesture(minimumDistance: 18).onEnded { value in
+            guard activeInfoField == nil,
+                  value.translation.height < -32,
+                  abs(value.translation.height) > abs(value.translation.width) else { return }
+            withAnimation(.easeInOut(duration: 0.2)) { showsTripInfo = false }
+        })
+        .background {
+            LinearGradient(colors: [Color.tripLake.opacity(0.14), Color.tripSage.opacity(0.08)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                .background(Color.tripCanvas)
+                .onTapGesture { activeInfoField = nil }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(Color.tripLake.opacity(0.16), lineWidth: 0.5).allowsHitTesting(false))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .transition(.move(edge: .top).combined(with: .opacity))
+    }
+
+    private static let infoDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.isLenient = false
+        return formatter
+    }()
+
+    private func saveTripInfo() -> String? {
+        do { try modelContext.save(); CloudSyncService.shared.uploadAfterEdit(context: modelContext); return nil }
+        catch { return "保存失败，请重试" }
+    }
+
+    private func saveTripInfoDate(_ value: String, isStart: Bool) -> String? {
+        guard let date = Self.infoDateFormatter.date(from: value), Self.infoDateFormatter.string(from: date) == value else {
+            return "请按 YYYY-MM-DD 输入日期"
+        }
+        let start = isStart ? date : Calendar.current.startOfDay(for: trip.startDate)
+        let end = isStart ? Calendar.current.startOfDay(for: trip.endDate) : date
+        guard start <= end else { return "开始日期不能晚于结束日期" }
+        JourneyHierarchyService.updateTripDateRange(trip, startDate: start, endDate: end)
+        return saveTripInfo()
+    }
+
     private var sheetContent: some View {
         mainContent
-        .sheet(item: $dayForNewItem) { ItemEditorView(day: $0) }
+        .cloudEditSheet(item: $dayForNewItem) { ItemEditorView(day: $0) }
 
 
-        .sheet(item: $dayForFavoriteImport) { FavoriteImportSelectionView(day: $0) }
-        .sheet(item: $itemToEdit) { ItemEditorView(day: $0.day, item: $0) }
-        .sheet(item: $dayToEdit, onDismiss: {
+        .cloudEditSheet(item: $dayForFavoriteImport) { FavoriteImportSelectionView(day: $0) }
+        .cloudEditSheet(item: $itemToEdit) { ItemEditorView(day: $0.day, item: $0) }
+        .cloudEditSheet(item: $dayToEdit, onDismiss: {
             JourneyHierarchyService.normalizeTripDaySchedule(trip)
             completeElapsedItems()
         }) { DayEditorView(day: $0) }
-        .sheet(item: $timeReviewRequest) { ItineraryTimeReviewView(request: $0) }
-        .sheet(item: $screenshotDraft) { draft in
+        .cloudEditSheet(item: $timeReviewRequest) { ItineraryTimeReviewView(request: $0) }
+        .cloudEditSheet(item: $screenshotDraft) { draft in
             ScreenshotItineraryImportView(
                 trip: trip,
                 draft: draft,
@@ -108,20 +254,20 @@ struct TripDetailView: View {
                 }
             )
         }
-        .sheet(isPresented: $showsTextImport) {
+        .cloudEditSheet(isPresented: $showsTextImport) {
             TextItineraryImportView(
                 trip: trip,
                 referenceDate: selectedDaySelection?.day.date ?? trip.startDate,
                 targetDay: selectedDaySelection?.day
             )
         }
-        .sheet(item: $shareRequest) { request in
+        .cloudEditSheet(item: $shareRequest) { request in
             ShareExportView(trip: trip, initialScopeID: request.scopeID)
         }
-        .sheet(item: $routePlanningRequest) { request in
+        .cloudEditSheet(item: $routePlanningRequest) { request in
             AmapRoutePlanningView(request: request)
         }
-        .sheet(item: $navigationRequest) { request in
+        .cloudEditSheet(item: $navigationRequest) { request in
             NavigationOptionsSheet(
                 onAmap: { open(request) },
                 onXiaohongshu: { openDiscovery(.xiaohongshu, for: request) },
@@ -281,19 +427,72 @@ struct TripDetailView: View {
         }
     }
 
+    private var previewDays: [TripDay] {
+        guard dayDrag != nil else { return trip.sortedDays }
+        let lookup = Dictionary(uniqueKeysWithValues: trip.days.map { ($0.id, $0) })
+        return previewDayIDs.compactMap { lookup[$0] }
+    }
+
     private var dayNavigator: some View {
         HStack(spacing: 8) {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
-                        ForEach(Array(trip.sortedDays.enumerated()), id: \.element.id) { index, day in
+                        ForEach(Array(previewDays.enumerated()), id: \.element.id) { index, day in
                             dayNavigatorItem(index: index, day: day)
                         }
                     }
+                    .onPreferenceChange(DayTabFramesKey.self) { dayTabFrames = $0 }
+                    .contentShape(Rectangle())
+                    .background(ScrollLongPressBridge { phase, point in
+                        switch phase {
+                        case .began:
+                            guard let id = dayTabFrames.first(where: { $0.value.contains(point) })?.key,
+                                  let day = previewDays.first(where: { $0.id == id }) else { return }
+                            dayTabGrabOffset = point.x - (dayTabFrames[id]?.midX ?? point.x)
+                            beginDayDrag(day)
+                            dayTabFingerX = point.x
+                        case .changed:
+                            guard dayDrag != nil else { return }
+                            dayTabFingerX = point.x
+                            updateDayTabDragTarget()
+                        case .ended:
+                            if let active = dayDrag,
+                               let day = previewDays.first(where: { $0.id == active.destinationDayID }) {
+                                _ = finishDayDrag(over: day)
+                            } else if let active = dayDrag { cancelDayDragIfNeeded(dayID: active.dayID) }
+                            dayTabFingerX = nil
+                        case .cancelled, .failed:
+                            if let active = dayDrag { cancelDayDragIfNeeded(dayID: active.dayID) }
+                            dayTabFingerX = nil
+                        default: break
+                        }
+                    })
                     .padding(.leading, 16)
                     .padding(.vertical, 8)
-                    .animation(.snappy(duration: 0.22), value: trip.sortedDays.map(\.id))
+                    .animation(.snappy(duration: 0.22), value: previewDays.map(\.id))
                     .animation(.snappy(duration: 0.22), value: dayDragRevision)
+                }
+                .background(GeometryReader { geometry in
+                    Color.clear.preference(key: DayTabViewportKey.self, value: geometry.frame(in: .global))
+                })
+                .onPreferenceChange(DayTabViewportKey.self) { dayTabViewport = $0 }
+                .onReceive(dayTabScrollTimer) { _ in
+                    guard dayDrag != nil, let x = dayTabFingerX, dayTabViewport.width > 0 else { return }
+                    updateDayTabDragTarget()
+                    let center = x - dayTabGrabOffset
+                    let halfWidth = (dayDrag.flatMap { dayTabFrames[$0.dayID]?.width } ?? 74) / 2
+                    let right = center + halfWidth >= dayTabViewport.maxX - 4
+                    let left = center - halfWidth <= dayTabViewport.minX + 4
+                    guard right || left else { return }
+                    let days = right ? previewDays : Array(previewDays.reversed())
+                    guard let next = days.first(where: { day in
+                        guard let frame = dayTabFrames[day.id] else { return false }
+                        return right ? frame.maxX > dayTabViewport.maxX + 1 : frame.minX < dayTabViewport.minX - 1
+                    }) else { return }
+                    withAnimation(.linear(duration: 0.18)) {
+                        proxy.scrollTo(next.id, anchor: right ? .trailing : .leading)
+                    }
                 }
                 .onChange(of: selectedDayID) { _, newID in
                     guard let newID else { return }
@@ -326,49 +525,51 @@ struct TripDetailView: View {
         }
     }
 
+    private func updateDayTabDragTarget() {
+        guard let active = dayDrag, let fingerX = dayTabFingerX,
+              let source = dayTabFrames[active.dayID] else { return }
+        // Preserve the grab point: compare the dragged pill's center with each slot's center.
+        let centerX = fingerX - dayTabGrabOffset
+        let right = centerX > source.midX
+        let candidates = previewDays.filter { day in
+            guard day.id != active.dayID, let frame = dayTabFrames[day.id] else { return false }
+            return right
+                ? frame.midX > source.midX && centerX >= frame.midX
+                : frame.midX < source.midX && centerX <= frame.midX
+        }
+        if let target = candidates.min(by: {
+            abs((dayTabFrames[$0.id]?.midX ?? centerX) - centerX) < abs((dayTabFrames[$1.id]?.midX ?? centerX) - centerX)
+        }) { previewDayDrag(over: target) }
+    }
+
     private func dayNavigatorItem(index: Int, day: TripDay) -> some View {
         let isSelected = selectedDaySelection?.day.id == day.id
-        let isDragging = dayDrag?.dayID == day.id
 
-        return Button {
-            selectDay(day)
-        } label: {
-            dayNavigatorPill(index: index, day: day, isSelected: isSelected)
-        }
-        .buttonStyle(.plain)
-        .id(day.id)
-        // Keep the drag source alive inside the horizontal ScrollView.
-        // opacity(0) makes SwiftUI drop its hit-testing during the session.
-        .mask {
-            Rectangle()
-                .fill(isDragging ? Color.clear : Color.white)
-        }
-        .overlay {
-            if isDragging {
+        return Group {
+            if dayDrag?.dayID == day.id {
                 DayNavigatorPlacementPlaceholder()
+                    .frame(width: dayTabFrames[day.id]?.width ?? 74, height: dayTabFrames[day.id]?.height ?? 46)
+            } else {
+                dayNavigatorPill(index: index, day: day, isSelected: isSelected)
+                    .onTapGesture { if dayDrag == nil { selectDay(day) } }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { selectDay(day) }
             }
         }
-        .contentShape(Capsule())
-        .onDrag {
-            beginDayDrag(day)
-            return dragItemProvider(payload: "trip-day:\(day.id.uuidString)") {
-                cancelDayDragIfNeeded(dayID: day.id)
+        .id(day.id)
+        .background(GeometryReader { geometry in
+            Color.clear.preference(key: DayTabFramesKey.self, value: [day.id: geometry.frame(in: .global)])
+        })
+        .overlay {
+            if dayDrag?.dayID == day.id {
+                dayNavigatorPill(index: dayDrag?.originalDayIDs.firstIndex(of: day.id) ?? index, day: day, isSelected: isSelected)
+                    .fixedSize()
+                    .offset(x: (dayTabFingerX.map { $0 - dayTabGrabOffset } ?? dayTabFrames[day.id]?.midX ?? 0) - (dayTabFrames[day.id]?.midX ?? 0))
+                    .allowsHitTesting(false)
+                    .animation(nil, value: dayTabFingerX)
             }
-        } preview: {
-            dayNavigatorPill(index: index, day: day, isSelected: true)
-                .fixedSize()
         }
-        .onDrop(
-            of: [UTType.plainText],
-            delegate: ItineraryReorderDropDelegate(
-                onEntered: {
-                    cancelPendingDragCleanup()
-                    previewDayDrag(over: day)
-                },
-                onExited: { scheduleDragCleanup() },
-                onDrop: { finishDayDrag(over: day) }
-            )
-        )
+        .zIndex(dayDrag?.dayID == day.id ? 1 : 0)
         .accessibilityLabel("第 \(index + 1) 天，\(day.date.chineseDateText)")
         .accessibilityValue(isSelected ? "当前选择" : "")
         .accessibilityHint("长按并左右拖动可调整日期顺序")
@@ -499,109 +700,101 @@ struct TripDetailView: View {
     }
 
     private func daySection(_ day: TripDay) -> some View {
-        let displayedItems = day.displayItems
-
+        let active = itineraryDrag?.sourceDayID == day.id
+        let order = active ? itemDragOrder : day.displayItems.map(\.id)
+        let lookup = Dictionary(uniqueKeysWithValues: day.items.map { ($0.id, $0) })
         return VStack(alignment: .leading, spacing: 14) {
-            if displayedItems.isEmpty {
-                Button { dayForNewItem = day } label: {
-                    Label("添加安排", systemImage: "plus.circle")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.tripLake)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 9)
-                        .background(Color.tripLake.opacity(0.09), in: Capsule())
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-            } else {
-                ForEach(displayedItems) { item in
-                    CardSwipeActionContainer(
-                        cornerRadius: 16,
-                        editTitle: "编辑安排",
-                        deleteTitle: "删除安排",
-                        onEdit: {
-                            itemToEdit = item
-                        },
-                        onDelete: {
-                            itemToDelete = item
-                        }
-                    ) {
-                        ItineraryCard(item: item) {
-                            itemToEdit = item
-                        } onNavigate: {
-                            navigationRequest = ItineraryNavigationRequest(
-                                item: item,
-                                target: $0
-                            )
-                        } onDragStart: {
-                            beginItineraryDrag(item)
-                        } onDragCancel: {
-                            cancelItineraryDragIfNeeded(itemID: item.id)
-                        }
-                        .padding(.vertical, 2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.tripSurface)
-                        .onDrop(
-                            of: [UTType.plainText],
-                            delegate: ItineraryReorderDropDelegate(
-                                onEntered: {
-                                    cancelPendingDragCleanup()
-                                    if dayDrag != nil {
-                                        previewDayDrag(over: day)
-                                    } else {
-                                        previewItineraryDrag(over: item)
-                                    }
-                                },
-                                onExited: { scheduleDragCleanup() },
-                                onDrop: {
-                                    if dayDrag != nil {
-                                        finishDayDrag(over: day)
-                                    } else {
-                                        finishItineraryDrag(at: .item(item.id))
-                                    }
-                                }
-                            )
-                        )
-                    }
-                    // Keep the source visible while the system presents its drag preview.
-                    // A cancelled or timed-out drag must never make the card disappear.
-                    .opacity(itineraryDrag?.itemID == item.id ? 0.82 : 1)
-                    .overlay {
-                        if itineraryDrag?.itemID == item.id {
+            ForEach(order, id: \.self) { id in
+                if let item = lookup[id] {
+                    Group {
+                        if itineraryDrag?.itemID == id {
                             DragPlacementPlaceholder(cornerRadius: 16)
+                                .frame(height: itemDragSize.height)
+                        } else {
+                            CardSwipeActionContainer(cornerRadius: 16, editTitle: "编辑安排", deleteTitle: "删除安排",
+                                onEdit: { itemToEdit = item }, onDelete: { itemToDelete = item }) {
+                                ItineraryCard(item: item, onEdit: { itemToEdit = item }, onNavigate: {
+                                    navigationRequest = ItineraryNavigationRequest(item: item, target: $0)
+                                }, onDragStart: {}, onDragCancel: {})
+                                    .padding(.vertical, 2)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
+                    .id(id)
+                    .background(GeometryReader { geometry in
+                        Color.clear.preference(key: ItemDragFramesKey.self, value: [id: geometry.frame(in: .global)])
+                    })
                 }
-                .animation(.snappy(duration: 0.22), value: displayedItems.map(\.id))
-                .animation(.snappy(duration: 0.22), value: itineraryDragRevision)
-                Button { dayForNewItem = day } label: {
-                    Label("添加安排", systemImage: "plus")
-                }
-                .font(.subheadline.bold())
             }
+            Button { dayForNewItem = day } label: { Label("添加安排", systemImage: "plus") }
+                .font(.subheadline.bold())
         }
+        .onPreferenceChange(ItemDragFramesKey.self) { itemDragFrames = $0 }
         .contentShape(Rectangle())
-        .onDrop(
-            of: [UTType.plainText],
-            delegate: ItineraryReorderDropDelegate(
-                onEntered: {
-                    cancelPendingDragCleanup()
-                    if dayDrag != nil {
-                        previewDayDrag(over: day)
-                    } else if day.sortedItems.isEmpty {
-                        previewItineraryDrag(toEndOf: day)
-                    }
-                },
-                onExited: { scheduleDragCleanup() },
-                onDrop: {
-                    if dayDrag != nil {
-                        finishDayDrag(over: day)
-                    } else {
-                        finishItineraryDrag(at: .endOfDay(day.id))
-                    }
+        .background(ScrollLongPressBridge { phase, point in
+            switch phase {
+            case .began:
+                guard let id = itemDragFrames.first(where: { $0.value.contains(point) })?.key,
+                      let item = lookup[id], let frame = itemDragFrames[id] else { return }
+                itemDragOrder = day.displayItems.map(\.id)
+                itemDragSize = frame.size
+                itemDragGrabOffset = CGSize(width: point.x - frame.midX, height: point.y - frame.midY)
+                beginItineraryDrag(item)
+                itemDragLocation = point
+            case .changed:
+                guard itineraryDrag != nil else { return }
+                itemDragLocation = point
+                updateItemDragTarget()
+            case .ended:
+                commitItemDrag()
+            case .cancelled, .failed:
+                if let drag = itineraryDrag { cancelItineraryDragIfNeeded(itemID: drag.itemID) }
+                itemDragLocation = nil
+            default: break
+            }
+        })
+        .overlay(alignment: .topLeading) {
+            GeometryReader { geometry in
+                if let drag = itineraryDrag, let item = lookup[drag.itemID], let location = itemDragLocation {
+                    let bounds = geometry.frame(in: .global)
+                    ItineraryCard(item: item, onEdit: {}, onNavigate: { _ in }, onDragStart: {}, onDragCancel: {}, isDragEnabled: false)
+                        .frame(width: itemDragSize.width, height: itemDragSize.height)
+                        .scaleEffect(0.94)
+                        .shadow(color: .black.opacity(0.14), radius: 10, y: 4)
+                        .position(x: location.x - itemDragGrabOffset.width - bounds.minX,
+                                  y: location.y - itemDragGrabOffset.height - bounds.minY)
+                        .animation(nil, value: location)
                 }
-            )
-        )
+            }.allowsHitTesting(false)
+        }
+        .animation(.snappy(duration: 0.22), value: itemDragOrder)
+    }
+
+    private func updateItemDragTarget() {
+        guard let drag = itineraryDrag, let point = itemDragLocation,
+              let from = itemDragOrder.firstIndex(of: drag.itemID),
+              let source = itemDragFrames[drag.itemID] else { return }
+        let center = point.y - itemDragGrabOffset.height
+        let down = center > source.midY
+        let candidates = itemDragOrder.filter { id in
+            guard id != drag.itemID, let frame = itemDragFrames[id] else { return false }
+            return down ? frame.midY > source.midY && center >= frame.midY : frame.midY < source.midY && center <= frame.midY
+        }
+        guard let target = candidates.min(by: { abs((itemDragFrames[$0]?.midY ?? center) - center) < abs((itemDragFrames[$1]?.midY ?? center) - center) }),
+              let to = itemDragOrder.firstIndex(of: target) else { return }
+        itemDragOrder.insert(itemDragOrder.remove(at: from), at: to)
+    }
+
+    private func commitItemDrag() {
+        guard let drag = itineraryDrag else { return }
+        let original = drag.originalItemIDsByDay[drag.sourceDayID] ?? []
+        let finalIndex = itemDragOrder.firstIndex(of: drag.itemID)
+        itineraryDrag = nil
+        itemDragLocation = nil
+        guard itemDragOrder != original, let index = finalIndex, original.indices.contains(index) else { return }
+        let result = JourneyHierarchyService.moveItineraryItemResult(id: drag.itemID, to: original[index], in: trip.days)
+        _ = handleMove(result)
     }
 
     private func displayTitle(for day: TripDay) -> String {
@@ -627,13 +820,9 @@ struct TripDetailView: View {
 
     private func beginDayDrag(_ day: TripDay) {
         cancelPendingDragCleanup()
-        if let itineraryDrag {
-            restoreItineraryDrag(itineraryDrag)
-            self.itineraryDrag = nil
-        }
-        if let dayDrag {
-            restoreDayDrag(dayDrag)
-        }
+        itineraryDrag = nil
+        itemDragLocation = nil
+        previewDayIDs = trip.sortedDays.map(\.id)
         dayDrag = TripDayDragState(
             dayID: day.id,
             originalDayIDs: trip.sortedDays.map(\.id),
@@ -643,17 +832,12 @@ struct TripDetailView: View {
 
     private func previewDayDrag(over day: TripDay) {
         guard var dayDrag, dayDrag.dayID != day.id else { return }
-        guard dayDrag.destinationDayID != day.id else { return }
 
-        var didMove = false
+        guard let from = previewDayIDs.firstIndex(of: dayDrag.dayID),
+              let to = previewDayIDs.firstIndex(of: day.id), from != to else { return }
         withAnimation(.snappy(duration: 0.22)) {
-            didMove = JourneyHierarchyService.previewMoveTripDay(
-                id: dayDrag.dayID,
-                to: day.id,
-                in: trip.days
-            )
+            previewDayIDs.insert(previewDayIDs.remove(at: from), at: to)
         }
-        guard didMove else { return }
         dayDrag.destinationDayID = day.id
         self.dayDrag = dayDrag
         dayDragRevision &+= 1
@@ -663,22 +847,16 @@ struct TripDetailView: View {
         guard let dayDrag else { return false }
         cancelPendingDragCleanup()
 
-        if hasOriginalTripDayOrder(dayDrag.originalDayIDs, in: trip.days) {
-            withTransaction(Transaction(animation: nil)) {
-                restoreDayDrag(dayDrag)
-            }
-            self.dayDrag = nil
+        if previewDayIDs == dayDrag.originalDayIDs {
+                self.dayDrag = nil
             dayDragRevision &+= 1
             return false
         }
 
-        let committedDayID = resolvedTripDayDropDestination(
-            lastPreviewDayID: dayDrag.destinationDayID,
-            reportedDayID: day.id
-        )
-        withTransaction(Transaction(animation: nil)) {
-            restoreDayDrag(dayDrag)
-        }
+        // Commit the current insertion slot, even after reversing direction repeatedly.
+        guard let finalIndex = previewDayIDs.firstIndex(of: dayDrag.dayID),
+              dayDrag.originalDayIDs.indices.contains(finalIndex) else { return false }
+        let committedDayID = dayDrag.originalDayIDs[finalIndex]
         self.dayDrag = nil
         dayDragRevision &+= 1
 
@@ -711,32 +889,17 @@ struct TripDetailView: View {
         return true
     }
 
-    private func restoreDayDrag(_ drag: TripDayDragState) {
-        let daysByID = Dictionary(uniqueKeysWithValues: trip.days.map { ($0.id, $0) })
-        for (index, dayID) in drag.originalDayIDs.enumerated() {
-            daysByID[dayID]?.sortOrder = index
-        }
-    }
-
     private func cancelDayDragIfNeeded(dayID: UUID) {
         guard let dayDrag, dayDrag.dayID == dayID else { return }
         cancelPendingDragCleanup()
-        withTransaction(Transaction(animation: nil)) {
-            restoreDayDrag(dayDrag)
-        }
         self.dayDrag = nil
         dayDragRevision &+= 1
     }
 
     private func beginItineraryDrag(_ item: ItineraryItem) {
         cancelPendingDragCleanup()
-        if let dayDrag {
-            restoreDayDrag(dayDrag)
-            self.dayDrag = nil
-        }
-        if let itineraryDrag {
-            restoreItineraryDrag(itineraryDrag)
-        }
+        dayDrag = nil
+        dayTabFingerX = nil
         guard let sourceDay = trip.days.first(where: { day in day.items.contains(where: { $0.id == item.id }) }) else {
             return
         }
@@ -750,121 +913,9 @@ struct TripDetailView: View {
         )
     }
 
-    private func previewItineraryDrag(over targetItem: ItineraryItem) {
-        guard var itineraryDrag, itineraryDrag.itemID != targetItem.id else { return }
-        let destination = ItineraryDropDestination.item(targetItem.id)
-        guard itineraryDrag.destination != destination else { return }
-
-        var didMove = false
-        withAnimation(.snappy(duration: 0.22)) {
-            didMove = JourneyHierarchyService.previewMoveItineraryItem(
-                id: itineraryDrag.itemID,
-                to: targetItem.id,
-                in: trip.days
-            )
-        }
-        guard didMove else { return }
-        itineraryDrag.destination = destination
-        self.itineraryDrag = itineraryDrag
-        itineraryDragRevision &+= 1
-    }
-
-    private func previewItineraryDrag(toEndOf day: TripDay) {
-        guard var itineraryDrag else { return }
-        let destination = ItineraryDropDestination.endOfDay(day.id)
-        guard itineraryDrag.destination != destination else { return }
-
-        var didMove = false
-        withAnimation(.snappy(duration: 0.22)) {
-            didMove = JourneyHierarchyService.previewMoveItineraryItem(
-                id: itineraryDrag.itemID,
-                toEndOf: day,
-                in: trip.days
-            )
-        }
-        guard didMove else { return }
-        itineraryDrag.destination = destination
-        self.itineraryDrag = itineraryDrag
-        itineraryDragRevision &+= 1
-    }
-
-    private func finishItineraryDrag(at destination: ItineraryDropDestination) -> Bool {
-        guard let itineraryDrag else { return false }
-        cancelPendingDragCleanup()
-
-        if hasOriginalItineraryOrder(
-            itineraryDrag.originalItemIDsByDay,
-            in: trip.days
-        ) {
-            withTransaction(Transaction(animation: nil)) {
-                restoreItineraryDrag(itineraryDrag)
-            }
-            self.itineraryDrag = nil
-            itineraryDragRevision &+= 1
-            return false
-        }
-
-        // Reordering the live cards can move the drop view underneath the pointer. In that
-        // case SwiftUI reports the dragged card itself (or its parent day) on release. The
-        // last preview destination is the stable representation of the position the user saw.
-        let committedDestination = resolvedItineraryDropDestination(
-            lastPreview: itineraryDrag.destination,
-            reported: destination
-        )
-
-        var result = ItineraryMoveResult.unchanged
-        withTransaction(Transaction(animation: nil)) {
-            restoreItineraryDrag(itineraryDrag)
-            switch committedDestination {
-            case let .item(targetItemID):
-                result = JourneyHierarchyService.moveItineraryItemResult(
-                    id: itineraryDrag.itemID,
-                    to: targetItemID,
-                    in: trip.days
-                )
-            case let .endOfDay(dayID):
-                guard let day = trip.days.first(where: { $0.id == dayID }) else { return }
-                result = JourneyHierarchyService.moveItineraryItemResult(
-                    id: itineraryDrag.itemID,
-                    toEndOf: day,
-                    in: trip.days
-                )
-            }
-        }
-        self.itineraryDrag = nil
-        itineraryDragRevision &+= 1
-        return handleMove(result)
-    }
-
-    private func restoreItineraryDrag(_ drag: ItineraryDragState) {
-        let allItems = Dictionary(
-            uniqueKeysWithValues: trip.days.flatMap(\.items).map { ($0.id, $0) }
-        )
-        guard
-            let draggedItem = allItems[drag.itemID],
-            let sourceDay = trip.days.first(where: { $0.id == drag.sourceDayID })
-        else { return }
-
-        for day in trip.days {
-            day.items.removeAll { $0.id == drag.itemID }
-        }
-        draggedItem.day = sourceDay
-        sourceDay.items.append(draggedItem)
-
-        for day in trip.days {
-            guard let originalIDs = drag.originalItemIDsByDay[day.id] else { continue }
-            for (index, itemID) in originalIDs.enumerated() {
-                allItems[itemID]?.sortOrder = index
-            }
-        }
-    }
-
     private func cancelItineraryDragIfNeeded(itemID: UUID) {
         guard let itineraryDrag, itineraryDrag.itemID == itemID else { return }
         cancelPendingDragCleanup()
-        withTransaction(Transaction(animation: nil)) {
-            restoreItineraryDrag(itineraryDrag)
-        }
         self.itineraryDrag = nil
         itineraryDragRevision &+= 1
     }
@@ -874,31 +925,14 @@ struct TripDetailView: View {
         dragCleanupTask = nil
     }
 
-    private func scheduleDragCleanup() {
-        cancelPendingDragCleanup()
-        dragCleanupTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            cancelActiveDragIfNeeded()
-        }
-    }
-
     private func cancelActiveDragIfNeeded() {
         cancelPendingDragCleanup()
-        if let dayDrag {
-            withTransaction(Transaction(animation: nil)) {
-                restoreDayDrag(dayDrag)
-            }
-            self.dayDrag = nil
-            dayDragRevision &+= 1
-        }
-        if let itineraryDrag {
-            withTransaction(Transaction(animation: nil)) {
-                restoreItineraryDrag(itineraryDrag)
-            }
-            self.itineraryDrag = nil
-            itineraryDragRevision &+= 1
-        }
+        dayDrag = nil
+        itineraryDrag = nil
+        dayTabFingerX = nil
+        itemDragLocation = nil
+        previewDayIDs = []
+        itemDragOrder = []
     }
 
     private func requestRoutePlanning(for days: [TripDay], title: String) {
@@ -1064,6 +1098,7 @@ private func dragItemProvider(
 
 private struct ItineraryReorderDropDelegate: DropDelegate {
     let onEntered: () -> Void
+    var onUpdated: ((CGPoint) -> Void)? = nil
     var onExited: (() -> Void)? = nil
     let onDrop: () -> Bool
 
@@ -1080,7 +1115,8 @@ private struct ItineraryReorderDropDelegate: DropDelegate {
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        DropProposal(operation: .move)
+        onUpdated?(info.location)
+        return DropProposal(operation: .move)
     }
 
     func performDrop(info: DropInfo) -> Bool {
@@ -1234,13 +1270,6 @@ private struct ItineraryCard: View {
                 .contentShape(Rectangle())
                 .contentShape(.dragPreview, RoundedRectangle(cornerRadius: 16, style: .continuous))
                 .onTapGesture(perform: onEdit)
-                .onDrag {
-                    onDragStart()
-                    return dragItemProvider(payload: item.id.uuidString, onSessionEnd: onDragCancel)
-                } preview: {
-                    cardSurface
-                        .frame(width: 330)
-                }
                 .accessibilityHint("长按并拖动可调整顺序")
                 .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
         } else {
@@ -1251,20 +1280,6 @@ private struct ItineraryCard: View {
 
     private var cardSurface: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: item.executionStatus.symbol)
-                .font(.system(size: 19, weight: .semibold))
-                .foregroundStyle(item.executionStatus == .inProgress ? Color.white : statusColor)
-                .frame(width: 36, height: 36)
-                .background(
-                    item.executionStatus == .inProgress ? statusColor : statusColor.opacity(0.10),
-                    in: Circle()
-                )
-                .overlay {
-                    Circle()
-                        .stroke(statusColor.opacity(item.executionStatus == .inProgress ? 0.95 : 0.20), lineWidth: 1)
-                }
-                .accessibilityLabel("执行状态：\(item.executionStatus.rawValue)")
-
             VStack(alignment: .leading, spacing: 9) {
                 HStack(alignment: .center, spacing: 12) {
                     itineraryTitle
@@ -1318,12 +1333,17 @@ private struct ItineraryCard: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .opacity(item.executionStatus == .completed ? 0.82 : 1)
-        .padding(12)
-        .background(
-            statusBackgroundColor,
-            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
-        )
+        .accessibilityValue("执行状态：\(item.executionStatus.rawValue)")
+        .padding(.leading, 20)
+        .padding(.trailing, 12)
+        .padding(.vertical, 12)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.tripSurface)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous).fill(statusBackgroundColor)
+                }
+        }
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(statusBorderColor, lineWidth: statusBorderWidth)
@@ -1332,8 +1352,8 @@ private struct ItineraryCard: View {
             if item.executionStatus == .inProgress {
                 Capsule()
                     .fill(Color.tripLake)
-                    .frame(width: 5)
-                    .padding(.vertical, 12)
+                    .frame(width: 3)
+                    .padding(.vertical, 16)
                     .padding(.leading, 2)
             }
         }
@@ -1375,7 +1395,8 @@ private struct ItineraryCard: View {
                         HStack(spacing: 7) {
                             Image(systemName: target.role == .origin ? "location.circle" : "mappin.circle.fill")
                             Text("\(target.role.displayName)：\(target.displayName)")
-                                .lineLimit(2)
+                                .lineLimit(1)
+                                .truncationMode(.tail)
                         }
                         .font(.subheadline.weight(locationFontWeight))
                         .foregroundStyle(locationForegroundColor)
@@ -1399,23 +1420,24 @@ private struct ItineraryCard: View {
 
     private var statusBackgroundColor: Color {
         switch item.executionStatus {
-        case .notStarted, .inProgress: Color.tripSurface
-        case .completed: Color.tripSage.opacity(0.14)
+        case .notStarted: Color.clear
+        case .inProgress: Color.tripLake.opacity(0.07)
+        case .completed: Color.tripSage.opacity(0.06)
         }
     }
 
     private var statusBorderColor: Color {
         switch item.executionStatus {
-        case .notStarted: Color.tripSand.opacity(0.82)
-        case .inProgress: Color.tripLake.opacity(0.92)
-        case .completed: Color.tripSage.opacity(0.46)
+        case .notStarted: Color.tripMist.opacity(0.45)
+        case .inProgress: Color.tripLake.opacity(0.62)
+        case .completed: Color.tripSage.opacity(0.25)
         }
     }
 
     private var statusBorderWidth: CGFloat {
         switch item.executionStatus {
-        case .notStarted: 1.2
-        case .inProgress: 2
+        case .notStarted: 0.8
+        case .inProgress: 1.4
         case .completed: 0.8
         }
     }
@@ -1582,8 +1604,9 @@ struct AmapRoutePlanningView: View {
     private let routeModes: [TransportMode] = [.car, .walk, .ride, .bus]
 
     init(request: ItineraryRoutePlanningRequest) {
-        self.request = request
-        _selectedPointIDs = State(initialValue: Set(request.points.map(\.id)))
+        let points = ItineraryRoutePlanning.removingAdjacentDuplicates(request.points)
+        self.request = ItineraryRoutePlanningRequest(title: request.title, points: points, missingLocationCount: request.missingLocationCount)
+        _selectedPointIDs = State(initialValue: Set(points.map(\.id)))
     }
 
     var body: some View {
@@ -1701,7 +1724,7 @@ struct AmapRoutePlanningView: View {
     }
 
     private var selectedPoints: [ItineraryRoutePoint] {
-        request.points.filter { selectedPointIDs.contains($0.id) }
+        ItineraryRoutePlanning.removingAdjacentDuplicates(request.points.filter { selectedPointIDs.contains($0.id) })
     }
 
     private func toggle(_ point: ItineraryRoutePoint) {
@@ -1875,13 +1898,199 @@ private struct DayEditorView: View {
     var body: some View {
         TripNavigationStack {
             Form {
-                TextField("当天标题", text: $day.title)
+                TextField("当天标题", text: $day.title).clearableText($day.title)
                 LabeledContent("日期", value: day.date.chineseDateText)
-                TextField("当天备注", text: $day.note, axis: .vertical).lineLimit(3...8)
+                TextField("当天备注", text: $day.note, axis: .vertical).clearableText($day.note).lineLimit(3...8)
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("编辑当天")
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+        }
+    }
+}
+
+
+private struct TripInfoEditableField: View {
+    let title: String
+    let value: String
+    @Binding var activeField: String?
+    var multiline = false
+    var icon: String? = nil
+    var displayValue: String? = nil
+    let onSave: (String) -> String?
+    private var editing: Bool {
+        get { activeField == title }
+        nonmutating set { if newValue { activeField = title } else if activeField == title { activeField = nil } }
+    }
+    @State private var draft = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    private func beginEditing() { draft = value; error = nil; editing = true; focused = true }
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let icon {
+                Image(systemName: icon).resizable().scaledToFit()
+                    .frame(width: 16, height: 16).foregroundStyle(title == "车牌号" ? Color.tripSage : Color.tripLakeText).padding(.top, 2)
+            }
+            if editing {
+                TextField("添加\(title)", text: $draft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .lineLimit(multiline ? 1...3 : 1...2)
+                    .focused($focused)
+                    .onAppear { focused = true }
+                    .onChange(of: draft) { _, value in
+                        guard editing else { return }
+                        error = onSave(value)
+                    }
+                    .onChange(of: focused) { _, hasFocus in
+                        if !hasFocus { editing = false }
+                    }
+                    .onSubmit { if error == nil { editing = false; focused = false } }
+                    .accessibilityLabel(title)
+                    .accessibilityHint(error ?? "修改后自动保存")
+            } else {
+                Text(value.isEmpty ? "添加\(title)" : (displayValue ?? value))
+                    .font(.subheadline)
+                    .lineLimit(multiline ? 3 : 2)
+                    .foregroundStyle(value.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture(count: 2, perform: beginEditing)
+                    .accessibilityLabel(title + "，" + value)
+                    .accessibilityHint("双击编辑")
+                    .accessibilityAction(named: "编辑", beginEditing)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+    }
+}
+
+private struct TripInfoPullOffsetKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = nextValue() }
+}
+
+private struct DayTabFramesKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+private struct DayTabViewportKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+private struct ItemDragFramesKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
+// A native long press can coexist with the scroll view's pan recognizer. Unlike a
+// sequenced SwiftUI zero-distance drag, it does not claim ordinary scroll gestures.
+private struct ScrollLongPressBridge: UIViewRepresentable {
+    let onEvent: (UIGestureRecognizer.State, CGPoint) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onEvent: onEvent) }
+    func makeUIView(context: Context) -> Probe {
+        let view = Probe()
+        view.isUserInteractionEnabled = false
+        view.attach = { [weak coordinator = context.coordinator] view in coordinator?.attach(to: view) }
+        return view
+    }
+    func updateUIView(_ uiView: Probe, context: Context) {
+        context.coordinator.onEvent = onEvent
+        DispatchQueue.main.async { [weak uiView, weak coordinator = context.coordinator] in
+            if let uiView { coordinator?.attach(to: uiView) }
+        }
+    }
+    static func dismantleUIView(_ uiView: Probe, coordinator: Coordinator) { coordinator.detach() }
+    final class Probe: UIView {
+        var attach: ((UIView) -> Void)?
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            DispatchQueue.main.async { [weak self] in if let self { self.attach?(self) } }
+        }
+    }
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onEvent: (UIGestureRecognizer.State, CGPoint) -> Void
+        weak var scrollView: UIScrollView?
+        private weak var hostView: UIView?
+        private var savedPanEnabled: Bool?
+        private var suspendedNavigationGestures: [(UIGestureRecognizer, Bool)] = []
+        lazy var recognizer: UILongPressGestureRecognizer = {
+            let value = UILongPressGestureRecognizer(target: self, action: #selector(handle(_:)))
+            value.minimumPressDuration = 0.3
+            value.allowableMovement = 12
+            value.cancelsTouchesInView = false
+            value.delaysTouchesBegan = false
+            value.delaysTouchesEnded = false
+            value.delegate = self
+            return value
+        }()
+        init(onEvent: @escaping (UIGestureRecognizer.State, CGPoint) -> Void) { self.onEvent = onEvent }
+        func attach(to view: UIView) {
+            hostView = view
+            var ancestor = view.superview
+            while let current = ancestor {
+                if let scroll = current as? UIScrollView {
+                    if scrollView !== scroll { detach(); scrollView = scroll; scroll.addGestureRecognizer(recognizer) }
+                    return
+                }
+                ancestor = current.superview
+            }
+        }
+        private func suspendNavigationGestures(from view: UIView) {
+            var responder: UIResponder? = view
+            while let current = responder {
+                if let controller = current as? UIViewController,
+                   let navigation = (controller as? UINavigationController) ?? controller.navigationController {
+                    var gestures = [navigation.interactivePopGestureRecognizer].compactMap { $0 }
+                    if #available(iOS 26.0, *), let contentPop = navigation.interactiveContentPopGestureRecognizer {
+                        gestures.append(contentPop)
+                    }
+                    for gesture in gestures where !suspendedNavigationGestures.contains(where: { $0.0 === gesture }) {
+                        suspendedNavigationGestures.append((gesture, gesture.isEnabled))
+                        gesture.isEnabled = false
+                    }
+                    return
+                }
+                responder = current.next
+            }
+        }
+        private func restorePan() {
+            for (gesture, wasEnabled) in suspendedNavigationGestures { gesture.isEnabled = wasEnabled }
+            suspendedNavigationGestures.removeAll()
+            if let savedPanEnabled { scrollView?.panGestureRecognizer.isEnabled = savedPanEnabled }
+            savedPanEnabled = nil
+        }
+        func detach() {
+            restorePan()
+            scrollView?.removeGestureRecognizer(recognizer)
+            scrollView = nil
+        }
+        @objc func handle(_ gesture: UILongPressGestureRecognizer) {
+            if gesture.state == .began, let scrollView {
+                suspendNavigationGestures(from: scrollView)
+                savedPanEnabled = scrollView.panGestureRecognizer.isEnabled
+                // Stop finger-driven panning only. Programmatic edge scrolling remains enabled.
+                scrollView.panGestureRecognizer.isEnabled = false
+            }
+            onEvent(gesture.state, gesture.location(in: gesture.view?.window))
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                restorePan()
+            }
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard let hostView, hostView.window != nil else { return false }
+            return hostView.bounds.contains(touch.location(in: hostView))
+        }
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            otherGestureRecognizer === scrollView?.panGestureRecognizer
         }
     }
 }

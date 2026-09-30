@@ -10,9 +10,11 @@
 		0008D241B4C86174D34C328C /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 880839EB0CCEF7D46FA31F7C /* Security.framework */; };
 		03D6499BA24BECFC5DA9BF81 /* triptrail-demo-lake.png in Resources */ = {isa = PBXBuildFile; fileRef = C628644B7C152C95A04262DC /* triptrail-demo-lake.png */; };
 		07CEE1462D3673EA05937681 /* JourneyDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CF97F064A3CA45C61954FE /* JourneyDomain.swift */; };
+		0801C057EA299A5594E24D2E /* CloudSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 792A6C9FC95293B81E91E5CA /* CloudSyncTests.swift */; };
 		2CD2D59C1F74F4BC1171A31E /* FootprintCreationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8224CD459B1F1F369B3E6C55 /* FootprintCreationService.swift */; };
 		359549B07E89CF34A77CB651 /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 19D9C6694875B0587674D68C /* AVKit.framework */; };
 		3A4FE4C1B113FF0F6A6FE6B4 /* ShareExportView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF9B69579A7AA3900D7C09DB /* ShareExportView.swift */; };
+		3A8A029AF78CD7FA27290B6B /* CloudDataView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 433E00A5DE553079F18AE92F /* CloudDataView.swift */; };
 		4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */; };
 		48CD50F05734D58631115DF6 /* ScreenshotItineraryImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */; };
 		4BAC1710E71410AAAF89E848 /* EnhancedRecognitionSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3E5A0AF1387DE276612BD36A /* EnhancedRecognitionSettings.swift */; };
@@ -57,6 +59,7 @@
 		E06A743A45334F73E357F00A /* DataBackupService.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0AF68083D4B0B5E0D157885 /* DataBackupService.swift */; };
 		F167C2007BA75ACB9D37F92F /* PlaceSearchService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99CADCD30ED9A0EB8F7032D4 /* PlaceSearchService.swift */; };
 		F50045B01C57421A01183F33 /* StorySyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */; };
+		F9272E16D36C24283A0DF614 /* CloudSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20BE66A9000CA90BB0CB0FC /* CloudSyncService.swift */; };
 		FB5D84315EF5D566E1EFA3D8 /* StoriesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D7EDFA17443EA9DE5213B5C /* StoriesView.swift */; };
 /* End PBXBuildFile section */
 
@@ -81,6 +84,7 @@
 		38B66E3C7CC9BCC7B4F429B8 /* TripExpenseSummary.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripExpenseSummary.swift; sourceTree = "<group>"; };
 		3E20280323486DC4612F93DA /* AmapServiceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AmapServiceTests.swift; sourceTree = "<group>"; };
 		3E5A0AF1387DE276612BD36A /* EnhancedRecognitionSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EnhancedRecognitionSettings.swift; sourceTree = "<group>"; };
+		433E00A5DE553079F18AE92F /* CloudDataView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudDataView.swift; sourceTree = "<group>"; };
 		4581B2CC3AADDA1844AB02C3 /* TripTrailTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = TripTrailTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		4695359D187A433D01F49AC8 /* ItemEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ItemEditorView.swift; sourceTree = "<group>"; };
 		4F1A0EF83E8A5CBC256E20C3 /* CurrentTripsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CurrentTripsView.swift; sourceTree = "<group>"; };
@@ -94,11 +98,14 @@
 		6B81623CC191BC05FF3E25D7 /* TripTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripTheme.swift; sourceTree = "<group>"; };
 		6DD69576E4A06805FDBF344E /* TextItineraryImportView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextItineraryImportView.swift; sourceTree = "<group>"; };
 		707D9917E7B4FAF29E55426E /* TripTrail.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = TripTrail.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		792A6C9FC95293B81E91E5CA /* CloudSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncTests.swift; sourceTree = "<group>"; };
 		8224CD459B1F1F369B3E6C55 /* FootprintCreationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FootprintCreationService.swift; sourceTree = "<group>"; };
 		880839EB0CCEF7D46FA31F7C /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
 		892B99220A479956D1D35546 /* Photos.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Photos.framework; path = System/Library/Frameworks/Photos.framework; sourceTree = SDKROOT; };
 		99CADCD30ED9A0EB8F7032D4 /* PlaceSearchService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaceSearchService.swift; sourceTree = "<group>"; };
 		9D7EDFA17443EA9DE5213B5C /* StoriesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StoriesView.swift; sourceTree = "<group>"; };
+		A0AD19F39A4C8DADD1B726E5 /* Cloud.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Cloud.xcconfig; sourceTree = "<group>"; };
+		A20BE66A9000CA90BB0CB0FC /* CloudSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudSyncService.swift; sourceTree = "<group>"; };
 		A3615EFC09F8CA8E95684470 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		A46FD96E9A23886B0E8E0C81 /* TravelModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TravelModels.swift; sourceTree = "<group>"; };
 		AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorySyncService.swift; sourceTree = "<group>"; };
@@ -166,6 +173,7 @@
 			isa = PBXGroup;
 			children = (
 				3E20280323486DC4612F93DA /* AmapServiceTests.swift */,
+				792A6C9FC95293B81E91E5CA /* CloudSyncTests.swift */,
 				6634C73CB10E4A9523201687 /* MediaPresentationTests.swift */,
 				1E26BB6191A7922EBD5499C3 /* ScreenshotItineraryImportTests.swift */,
 				E22A12FED4342670D429325B /* TravelStoryTests.swift */,
@@ -200,6 +208,7 @@
 			isa = PBXGroup;
 			children = (
 				C130F7997D27B0DF7C2C6029 /* AmapService.swift */,
+				A20BE66A9000CA90BB0CB0FC /* CloudSyncService.swift */,
 				F0AF68083D4B0B5E0D157885 /* DataBackupService.swift */,
 				C62586EF64A92B0254D80F17 /* DebugSampleDataService.swift */,
 				3E5A0AF1387DE276612BD36A /* EnhancedRecognitionSettings.swift */,
@@ -229,6 +238,7 @@
 		6B72D4B4C4C514D4D6FF7453 = {
 			isa = PBXGroup;
 			children = (
+				A3420728BD41B1A17A83C6C7 /* Config */,
 				77DAA278DB4C2462A07D8E76 /* TripTrail */,
 				2F1B77D2742AA229876A8A0F /* TripTrailTests */,
 				42C679F8AF91867F79C53CB6 /* Frameworks */,
@@ -277,6 +287,7 @@
 		841418E69AA03A0B0E961BFF /* Settings */ = {
 			isa = PBXGroup;
 			children = (
+				433E00A5DE553079F18AE92F /* CloudDataView.swift */,
 				DED36EA4063EAFC80F693B57 /* SettingsView.swift */,
 			);
 			path = Settings;
@@ -302,6 +313,14 @@
 				F2BFA0468BB93FF47365D904 /* TripDetailView.swift */,
 			);
 			path = Current;
+			sourceTree = "<group>";
+		};
+		A3420728BD41B1A17A83C6C7 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				A0AD19F39A4C8DADD1B726E5 /* Cloud.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		AD3025DA33891E43D69FC28B /* Models */ = {
@@ -438,6 +457,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				5C46741176D3E7645FE5493B /* AmapService.swift in Sources */,
+				3A8A029AF78CD7FA27290B6B /* CloudDataView.swift in Sources */,
+				F9272E16D36C24283A0DF614 /* CloudSyncService.swift in Sources */,
 				847FCF5F16E71214F5A6B1C5 /* CurrentTripsView.swift in Sources */,
 				E06A743A45334F73E357F00A /* DataBackupService.swift in Sources */,
 				C23FD5CE5E255C702574C9CE /* DebugSampleDataService.swift in Sources */,
@@ -480,6 +501,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				D1032FC43E2316F0A3B0BD31 /* AmapServiceTests.swift in Sources */,
+				0801C057EA299A5594E24D2E /* CloudSyncTests.swift in Sources */,
 				B8A02B61B78B1C54F18F1DFB /* MediaPresentationTests.swift in Sources */,
 				D61E20736D09EB1DAEA1976E /* ScreenshotItineraryImportTests.swift in Sources */,
 				69413A5A86DCA5E84B6D1537 /* TravelStoryTests.swift in Sources */,
@@ -660,6 +682,7 @@
 		};
 		E140D4DB36FB5B3EEB17F134 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A0AD19F39A4C8DADD1B726E5 /* Cloud.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -682,6 +705,7 @@
 		};
 		E8894A20112EC7E771D670DC /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A0AD19F39A4C8DADD1B726E5 /* Cloud.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;

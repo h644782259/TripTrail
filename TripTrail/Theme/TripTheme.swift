@@ -582,3 +582,56 @@ extension Date {
     var chineseDateText: String { formatted(.dateTime.year().month().day()) }
     var timeText: String { formatted(.dateTime.hour().minute()) }
 }
+
+
+extension View {
+    /// Keep the stored value intact until the user explicitly clears this field.
+    func clearableText(_ text: Binding<String>, alignment: Alignment = .trailing, minimumHeight: CGFloat = 44) -> some View {
+        modifier(TripClearableText(text: text, alignment: alignment, minimumHeight: minimumHeight))
+    }
+}
+
+private struct TripClearableText: ViewModifier {
+    @Binding var text: String
+    let alignment: Alignment
+    let minimumHeight: CGFloat
+    func body(content: Content) -> some View {
+        content
+            .frame(minHeight: minimumHeight)
+            .padding(.trailing, text.isEmpty ? 0 : 44)
+            .overlay(alignment: alignment) {
+                if !text.isEmpty {
+                    Button { text = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("清空内容")
+                }
+            }
+    }
+}
+
+struct TripAmountInput: View {
+    @Binding var value: Double
+    @State private var text: String
+    init(value: Binding<Double>) {
+        _value = value
+        _text = State(initialValue: value.wrappedValue == 0 ? "" : value.wrappedValue.formatted(.number.grouping(.never)))
+    }
+    var body: some View {
+        TextField("输入金额", text: $text)
+            .clearableText($text)
+            .keyboardType(.decimalPad)
+            .onChange(of: text) { _, updated in
+                value = (try? Double(updated, format: .number)) ?? 0
+            }
+            .onChange(of: value) { _, updated in
+                let parsed = (try? Double(text, format: .number)) ?? 0
+                if parsed != updated { text = updated == 0 ? "" : updated.formatted(.number.grouping(.never)) }
+            }
+    }
+}

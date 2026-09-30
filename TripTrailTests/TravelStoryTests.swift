@@ -2229,6 +2229,55 @@ final class TravelStoryTests: XCTestCase {
         XCTAssertEqual(try targetContainer.mainContext.fetch(FetchDescriptor<Trip>()).first?.title, "无媒体备份")
     }
 
+    func testBackupSkippingMissingMediaPreservesRecordsAndRestores() throws {
+        let source = try makeContainer()
+        let date = Date(timeIntervalSince1970: 1_788_000_000)
+        let trip = Trip(title: "资源缺失备份", destination: "杭州", startDate: date, endDate: date)
+        let day = TripDay(date: date, title: "西湖", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(title: "断桥", category: .attraction, startTime: date, endTime: date, sortOrder: 0)
+        let missing = MediaReference(localIdentifier: "deleted-photo", kind: .image)
+        missing.itineraryItem = item
+        item.media = [missing]; item.day = day; day.items = [item]; trip.days = [day]
+        source.mainContext.insert(trip)
+        try source.mainContext.save()
+        let original = try DataBackupService.makeBackupData(from: source.mainContext)
+        let filtered = try PortablePackageService.removingUnavailableMedia(from: original, identifiers: [missing.id.uuidString.lowercased()])
+        XCTAssertEqual(try DataBackupService.inspectBackup(original).mediaReferenceCount, 1)
+        XCTAssertEqual(try DataBackupService.inspectBackup(filtered).mediaReferenceCount, 0)
+        XCTAssertEqual(item.media.count, 1)
+        let target = try makeContainer()
+        _ = try DataBackupService.restoreBackup(filtered, into: target.mainContext)
+        let restored = try XCTUnwrap(target.mainContext.fetch(FetchDescriptor<Trip>()).first)
+        XCTAssertEqual(restored.sortedDays.first?.sortedItems.first?.title, "断桥")
+        XCTAssertTrue(restored.sortedDays.first?.sortedItems.first?.media.isEmpty == true)
+    }
+
+    func testAutomaticArchiveOnlyCreatesFinishedTripsOnceAndPreservesMemories() throws {
+        let container = try makeContainer()
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let yesterday = try XCTUnwrap(calendar.date(byAdding: .day, value: -1, to: today))
+        let ended = Trip(title: "已结束", destination: "杭州", startDate: yesterday, endDate: yesterday)
+        let current = Trip(title: "今天", destination: "上海", startDate: today, endDate: today)
+        let day = TripDay(date: yesterday, title: "西湖", sortOrder: 0, trip: ended)
+        ended.days = [day]
+        container.mainContext.insert(ended)
+        container.mainContext.insert(current)
+        try container.mainContext.save()
+        let created = try StoryArchiveService.archiveFinishedTrips(modelContext: container.mainContext, relativeTo: today)
+        XCTAssertEqual(created.count, 1)
+        let story = try XCTUnwrap(created.first)
+        XCTAssertEqual(story.id, ended.id)
+        XCTAssertEqual(story.sourceTripID, ended.id)
+        XCTAssertEqual(story.days.count, 1)
+        story.summary = "用户自己的回忆"
+        let repeated = try StoryArchiveService.archiveFinishedTrips(modelContext: container.mainContext, relativeTo: today)
+        XCTAssertTrue(repeated.isEmpty)
+        XCTAssertEqual(story.summary, "用户自己的回忆")
+        XCTAssertEqual(try container.mainContext.fetch(FetchDescriptor<TravelStory>()).count, 1)
+        XCTAssertEqual(try container.mainContext.fetch(FetchDescriptor<Trip>()).count, 2)
+    }
+
     private func makeContainer() throws -> ModelContainer {
         let schema = Schema([
             Trip.self,

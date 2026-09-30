@@ -75,3 +75,10 @@ xcodebuild -project TripTrail.xcodeproj -scheme TripTrail \
 ## 高德能力边界
 
 当前版本采用无需 SDK Key 的高德 URI API，只对下一个未完成地点发起单目的地导航或地点搜索。如果后续提供高德开放平台 iOS SDK Key，可以升级为 App 内地图、地点搜索和地理编码。
+
+### 云端容量统计升级
+
+已初始化的 Supabase 项目执行 `docs/cloud-storage-usage.sql`（增量脚本，不要重新执行初始化脚本）。
+“关于”中的数据库容量使用 `pg_database_size`，包含整个项目数据库的表、索引等；对象存储容量汇总旅迹媒体和备份桶的文件元数据大小，包含媒体和备份，不是计费流量。
+统计通过 SECURITY INVOKER 只读接口获取，遵守调用者权限和对象存储 RLS，客户端缓存 24 小时，不要求后台定时任务。接口不可用时显示“暂不可用”，已有缓存继续显示并保留实际统计时间。
+本地 SQL 回归：`PGLITE_MODULE=/tmp/triptrail-pgcheck/node_modules/@electric-sql/pglite/dist/index.js node scripts/test_cloud_storage_usage.mjs`。

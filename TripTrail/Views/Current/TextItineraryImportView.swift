@@ -114,7 +114,7 @@ struct TextItineraryImportView: View {
                                 .padding(.vertical, 8)
                                 .allowsHitTesting(false)
                         }
-                        TextEditor(text: $inputText)
+                        TextEditor(text: $inputText).clearableText($inputText, alignment: .topTrailing)
                             .focused($isInputFocused)
                             .frame(height: 230)
                             .scrollContentBackground(.hidden)

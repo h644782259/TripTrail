@@ -105,9 +105,9 @@ struct ShareCardData {
         dateRange = selectedDay?.date.chineseDateText
             ?? "\(story.startDate.chineseDateText) — \(story.endDate.chineseDateText)"
         if let selectedDay {
-            summary = selectedDay.note.isEmpty ? "\(selectedDay.entries.count) 个当天片段" : selectedDay.note
+            summary = selectedDay.note
         } else {
-            summary = story.summary.isEmpty ? "\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个旅行片段" : story.summary
+            summary = story.summary
         }
         sections = days.enumerated().map { index, day in
             ShareCardSection(
@@ -120,7 +120,7 @@ struct ShareCardData {
                 items: day.sortedEntries.map {
                     ShareCardItem(
                         id: $0.id,
-                        time: $0.timeLabel,
+                        time: "",
                         title: $0.title,
                         detail: $0.note,
                         completed: true,
@@ -256,6 +256,8 @@ struct ShareExportView: View {
     @State private var isPreparingPortableFile = false
     @State private var showsPortableOptions = false
     @State private var portableShareItem: PortableShareItem?
+    @State private var temporaryFiles = TemporaryFileOwner()
+    @State private var isClosed = false
     @State private var message: String?
 
     init(trip: Trip, initialScopeID: UUID? = nil) {
@@ -315,6 +317,11 @@ struct ShareExportView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
             .task(id: selectedScopeID) { await renderLongImage() }
+            .onAppear { isClosed = false }
+            .onDisappear {
+                isClosed = true
+                if portableShareItem == nil { temporaryFiles.clear() }
+            }
             .sheet(isPresented: $showsImageShare) {
                 if let renderedImage {
                     // Share the image itself so receiving apps do not treat it as a document URL.
@@ -335,7 +342,7 @@ struct ShareExportView: View {
                 Text("包含媒体会保留完整内容，但文件更大，并需要读取相簿原件。")
             }
             .sheet(item: $portableShareItem) { item in
-                SystemShareSheet(items: [item.url])
+                SystemShareSheet(items: [item.url], onPresent: { temporaryFiles.handOff(item.url) })
             }
             .alert("分享提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好", role: .cancel) { message = nil }
@@ -368,18 +375,22 @@ struct ShareExportView: View {
                 let generatedURL: URL
                 if includeMedia {
                     let result = try await source.portablePackage(for: currentData.scopeID)
-                    let namedURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
-                    try FileManager.default.copyItem(at: result.url, to: namedURL)
+                    defer { try? FileManager.default.removeItem(at: result.url) }
+                    let namedURL = try TemporaryFileOwner.shareURL(filename: "旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
+                    try FileManager.default.moveItem(at: result.url, to: namedURL)
                     generatedURL = namedURL
                 } else {
                     let portableData = try source.portableData(for: currentData.scopeID)
-                    let portableURL = FileManager.default.temporaryDirectory
-                        .appendingPathComponent("旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-\(currentData.scopeID.uuidString.prefix(6)).triptrail")
-                    try portableData.write(to: portableURL, options: .atomic)
+                    let portableURL = try TemporaryFileOwner.shareURL(filename: "旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-\(UUID().uuidString.prefix(6)).triptrail")
+                    do { try portableData.write(to: portableURL, options: .atomic) }
+                    catch { try? FileManager.default.removeItem(at: portableURL); throw error }
                     generatedURL = portableURL
                 }
-                guard currentData.scopeID == selectedScopeID else { return }
+                temporaryFiles.keep(generatedURL)
+                guard !isClosed, currentData.scopeID == selectedScopeID else {
+                    temporaryFiles.remove(generatedURL)
+                    return
+                }
                 portableShareItem = PortableShareItem(url: generatedURL)
             } catch {
                 message = "可导入文件生成失败：\(error.localizedDescription)"
@@ -454,9 +465,11 @@ private struct PortableShareItem: Identifiable {
 
 private struct SystemShareSheet: UIViewControllerRepresentable {
     let items: [Any]
+    var onPresent: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: items, applicationActivities: nil)
+        onPresent?()
+        return UIActivityViewController(activityItems: items, applicationActivities: nil)
     }
 
     func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
@@ -561,12 +574,7 @@ private struct ShareCard: View {
                                     .foregroundStyle(Color.tripInk.opacity(0.62))
                             }
                             Spacer()
-                            Text("\(section.items.count) 个片段")
-                                .font(.caption2.bold())
-                                .foregroundStyle(Color.tripLake)
-                                .padding(.horizontal, 9)
-                                .padding(.vertical, 5)
-                                .background(Color.shareTimeBadge, in: Capsule())
+
                         }
                         if !section.narrative.isEmpty {
                             Text(section.narrative)

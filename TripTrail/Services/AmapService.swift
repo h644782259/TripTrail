@@ -116,7 +116,13 @@ enum AmapService {
         return components.url
     }
 
-    static func routeURL(stops: [AmapStop], mode: TransportMode) -> URL? {
+    static func routeURL(stops rawStops: [AmapStop], mode: TransportMode) -> URL? {
+        var stops: [AmapStop] = []
+        for stop in rawStops {
+            if let previous = stops.last, previous.hasValidCoordinate, stop.hasValidCoordinate,
+               previous.latitude == stop.latitude, previous.longitude == stop.longitude { continue }
+            stops.append(stop)
+        }
         guard stops.count >= 2, stops.allSatisfy(\.hasValidCoordinate) else { return nil }
         let start = stops[0]
         let end = stops[stops.count - 1]

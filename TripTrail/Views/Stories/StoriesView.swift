@@ -143,21 +143,19 @@ struct StoriesView: View {
         }
         .background(Color.tripCanvas)
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(
-            text: $searchText,
-            placement: .navigationBarDrawer(displayMode: .always),
-            prompt: "搜索名称、城市、地点或摘要"
-        )
-        .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                filterMenu
-                Button("新建足迹", systemImage: "plus") { creatingStory = true }
-            }
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            TripListSearchBar(text: $searchText, prompt: "搜索名称、城市、地点或摘要") { filterMenu }
+                .padding(.horizontal).padding(.vertical, 8)
+                .background(Color.tripCanvas)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            TripFloatingCreateButton(title: "新建足迹") { creatingStory = true }
         }
         .navigationDestination(for: TravelStory.self) { StoryDetailView(story: $0) }
-        .sheet(isPresented: $creatingStory) { NewFootprintView() }
-        .sheet(item: $storyToEdit) { StoryEditorView(story: $0) }
-        .sheet(item: $storyToShare) { ShareExportView(story: $0) }
+        .cloudEditSheet(isPresented: $creatingStory) { NewFootprintView() }
+        .cloudEditSheet(item: $storyToEdit) { StoryEditorView(story: $0) }
+        .cloudEditSheet(item: $storyToShare) { ShareExportView(story: $0) }
         .alert(
             HierarchyDeletionCopy.storyTitle,
             isPresented: Binding(
@@ -198,6 +196,7 @@ struct StoriesView: View {
         .contextMenu {
             Button("编辑足迹", systemImage: "pencil") { storyToEdit = story }
             Button("分享足迹", systemImage: "square.and.arrow.up") { storyToShare = story }
+            CloudModeAction(id: story.id, kind: "story")
             Divider()
             Button("删除足迹", systemImage: "trash", role: .destructive) { storyToDelete = story }
         }
@@ -253,7 +252,14 @@ struct StoriesView: View {
                 }
             }
         } label: {
-            Image(systemName: selectedYear == nil ? "line.3.horizontal.decrease.circle" : "line.3.horizontal.decrease.circle.fill")
+            HStack(spacing: 4) {
+                Text(selectedYear.map { "\($0)" } ?? "全部年份")
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .font(.subheadline)
+            .foregroundStyle(Color.tripLakeText)
+            .fixedSize()
+            .frame(minHeight: 44)
         }
         .accessibilityLabel(selectedYear == nil ? "按年份筛选足迹" : "按年份筛选足迹，已有条件")
     }
@@ -271,7 +277,7 @@ struct StoriesView: View {
 
     private func delete(_ story: TravelStory) {
         if storyToEdit?.id == story.id { storyToEdit = nil }
-        modelContext.delete(story)
+        guard CloudSyncService.shared.trash(id: story.id, kind: "story", context: modelContext) else { return }
         storyToDelete = nil
     }
 
@@ -295,8 +301,8 @@ private struct NewFootprintView: View {
         TripNavigationStack {
             Form {
                 Section("这段足迹") {
-                    TextField("例如：初秋杭州三日", text: $title)
-                    TextField("目的地（选填）", text: $destination)
+                    TextField("例如：初秋杭州三日", text: $title).clearableText($title)
+                    TextField("目的地（选填）", text: $destination).clearableText($destination)
                     TwoTapDateRangePicker(
                         title: "足迹日期",
                         startTitle: "开始",
@@ -306,7 +312,7 @@ private struct NewFootprintView: View {
                     )
                 }
                 Section("足迹摘要") {
-                    TextField("选填，之后也可以补充", text: $summary, axis: .vertical)
+                    TextField("选填，之后也可以补充", text: $summary, axis: .vertical).clearableText($summary)
                         .lineLimit(3...8)
                 }
             }
@@ -347,12 +353,30 @@ private struct StoryCard: View {
         HStack(alignment: .top, spacing: 14) {
             thumbnail
 
-            NavigationLink(value: story) {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack(alignment: .center, spacing: 4) {
+                    NavigationLink(value: story) {
+                        Text(story.title).font(.headline).foregroundStyle(.primary).lineLimit(2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }.buttonStyle(.plain)
+            Menu {
+                Button("编辑足迹", systemImage: "pencil", action: onEdit)
+            Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
+                CloudModeAction(id: story.id, kind: "story")
+                Divider()
+                Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.title3)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.tripInk.opacity(0.72))
+            .accessibilityLabel("\(story.title)更多操作")
+                }
+                NavigationLink(value: story) {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text(story.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
 
                     if !story.destination.isEmpty {
                         Label(story.destination, systemImage: "mappin.and.ellipse")
@@ -368,8 +392,6 @@ private struct StoryCard: View {
                             .lineLimit(2)
                     }
 
-                    Spacer(minLength: 0)
-
                     Text("\(story.startDate.compactDayText) — \(story.endDate.compactDayText)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -377,29 +399,22 @@ private struct StoryCard: View {
                     Text("\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个记录")
                         .font(.caption.bold())
                         .foregroundStyle(Color.tripLake)
+                        .padding(.trailing, 40)
                 }
-                .frame(maxWidth: .infinity, minHeight: 112, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityHint("进入足迹详情")
-
-            Menu {
-                Button("编辑足迹", systemImage: "pencil", action: onEdit)
-                Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
-                Divider()
-                Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
-            } label: {
-                Image(systemName: "ellipsis.circle")
-                    .font(.title3)
-                    .frame(width: 40, height: 40)
-                    .background(Color.secondary.opacity(0.08), in: Circle())
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.tripInk.opacity(0.72))
-            .accessibilityLabel("\(story.title)更多操作")
+
+
         }
         .cardSurface()
+        .overlay(alignment: .bottomTrailing) {
+            CloudBadge(id: story.id, kind: "story").font(.title3)
+                .frame(width: 40, height: 24).padding(.trailing, 12).padding(.bottom, 16)
+        }
         .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
     }
 
@@ -522,7 +537,7 @@ struct ArchiveTripView: View {
                     }
                 }
                 Section("足迹摘要") {
-                    TextField("旅行摘要（选填）", text: $summary, axis: .vertical).lineLimit(4...10)
+                    TextField("旅行摘要（选填）", text: $summary, axis: .vertical).clearableText($summary).lineLimit(4...10)
                 }
             }
             .scrollDismissesKeyboard(.interactively)

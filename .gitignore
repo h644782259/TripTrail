@@ -6,3 +6,6 @@ design-qa.md
 *.triptrailbackup
 xcuserdata/
 *.xcuserstate
+
+# Machine-local cloud configuration
+Config/Cloud.local.xcconfig

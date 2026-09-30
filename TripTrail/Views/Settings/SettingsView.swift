@@ -6,11 +6,23 @@ struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage(EnhancedRecognitionSettings.enabledDefaultsKey)
     private var enhancedRecognitionEnabled = ZhipuAPIKeyStore.hasAPIKey
+    @State private var storageUsage = CloudSyncService.shared.cachedStorageUsage()
+    @State private var storageUsageUnavailable = false
     @State private var message: String?
+    @State private var pendingBackupAction: Int?
+    @State private var choosingBackupDestination = false
+    @State private var choosingRestoreSource = false
+    @State private var uploadingBackup = false
+    @State private var showsBackupManager = false
+    @State private var downloadedBackup: (url: URL, restoring: Bool)?
     @State private var backupExportRequest: BackupExportRequest?
+    @State private var temporaryFiles = TemporaryFileOwner()
+    @State private var backupTemporaryURL: URL?
     @State private var backupExportResult: BackupExportResult?
     @State private var isPreparingBackup = false
     @State private var preparedBackupMediaCount = 0
+    @State private var skippedBackupMedia: [String] = []
+    @State private var confirmsPartialBackup = false
     @State private var importRequest: DocumentImportRequest?
     @State private var pendingRestoreURL: URL?
     @State private var pendingRestoreSummary: TripTrailBackupSummary?
@@ -26,18 +38,11 @@ struct SettingsView: View {
     @State private var hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
     @State private var isZhipuAPIKeyDirty = false
     @State private var apiKeySaveTask: Task<Void, Never>?
-    @State private var isAddingSampleTrip = false
     @FocusState private var isZhipuAPIKeyFocused: Bool
 
     var body: some View {
         List {
-            Section("开始体验") {
-                Button { addSampleTrip() } label: {
-                    Label(isAddingSampleTrip ? "正在准备示例旅程…" : "添加示例旅程", systemImage: "wand.and.stars")
-                }
-                .disabled(isAddingSampleTrip)
-            }
-
+            Section { NavigationLink("☁️ 云端数据") { CloudDataView() } }
             Section("旅行概览") {
                 NavigationLink {
                     TripStatisticsView()
@@ -65,9 +70,9 @@ struct SettingsView: View {
                     HStack(spacing: 10) {
                         Group {
                             if isZhipuAPIKeyVisible {
-                                TextField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding)
+                                TextField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding).clearableText(activeAPIKeyBinding, minimumHeight: 0)
                             } else {
-                                SecureField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding)
+                                SecureField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding).clearableText(activeAPIKeyBinding, minimumHeight: 0)
                             }
                         }
                         .textInputAutocapitalization(.never)
@@ -94,34 +99,19 @@ struct SettingsView: View {
             }
 
             Section {
-                Button(action: exportBackup) {
-                    if isPreparingBackup {
-                        Label("正在读取并打包媒体…", systemImage: "hourglass")
-                    } else {
-                        Label("导出备份", systemImage: "square.and.arrow.up")
-                    }
-                }
-                .disabled(isPreparingBackup)
-                Button { importRequest = DocumentImportRequest(kind: .backup) } label: {
-                    Label("恢复备份", systemImage: "square.and.arrow.down")
-                }
-            } header: {
-                Text("备份与恢复")
-            } footer: {
-                Text("含照片和视频；恢复将替换本机数据。")
-            }
-
-            Section {
+                NavigationLink { RecycleBinView() } label: { Label("回收站", systemImage: "trash") }
+                Button { showsBackupManager = true } label: { Label("备份管理", systemImage: "clock.arrow.circlepath") }.disabled(isPreparingBackup)
                 Button { importRequest = DocumentImportRequest(kind: .sharedJourney) } label: {
-                    Label("导入旅程或足迹", systemImage: "square.and.arrow.down.on.square")
+                    Label("导入分享文件", systemImage: "square.and.arrow.down.on.square")
                 }
             } header: {
-                Text("接收分享")
+                Text("数据管理")
             }
 
             Section("数据与隐私") {
-                Label("数据存在本机", systemImage: "lock.shield")
-                Label("删除相簿原图后，图片将无法显示", systemImage: "exclamationmark.triangle")
+                Label("本地始终保留数据副本", systemImage: "internaldrive")
+                Label("云端内容和备份为公开共享", systemImage: "cloud")
+                Text("仅引用相簿的照片或视频，删除原件后可能无法读取。换机或卸载前，请确认完整备份已保存成功。").font(.footnote).foregroundStyle(.secondary)
             }
 
             Section("关于") {
@@ -142,7 +132,17 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 LabeledContent("版本", value: "0.1.0")
                 LabeledContent("系统要求", value: "iOS 17+")
+                LabeledContent("云端数据库", value: storageUsage.map { CloudStorageUsage.formatted($0.database_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
+                LabeledContent("云端对象存储", value: storageUsage.map { CloudStorageUsage.formatted($0.object_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
+                if let usage = storageUsage {
+                    Text("统计于 \(usage.measuredAt.formatted(date: .abbreviated, time: .shortened)) · 每日更新")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
+        }
+        .task {
+            do { storageUsage = try await CloudSyncService.shared.storageUsage(); storageUsageUnavailable = false }
+            catch { storageUsageUnavailable = true }
         }
         .navigationBarTitleDisplayMode(.inline)
         .onAppear {
@@ -175,8 +175,34 @@ struct SettingsView: View {
         .alert("提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
+        .sheet(isPresented: $showsBackupManager, onDismiss: {
+            if let action = pendingBackupAction {
+                pendingBackupAction = nil
+                if action == 2 { importRequest = DocumentImportRequest(kind: .backup) }
+                else { uploadingBackup = action == 1; exportBackup() }
+            } else { consumeDownloadedBackup() }
+        }) {
+            CloudBackupManagerView(onExport: { cloud in
+                pendingBackupAction = cloud ? 1 : 0; showsBackupManager = false
+            }, onImport: { pendingBackupAction = 2; showsBackupManager = false }) { url, restoring in
+                downloadedBackup = (url, restoring)
+                showsBackupManager = false
+            }
+        }
+        .alert("部分资源无法读取", isPresented: $confirmsPartialBackup) {
+            Button("取消", role: .cancel) {
+                temporaryFiles.remove(backupTemporaryURL)
+                backupTemporaryURL = nil
+            }
+            Button("跳过并继续导出") {
+                if let url = backupTemporaryURL { completePreparedBackup(url) }
+            }
+        } message: {
+            Text("有 \(skippedBackupMedia.count) 个图片或视频可能已删除或无法访问。继续将跳过这些资源，其余内容正常备份。本机记录不会修改。")
+        }
         .alert("恢复这份备份？", isPresented: $isConfirmingRestore) {
             Button("取消", role: .cancel) {
+                temporaryFiles.remove(pendingRestoreURL)
                 pendingRestoreURL = nil
                 pendingRestoreSummary = nil
             }
@@ -186,6 +212,7 @@ struct SettingsView: View {
         }
         .alert("收藏这份内容？", isPresented: $isConfirmingSharedJourney) {
             Button("取消", role: .cancel) {
+                temporaryFiles.remove(pendingSharedJourneyURL)
                 pendingSharedJourneyURL = nil
                 pendingSharedJourneySummary = nil
             }
@@ -296,23 +323,57 @@ struct SettingsView: View {
             do {
                 let result = try await DataBackupService.makeBackupPackage(from: modelContext)
                 preparedBackupMediaCount = result.mediaCount
+                defer { try? FileManager.default.removeItem(at: result.url) }
                 let filename = "旅迹-完整备份.triptrailbackup"
                 let namedURL = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+                try? FileManager.default.removeItem(at: namedURL)
                 try FileManager.default.moveItem(at: result.url, to: namedURL)
-                backupExportRequest = BackupExportRequest(url: namedURL)
+                temporaryFiles.keep(namedURL)
+                backupTemporaryURL = namedURL
+                skippedBackupMedia = result.skippedMedia
+                if result.skippedMedia.isEmpty { completePreparedBackup(namedURL) }
+                else { confirmsPartialBackup = true }
             } catch {
                 message = "生成备份失败：\(error.localizedDescription)"
             }
-            isPreparingBackup = false
+            if !uploadingBackup || backupTemporaryURL == nil || confirmsPartialBackup { isPreparingBackup = false }
+        }
+    }
+
+    private func consumeDownloadedBackup() {
+        guard let download = downloadedBackup else { return }
+        downloadedBackup = nil
+        if download.restoring {
+            handleImportedBackup(.success(download.url))
+            try? FileManager.default.removeItem(at: download.url)
+        } else {
+            temporaryFiles.keep(download.url)
+            backupTemporaryURL = download.url
+            skippedBackupMedia = []
+            backupExportRequest = BackupExportRequest(url: download.url)
+        }
+    }
+
+    private func completePreparedBackup(_ url: URL) {
+        guard uploadingBackup else { backupExportRequest = BackupExportRequest(url: url); return }
+        isPreparingBackup = true
+        Task {
+            defer { isPreparingBackup = false; temporaryFiles.remove(url); backupTemporaryURL = nil }
+            do {
+                try await CloudBackupService.upload(url)
+                message = "云端备份已保存为新版本，可在备份管理中导出或恢复。" + (skippedBackupMedia.isEmpty ? "" : "已跳过 \(skippedBackupMedia.count) 个无法读取的资源。")
+            } catch { message = "上传失败：\(error.localizedDescription)" }
         }
     }
 
     private func finishBackupExport() {
+        temporaryFiles.remove(backupTemporaryURL)
+        backupTemporaryURL = nil
         guard let result = backupExportResult else { return }
         backupExportResult = nil
         switch result {
         case .exported:
-            message = "完整备份已导出，包含 \(preparedBackupMediaCount) 个照片或视频原件。请保存到安全位置。"
+            message = "备份文件已导出。" + (skippedBackupMedia.isEmpty ? "" : "已跳过 \(skippedBackupMedia.count) 个无法读取的资源。")
         case .cancelled:
             break
         }
@@ -327,7 +388,9 @@ struct SettingsView: View {
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
             do {
                 let copy = try PortablePackageService.temporaryCopy(of: url)
-                pendingRestoreSummary = try DataBackupService.inspectBackup(at: copy)
+                temporaryFiles.keep(copy)
+                do { pendingRestoreSummary = try DataBackupService.inspectBackup(at: copy) }
+                catch { temporaryFiles.remove(copy); throw error }
                 pendingRestoreURL = copy
                 isConfirmingRestore = true
             } catch {
@@ -342,10 +405,12 @@ struct SettingsView: View {
     }
 
     private func restorePendingBackup() {
-        guard let url = pendingRestoreURL else { return }
+        guard let url = pendingRestoreURL, !isPreparingBackup else { return }
+        isPreparingBackup = true
         Task {
+            defer { temporaryFiles.remove(url); isPreparingBackup = false }
             do {
-                let summary = try await DataBackupService.restoreBackup(from: url, into: modelContext)
+                let summary = try await CloudSyncService.shared.restoreBackup(from: url, into: modelContext)
                 message = "恢复完成：\(summary.restoreDescription)。"
             } catch {
                 message = error.localizedDescription
@@ -364,7 +429,9 @@ struct SettingsView: View {
             defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
             do {
                 let copy = try PortablePackageService.temporaryCopy(of: url)
-                pendingSharedJourneySummary = try SharedJourneyService.inspect(at: copy)
+                temporaryFiles.keep(copy)
+                do { pendingSharedJourneySummary = try SharedJourneyService.inspect(at: copy) }
+                catch { temporaryFiles.remove(copy); throw error }
                 pendingSharedJourneyURL = copy
                 isConfirmingSharedJourney = true
             } catch {
@@ -381,6 +448,7 @@ struct SettingsView: View {
     private func importPendingSharedJourney() {
         guard let url = pendingSharedJourneyURL else { return }
         Task {
+            defer { temporaryFiles.remove(url) }
             do {
                 let result = try await SharedJourneyService.importJourney(from: url, into: modelContext)
                 message = result.wasAlreadyPresent
@@ -401,224 +469,6 @@ struct SettingsView: View {
         return formatter
     }()
 
-    private func addSampleTrip() {
-        guard !isAddingSampleTrip else { return }
-        isAddingSampleTrip = true
-        Task { @MainActor in
-            let media = await importSampleMedia()
-            let trip = makeFeatureRichSampleTrip(media: media)
-            modelContext.insert(trip)
-            do {
-                try modelContext.save()
-                message = media.hasAnyMedia
-                    ? "示例旅程已添加，可从“旅程”页体验完整功能。"
-                    : "示例旅程已添加。未获取到相簿权限，因此未加入示例图片和视频。"
-            } catch {
-                message = "示例旅程添加失败：\(error.localizedDescription)"
-            }
-            isAddingSampleTrip = false
-        }
-    }
-
-    private func importSampleMedia() async -> SampleJourneyMedia {
-        let authorization = await PhotoLibraryService.requestReadWriteAccessIfNeeded()
-        guard authorization == .authorized || authorization == .limited else { return .empty }
-
-        func importResource(_ name: String, extension fileExtension: String, kind: MediaKind) async -> String? {
-            guard let url = Bundle.main.url(forResource: name, withExtension: fileExtension) else { return nil }
-            return try? await PhotoLibraryService.importAssetFile(at: url, kind: kind)
-        }
-
-        return SampleJourneyMedia(
-            lake: await importResource("triptrail-demo-lake", extension: "png", kind: .image),
-            city: await importResource("triptrail-demo-city", extension: "png", kind: .image),
-            motion: await importResource("triptrail-demo-motion", extension: "mov", kind: .video)
-        )
-    }
-
-    private func makeFeatureRichSampleTrip(media: SampleJourneyMedia) -> Trip {
-        let calendar = Calendar.current
-        let now = Date()
-        let today = calendar.startOfDay(for: now)
-        let firstDate = calendar.date(byAdding: .day, value: -1, to: today) ?? today
-        let lastDate = calendar.date(byAdding: .day, value: 1, to: today) ?? today
-
-        func at(_ hour: Int, _ minute: Int = 0, on date: Date) -> Date {
-            calendar.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
-        }
-        let endOfToday = at(23, 50, on: today)
-        let currentWalkStart = min(now.addingTimeInterval(-30 * 60), endOfToday.addingTimeInterval(-90 * 60))
-        let currentWalkEnd = min(now.addingTimeInterval(60 * 60), endOfToday.addingTimeInterval(-45 * 60))
-        let lakesideStart = currentWalkEnd.addingTimeInterval(15 * 60)
-
-        let trip = Trip(
-            title: "杭州山水三日",
-            destination: "杭州",
-            startDate: firstDate,
-            endDate: lastDate,
-            note: "从西湖晨光到龙井茶山，一段有路线、预约、花费和影像记录的完整示例旅程。"
-        )
-
-        let arrivalDay = TripDay(date: firstDate, title: "抵达与安顿", sortOrder: 0, trip: trip)
-        arrivalDay.note = "先放好行李，再用一段轻松的湖边散步开始旅程。"
-        let lakeDay = TripDay(date: today, title: "西湖一日", sortOrder: 1, trip: trip)
-        lakeDay.note = "不赶景点，把时间留给湖面、风和一顿杭帮菜。"
-        let teaDay = TripDay(date: lastDate, title: "茶山与返程", sortOrder: 2, trip: trip)
-        teaDay.note = "上午慢走茶园，下午买好伴手礼后前往车站。"
-        trip.days = [arrivalDay, lakeDay, teaDay]
-
-        let train = sampleItem(
-            title: "高铁前往杭州", category: .transport,
-            start: at(8, 0, on: firstDate), end: at(9, 5, on: firstDate), order: 0, day: arrivalDay, duration: 65,
-            reservation: "G7311 · 08车12A", cost: 73,
-            note: "提前 30 分钟到站，抵达后从东广场出站。"
-        )
-        train.locationMode = .route
-        train.originName = "上海虹桥站"
-        train.originAddress = "上海市闵行区申贵路1500号"
-        train.destinationName = "杭州东站"
-        train.destinationAddress = "杭州市上城区全福桥路2号"
-
-        let hotel = sampleItem(
-            title: "办理酒店入住", category: .hotel,
-            start: at(10, 0, on: firstDate), end: at(10, 30, on: firstDate), order: 1, day: arrivalDay,
-            place: "杭州西湖湖滨酒店", address: "杭州市上城区湖滨路", duration: 30,
-            reservation: "大床房 · 含早", cost: 688,
-            note: "先寄存行李，14:00 后取房卡。"
-        )
-
-        let packing = sampleItem(
-            title: "整理随身物品", category: .other,
-            start: at(10, 40, on: firstDate), end: at(11, 0, on: firstDate), order: 2, day: arrivalDay,
-            place: "杭州西湖湖滨酒店", duration: 20,
-            reservation: "", cost: 0,
-            note: "只带相机、雨伞和充电宝，大件行李留在酒店。"
-        )
-        arrivalDay.items = [train, hotel, packing]
-
-        let bridge = sampleItem(
-            title: "沿白堤看西湖晨光", category: .attraction,
-            start: at(7, 30, on: today), end: at(9, 0, on: today), order: 0, day: lakeDay,
-            place: "断桥残雪", address: "杭州市西湖区白堤东端", duration: 90,
-            reservation: "无需预约", cost: 0,
-            note: "从断桥慢慢走到平湖秋月，清晨人少，适合拍湖面反光。"
-        )
-        attachSampleMedia(media.lake, kind: .image, caption: "西湖晨光", order: 0, to: bridge)
-        attachSampleMedia(media.motion, kind: .video, caption: "湖边的风", order: 1, to: bridge)
-
-        let lunch = sampleItem(
-            title: "品尝杭帮菜", category: .restaurant,
-            start: at(11, 30, on: today), end: at(13, 0, on: today), order: 1, day: lakeDay,
-            place: "楼外楼（孤山店）", address: "杭州市西湖区孤山路30号", duration: 90,
-            reservation: "12:00 · 2人 · 临窗位", cost: 328,
-            note: "尝试西湖醋鱼和龙井虾仁，用餐后可在孤山稍作休息。"
-        )
-        lunch.isFavorite = true
-        lunch.favoriteCreatedAt = now
-
-        let currentWalk = sampleItem(
-            title: "湖畔自由漫步", category: .attraction,
-            start: currentWalkStart, end: currentWalkEnd, order: 2, day: lakeDay,
-            place: "曲院风荷", address: "杭州市西湖区北山街89号", duration: 90,
-            reservation: "", cost: 0,
-            note: "这段安排示范“进行中”状态，状态会随当前时间自动更新。"
-        )
-
-        let sunset = sampleItem(
-            title: "湖滨散步与拍照", category: .special,
-            start: lakesideStart, end: endOfToday, order: 3, day: lakeDay,
-            place: "集贤亭", address: "杭州市上城区湖滨路", duration: 60,
-            reservation: "日落前 30 分钟到达", cost: 15,
-            note: "沿湖滨慢慢走，记录城市灯光与湖面；如果下雨就改成室内散步。"
-        )
-        attachSampleMedia(media.city, kind: .image, caption: "湖滨夜色", order: 0, to: sunset)
-        lakeDay.items = [bridge, lunch, currentWalk, sunset]
-
-        let teaGarden = sampleItem(
-            title: "漫步龙井村茶园", category: .special,
-            start: at(9, 0, on: lastDate), end: at(11, 30, on: lastDate), order: 0, day: teaDay,
-            place: "龙井村", address: "杭州市西湖区龙井村", duration: 150,
-            reservation: "茶室 09:30", cost: 120,
-            note: "沿十里琅珰走一小段，穿防滑的鞋，留意山间天气。"
-        )
-        let shopping = sampleItem(
-            title: "挑选杭州伴手礼", category: .other,
-            start: at(14, 0, on: lastDate), end: at(15, 0, on: lastDate), order: 1, day: teaDay,
-            place: "河坊街", address: "杭州市上城区河坊街", duration: 60,
-            reservation: "", cost: 180,
-            note: "茶叶和桂花糕控制在一个手提袋内。"
-        )
-        let station = sampleItem(
-            title: "前往杭州东站", category: .transport,
-            start: at(16, 0, on: lastDate), end: at(16, 45, on: lastDate), order: 2, day: teaDay, duration: 45,
-            reservation: "G7590 · 17:30 开车", cost: 6,
-            note: "提前 40 分钟到站，进站前确认检票口。"
-        )
-        station.locationMode = .route
-        station.originName = "河坊街"
-        station.originAddress = "杭州市上城区河坊街"
-        station.destinationName = "杭州东站"
-        station.destinationAddress = "杭州市上城区全福桥路2号"
-        teaDay.items = [teaGarden, shopping, station]
-
-        for item in trip.allItems {
-            item.completeIfElapsed(relativeTo: now)
-        }
-
-        return trip
-    }
-
-    private func sampleItem(
-        title: String,
-        category: PlaceCategory,
-        start: Date,
-        end: Date,
-        order: Int,
-        day: TripDay,
-        place: String = "",
-        address: String = "",
-
-        duration: Int,
-        reservation: String,
-        cost: Double,
-        note: String
-    ) -> ItineraryItem {
-        let item = ItineraryItem(title: title, category: category, startTime: start, endTime: end, sortOrder: order)
-        item.locationMode = .single
-        item.placeName = place
-        item.placeAddress = address
-        item.address = address
-
-        item.playDurationMinutes = duration
-        item.reservationInfo = reservation
-        item.cost = cost
-        item.note = note
-        item.day = day
-        return item
-    }
-
-    private func attachSampleMedia(
-        _ identifier: String?,
-        kind: MediaKind,
-        caption: String,
-        order: Int,
-        to item: ItineraryItem
-    ) {
-        guard let identifier else { return }
-        let media = MediaReference(localIdentifier: identifier, kind: kind, sortOrder: order)
-        media.caption = caption
-        media.itineraryItem = item
-        item.media.append(media)
-    }
-}
-
-private struct SampleJourneyMedia {
-    let lake: String?
-    let city: String?
-    let motion: String?
-
-    static let empty = SampleJourneyMedia(lake: nil, city: nil, motion: nil)
-    var hasAnyMedia: Bool { lake != nil || city != nil || motion != nil }
 }
 
 private struct CreatorRewardView: View {
@@ -745,6 +595,88 @@ private struct DocumentImportPicker: UIViewControllerRepresentable {
 
         func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
             onFinish(.failure(CancellationError()))
+        }
+    }
+}
+
+private struct CloudBackupManagerView: View {
+    let onExport: (Bool) -> Void
+    let onImport: () -> Void
+    let onDownload: (URL, Bool) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var versions: [CloudBackupVersion] = []
+    @State private var busy = false
+    @State private var message: String?
+    @State private var deleting: CloudBackupVersion?
+    var body: some View {
+        NavigationStack {
+            ScrollViewReader { proxy in
+            List {
+                Section {
+                    Menu {
+                        Button("导出本地") { onExport(false) }
+                        Button("上传云端") { onExport(true) }.disabled(!CloudSyncService.shared.configured)
+                    } label: { Label("导出备份", systemImage: "square.and.arrow.up") }
+                    Menu {
+                        Button("从本地文件导入", action: onImport)
+                        Button("从云端恢复") { withAnimation { proxy.scrollTo("backupVersions", anchor: .top) } }
+                            .disabled(!CloudSyncService.shared.configured)
+                    } label: { Label("恢复备份", systemImage: "square.and.arrow.down") }
+                }.disabled(busy)
+                Section("备份版本") {
+                    Color.clear.frame(height: 0).id("backupVersions")
+                    ForEach(versions) { version in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(version.title).font(.headline)
+                            Text(ByteCountFormatter.string(fromByteCount: version.bytes, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                            if version.deleting { Text("删除未完成，可再次删除重试").font(.caption) }
+                            else if !version.ready { Text("上传未完成，可删除后重新上传").font(.caption) }
+                            HStack {
+                                Button("导出") { download(version, restoring: false) }.disabled(version.deleting || !version.ready)
+                                Button("恢复") { download(version, restoring: true) }.disabled(version.deleting || !version.ready)
+                                Spacer()
+                                Button("删除", role: .destructive) { deleting = version }
+                            }.buttonStyle(.borderless).disabled(busy)
+                        }
+                    }
+                    if versions.isEmpty { Text(busy ? "正在加载…" : "暂无云端备份").foregroundStyle(.secondary) }
+                }
+            }
+            .overlay { if busy { ProgressView().allowsHitTesting(false) } }
+            .navigationTitle("备份管理")
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() }.disabled(busy) } }
+            .interactiveDismissDisabled(busy)
+            .task { await refresh() }
+            .alert("提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+                Button("确定") { message = nil }
+            } message: { Text(message ?? "") }
+            .confirmationDialog("删除这个云端备份版本？删除后无法恢复，不影响本机数据。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
+                if let version = deleting {
+                    Button("删除备份", role: .destructive) {
+                        deleting = nil; busy = true
+                        Task {
+                            do { try await CloudBackupService.delete(version) }
+                            catch { message = error.localizedDescription }
+                            await refresh()
+                        }
+                    }
+                }
+            }
+        }
+        }
+    }
+    private func refresh() async {
+        busy = true
+        defer { busy = false }
+        do { versions = try await CloudBackupService.list() }
+        catch { message = "读取备份失败：\(error.localizedDescription)" }
+    }
+    private func download(_ version: CloudBackupVersion, restoring: Bool) {
+        busy = true
+        Task {
+            defer { busy = false }
+            do { onDownload(try await CloudBackupService.download(version), restoring) }
+            catch { message = error.localizedDescription }
         }
     }
 }

@@ -37,7 +37,6 @@ struct StoryDetailView: View {
     @State private var showsCoverPicker = false
     @State private var coverCropRequest: StoryCoverCropRequest?
     @State private var coverMessage: String?
-    @State private var syncMessage: String?
     @State private var offersPhotoSettingsForCover = false
 
     private var sourceTrip: Trip? {
@@ -53,7 +52,9 @@ struct StoryDetailView: View {
 
     var body: some View {
         deletionAlertContent
-            .task {
+            .onDisappear { CloudSyncService.shared.uploadAfterEdit(context: modelContext) }
+        .task(id: story.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "story", recordID: story.id, automatic: true) }
+        .task {
                 StorySyncService.ensureHierarchy(for: story)
                 _ = StorySyncService.migrateLegacyLocations(for: story, from: sourceTrip)
                 if selectedDayID == nil, let firstDay = story.sortedDays.first {
@@ -83,34 +84,43 @@ struct StoryDetailView: View {
         storyContent
         .scrollDismissesKeyboard(.interactively)
         .background(Color.tripCanvas)
-        .navigationTitle("足迹")
+        .navigationTitle(story.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                storyActionsMenu
+            ToolbarItem(placement: .principal) { CloudTitle(id: story.id, kind: "story", title: story.title).font(.headline).lineLimit(1) }
+            if #available(iOS 26.0, *) {
+                ToolbarItem(placement: .topBarTrailing) {
+                    storyActionsMenu
+                }
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .topBarTrailing) {
+                    storyActionsMenu
+                }
             }
         }
-        .sheet(isPresented: $editingStory) { StoryEditorView(story: story) }
-        .sheet(item: $shareRequest) { request in
+        .cloudEditSheet(isPresented: $editingStory) { StoryEditorView(story: story) }
+        .cloudEditSheet(item: $shareRequest) { request in
             ShareExportView(story: story, initialScopeID: request.scopeID)
         }
-        .sheet(item: $entryEditRequest) { request in
+        .cloudEditSheet(item: $entryEditRequest) { request in
             StoryEntryEditorView(entry: request.entry, isNew: request.isNew)
         }
-        .sheet(item: $dayEditRequest) { request in
+        .cloudEditSheet(item: $dayEditRequest) { request in
             StoryDayEditorView(
                 day: request.day,
                 isNew: request.isNew,
                 onCancel: { cancelNewDay(request) }
             )
         }
-        .sheet(item: $coverCropRequest) { request in
+        .cloudEditSheet(item: $coverCropRequest) { request in
             StoryCoverCropView(request: request) { result in
                 applyCoverCrop(result)
                 coverCropRequest = nil
             }
         }
-        .sheet(item: $entryNavigationRequest) { request in
+        .cloudEditSheet(item: $entryNavigationRequest) { request in
             NavigationOptionsSheet(
                 onAmap: { openNavigation(for: request) },
                 onXiaohongshu: { openDiscovery(.xiaohongshu, for: request) },
@@ -185,14 +195,13 @@ struct StoryDetailView: View {
         } message: {
             Text(coverMessage ?? "")
         }
-        .storySyncAlert($syncMessage)
     }
 
     private var deletionAlertContent: some View {
         informationalAlertContent
         .alert(HierarchyDeletionCopy.storyTitle, isPresented: $isConfirmingStoryDeletion) {
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
-                modelContext.delete(story)
+                guard CloudSyncService.shared.trash(id: story.id, kind: "story", context: modelContext) else { return }
                 dismiss()
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) {}
@@ -236,29 +245,17 @@ struct StoryDetailView: View {
     private var storyActionsMenu: some View {
         Menu {
             Button("编辑足迹", systemImage: "pencil") { editingStory = true }
-            if sourceTrip != nil {
-                Button("同步最新旅程", systemImage: "arrow.triangle.2.circlepath", action: syncLatestTrip)
-            }
             Button("分享足迹", systemImage: "square.and.arrow.up") {
                 shareRequest = StoryShareRequest(scopeID: story.id)
             }
+            CloudModeAction(id: story.id, kind: "story")
             Divider()
             Button("删除足迹", systemImage: "trash", role: .destructive) {
                 isConfirmingStoryDeletion = true
             }
         } label: {
-            Image(systemName: "ellipsis.circle")
+            Image(systemName: "ellipsis")
         }
-    }
-
-    private func syncLatestTrip() {
-        guard let sourceTrip else { return }
-        let report = StorySyncService.sync(
-            story: story,
-            from: sourceTrip,
-            modelContext: modelContext
-        )
-        syncMessage = report.message
     }
 
     private var storyDaySections: some View {
@@ -318,7 +315,7 @@ struct StoryDetailView: View {
                     }
                     Divider()
                     Button("删除当天", systemImage: "trash", role: .destructive) { dayToDelete = day }
-                } label: { Image(systemName: "ellipsis.circle") }
+                } label: { Image(systemName: "ellipsis") }
                 .accessibilityLabel("当天更多操作")
             }
 
@@ -464,7 +461,6 @@ struct StoryDetailView: View {
                 Text(story.destination.uppercased())
                     .font(.caption.bold()).tracking(2).foregroundStyle(Color.tripSand)
             }
-            Text(story.title).font(.largeTitle.bold())
             if !story.summary.isEmpty {
                 Text(story.summary).font(.body).foregroundStyle(.white.opacity(0.88))
             }
@@ -1050,16 +1046,7 @@ private extension View {
     func storyDayGroupSurface() -> some View { modifier(StoryDayGroupSurface()) }
     func storyEntrySurface() -> some View { modifier(StoryEntrySurface()) }
 
-    func storySyncAlert(_ message: Binding<String?>) -> some View {
-        alert("同步最新旅程", isPresented: Binding(
-            get: { message.wrappedValue != nil },
-            set: { if !$0 { message.wrappedValue = nil } }
-        )) {
-            Button("知道了", role: .cancel) { message.wrappedValue = nil }
-        } message: {
-            Text(message.wrappedValue ?? "")
-        }
-    }
+
 }
 
 private struct StoryEntryMediaGallery: View {
@@ -1136,8 +1123,8 @@ struct StoryEditorView: View {
     var body: some View {
         TripNavigationStack {
             Form {
-                TextField("游记标题", text: $story.title)
-                TextField("目的地", text: $story.destination)
+                TextField("游记标题", text: $story.title).clearableText($story.title)
+                TextField("目的地", text: $story.destination).clearableText($story.destination)
                 TwoTapDateRangePicker(
                     title: "游记日期",
                     startTitle: "开始",
@@ -1145,7 +1132,7 @@ struct StoryEditorView: View {
                     startDate: $story.startDate,
                     endDate: $story.endDate
                 )
-                TextField("旅行摘要", text: $story.summary, axis: .vertical).lineLimit(5...12)
+                TextField("旅行摘要", text: $story.summary, axis: .vertical).clearableText($story.summary).lineLimit(5...12)
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("编辑足迹")
@@ -1165,15 +1152,15 @@ private struct StoryDayEditorView: View {
         TripNavigationStack {
             Form {
                 Section("基本信息") {
-                    TextField("当天标题", text: $day.title)
+                    TextField("当天标题", text: $day.title).clearableText($day.title)
                     DatePicker("日期", selection: $day.date, displayedComponents: .date)
                 }
                 Section("当天摘要") {
-                    TextField("简要记录当天内容", text: $day.note, axis: .vertical)
+                    TextField("简要记录当天内容", text: $day.note, axis: .vertical).clearableText($day.note)
                         .lineLimit(3...8)
                 }
                 Section("细节补充") {
-                    TextField("补充当天的见闻、感受或其他细节", text: $day.details, axis: .vertical)
+                    TextField("补充当天的见闻、感受或其他细节", text: $day.details, axis: .vertical).clearableText($day.details)
                         .lineLimit(5...14)
                 }
             }
@@ -1260,18 +1247,18 @@ private struct StoryEntryEditorView: View {
                     }
                     .pickerStyle(.segmented)
                     if locationMode == .single {
-                        TextField("地点名称", text: $placeName)
-                        TextField("地点详细地址（选填）", text: $placeAddress)
+                        TextField("地点名称", text: $placeName).clearableText($placeName)
+                        TextField("地点详细地址（选填）", text: $placeAddress).clearableText($placeAddress)
                     } else {
-                        TextField("出发地", text: $originName)
-                        TextField("出发地详细地址（选填）", text: $originAddress)
-                        TextField("目的地", text: $destinationName)
-                        TextField("目的地详细地址（选填）", text: $destinationAddress)
+                        TextField("出发地", text: $originName).clearableText($originName)
+                        TextField("出发地详细地址（选填）", text: $originAddress).clearableText($originAddress)
+                        TextField("目的地", text: $destinationName).clearableText($destinationName)
+                        TextField("目的地详细地址（选填）", text: $destinationAddress).clearableText($destinationAddress)
                     }
 
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("记录标题（选填）")
-                        TextField("不填则使用地点名称", text: $title)
+                        TextField("不填则使用地点名称", text: $title).clearableText($title)
                             .accessibilityLabel("记录标题，选填")
                     }
                 }
@@ -1281,7 +1268,7 @@ private struct StoryEntryEditorView: View {
                 }
 
                 Section("回忆") {
-                    TextField("记录这段足迹的见闻和感受", text: $note, axis: .vertical)
+                    TextField("记录这段足迹的见闻和感受", text: $note, axis: .vertical).clearableText($note)
                         .lineLimit(5...12)
                         .accessibilityLabel("回忆")
                 }

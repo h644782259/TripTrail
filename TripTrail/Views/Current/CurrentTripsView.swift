@@ -77,23 +77,21 @@ struct CurrentTripsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationDestination(for: Trip.self) { TripDetailView(trip: $0) }
         .navigationDestination(item: $createdSmartTrip) { TripDetailView(trip: $0) }
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { showsNewTrip = true } label: { Image(systemName: "plus") }
-                .accessibilityLabel("添加旅程")
-            }
+        .toolbar(.hidden, for: .navigationBar)
+        .overlay(alignment: .bottomTrailing) {
+            TripFloatingCreateButton(title: "新建旅程") { showsNewTrip = true }
         }
-        .sheet(isPresented: $showsNewTrip, onDismiss: { completeElapsedItems() }) { TripEditorView() }
-        .sheet(item: $tripToEdit, onDismiss: { completeElapsedItems() }) { TripEditorView(trip: $0) }
-        .sheet(item: $tripToArchive) { ArchiveTripView(trip: $0) }
-        .sheet(item: $tripToShare) { ShareExportView(trip: $0) }
-        .sheet(item: $smartNewTextTrip) { trip in
+        .cloudEditSheet(isPresented: $showsNewTrip, onDismiss: { completeElapsedItems() }) { TripEditorView() }
+        .cloudEditSheet(item: $tripToEdit, onDismiss: { completeElapsedItems() }) { TripEditorView(trip: $0) }
+        .cloudEditSheet(item: $tripToArchive) { ArchiveTripView(trip: $0) }
+        .cloudEditSheet(item: $tripToShare) { ShareExportView(trip: $0) }
+        .cloudEditSheet(item: $smartNewTextTrip) { trip in
             TextItineraryImportView(trip: trip, referenceDate: trip.startDate, isCreatingTrip: true, onCreated: openCreatedSmartTrip)
         }
-        .sheet(item: $tripForTextImport) {
+        .cloudEditSheet(item: $tripForTextImport) {
             TextItineraryImportView(trip: $0, referenceDate: $0.startDate)
         }
-        .sheet(item: $wholeTripDraftRequest) { request in
+        .cloudEditSheet(item: $wholeTripDraftRequest) { request in
             ScreenshotItineraryImportView(
                 trip: request.trip,
                 draft: request.draft,
@@ -104,7 +102,7 @@ struct CurrentTripsView: View {
                 }
             )
         }
-        .sheet(item: $routePlanningRequest) { AmapRoutePlanningView(request: $0) }
+        .cloudEditSheet(item: $routePlanningRequest) { AmapRoutePlanningView(request: $0) }
         .photosPicker(
             isPresented: $showsWholeTripScreenshotPicker,
             selection: $wholeTripPickerItems,
@@ -125,7 +123,7 @@ struct CurrentTripsView: View {
             presenting: tripToDelete
         ) { trip in
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
-                modelContext.delete(trip)
+                guard CloudSyncService.shared.trash(id: trip.id, kind: "trip", context: modelContext) else { return }
                 tripToDelete = nil
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) { tripToDelete = nil }
@@ -283,37 +281,40 @@ struct CurrentTripsView: View {
             .buttonStyle(.plain)
             .accessibilityHint("打开这段旅程")
 
+            HStack(spacing: 0) {
             Menu {
                 Button("编辑旅程", systemImage: "pencil") {
                     tripToEdit = trip
                 }
-                Button("整理成足迹", systemImage: "book.closed") {
-                    tripToArchive = trip
-                }
                 Button("分享旅程", systemImage: "square.and.arrow.up") {
                     tripToShare = trip
                 }
-                Button("智能录入", systemImage: "square.and.arrow.down") {
-                    tripForTextImport = trip
-                }
-                .disabled(isReadingWholeTripScreenshots)
                 Button("规划全行程路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     requestRoutePlanning(for: trip)
                 }
+                Button("整理成足迹", systemImage: "book.closed") {
+                    tripToArchive = trip
+                }
+                CloudModeAction(id: trip.id, kind: "trip")
                 Divider()
                 Button("删除旅程", systemImage: "trash", role: .destructive) {
                     tripToDelete = trip
                 }
             } label: {
-                Image(systemName: "ellipsis.circle")
+                Image(systemName: "ellipsis")
                     .font(.title3)
                     .frame(width: 40, height: 40)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.tripInk.opacity(0.72))
-            .padding(12)
             .accessibilityLabel("\(trip.title)更多操作")
+            }
+            .padding(12)
+        }
+        .overlay(alignment: .bottomTrailing) {
+            CloudBadge(id: trip.id, kind: "trip").font(.title3)
+                .frame(width: 40, height: 24).padding(.trailing, 12).padding(.bottom, 16)
         }
     }
 
@@ -551,15 +552,33 @@ private struct FeaturedTripHero: View {
                         .fixedSize(horizontal: false, vertical: true)
 
                     if let destinationText {
-                        Label(destinationText, systemImage: "mappin.and.ellipse")
+                        Label {
+                            Text(destinationText)
+                        } icon: {
+                            Image(systemName: "mappin.and.ellipse").resizable().scaledToFit()
+                                .frame(width: 18, height: 18)
+                        }
+                            .labelStyle(TripMetadataLabelStyle())
                             .lineLimit(1)
                     }
 
                     if !trip.licensePlate.isEmpty {
-                        Label(trip.licensePlate, systemImage: "car.side")
+                        Label {
+                            Text(trip.licensePlateDisplay)
+                        } icon: {
+                            Image(systemName: "car.side").resizable().scaledToFit()
+                                .frame(width: 18, height: 18)
+                        }
+                            .labelStyle(TripMetadataLabelStyle())
                             .lineLimit(1)
                     }
-                    Label(dateRangeText, systemImage: "calendar")
+                    Label {
+                        Text(dateRangeText)
+                    } icon: {
+                        Image(systemName: "calendar").resizable().scaledToFit()
+                            .frame(width: 18, height: 18)
+                    }
+                        .labelStyle(TripMetadataLabelStyle())
                         .lineLimit(1)
                 }
                 .font(.caption)
@@ -651,7 +670,7 @@ private struct FeaturedTripHero: View {
                 .tint(Color.tripLake)
 
             scheduleLine(title: "正在进行", item: currentArrangement)
-            scheduleLine(title: "接下来", item: nextArrangement)
+            scheduleLine(title: "接下来", item: nextArrangement).padding(.trailing, 40)
         }
         .padding(.top, 2)
     }
@@ -761,7 +780,7 @@ private struct FeaturedTripHero: View {
             eyebrowText,
             trip.title,
             destinationText,
-            trip.licensePlate.isEmpty ? nil : trip.licensePlate,
+            trip.licensePlate.isEmpty ? nil : trip.licensePlateDisplay,
             dateRangeText,
             ringAccessibilityText,
             todayScheduleAccessibilityText,
@@ -786,18 +805,32 @@ private struct TripCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(trip.title).font(.title3.bold()).foregroundStyle(.primary)
-                    Label(trip.destination.isEmpty ? "待确定目的地" : trip.destination, systemImage: "mappin.circle.fill")
+                    Label {
+                        Text(trip.destination.isEmpty ? "待确定目的地" : trip.destination)
+                    } icon: {
+                        Image(systemName: "mappin.circle.fill").resizable().scaledToFit()
+                            .frame(width: 18, height: 18)
+                    }
+                        .labelStyle(TripMetadataLabelStyle())
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     if !trip.licensePlate.isEmpty {
-                        Label(trip.licensePlate, systemImage: "car.side")
+                        Label {
+                            Text(trip.licensePlateDisplay)
+                        } icon: {
+                            Image(systemName: "car.side").resizable().scaledToFit()
+                                .frame(width: 18, height: 18)
+                        }
+                            .labelStyle(TripMetadataLabelStyle())
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                 }
                 Spacer(minLength: 48)
+                if phase != .history {
                 Text(statusText)
                     .font(.caption.bold())
                     .padding(.horizontal, 10)
@@ -808,24 +841,34 @@ private struct TripCard: View {
                         Capsule()
                             .stroke(statusColor.opacity(0.16), lineWidth: 0.7)
                     }
+                }
             }
             .padding(.trailing, 42)
             HStack {
-                Label("\(trip.startDate.compactDayText) — \(trip.endDate.compactDayText)", systemImage: "calendar")
+                Label {
+                    Text("\(trip.startDate.compactDayText) — \(trip.endDate.compactDayText)")
+                } icon: {
+                    Image(systemName: "calendar").resizable().scaledToFit()
+                        .frame(width: 18, height: 18)
+                }
+                    .labelStyle(TripMetadataLabelStyle())
                 Spacer()
-                Text(calendarProgressText)
+                if phase != .history { Text(calendarProgressText) }
             }
             .font(.caption)
             .foregroundStyle(.secondary)
+            .padding(.trailing, 40)
+            }
 
             if !trip.note.isEmpty {
                 Text(trip.note)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(phase == .upcoming ? 1 : 2)
+                    .padding(.trailing, 40)
             }
 
-            if phase != .upcoming {
+            if phase == .current {
                 HStack {
                     Text("旅程进度")
                     Spacer()
@@ -959,11 +1002,12 @@ struct TripEditorView: View {
     @State private var endDate: Date
     @State private var note: String
     @State private var smartTrip: Trip?
+    @State private var creationMethod = "普通新建"
 
     init(trip: Trip? = nil) {
         self.trip = trip
         _title = State(initialValue: trip?.title ?? "")
-        _licensePlate = State(initialValue: trip?.licensePlate ?? "")
+        _licensePlate = State(initialValue: trip?.licensePlateDisplay ?? "")
         _destination = State(initialValue: trip?.destination ?? "")
         _startDate = State(initialValue: trip?.startDate ?? Date())
         _endDate = State(initialValue: trip?.endDate ?? Calendar.current.date(byAdding: .day, value: 2, to: Date())!)
@@ -973,6 +1017,15 @@ struct TripEditorView: View {
     var body: some View {
         TripNavigationStack {
             Form {
+                if trip == nil {
+                    Section {
+                        Picker("新建方式", selection: $creationMethod) {
+                            Text("智能录入").tag("智能录入")
+                            Text("普通新建").tag("普通新建")
+                        }.pickerStyle(.segmented)
+                    }
+                }
+                if trip != nil || creationMethod == "智能录入" {
                 Section {
                     Button {
                         let target = trip ?? Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
@@ -980,12 +1033,14 @@ struct TripEditorView: View {
                         smartTrip = target
                     } label: { Label("智能录入", systemImage: "wand.and.stars") }
                 }
+                }
+                if trip != nil || creationMethod == "普通新建" {
                 Section("这次旅行") {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("旅程名称")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        TextField("例如：初秋杭州三日", text: $title)
+                        TextField("例如：初秋杭州三日", text: $title).clearableText($title)
                     }
                     .padding(.vertical, 4)
 
@@ -993,13 +1048,17 @@ struct TripEditorView: View {
                         Text("目的地")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        TextField("例如：杭州", text: $destination)
+                        TextField("例如：杭州", text: $destination).clearableText($destination)
                     }
                     .padding(.vertical, 4)
 
                     VStack(alignment: .leading, spacing: 6) {
                         Text("车牌号（选填）").font(.caption).foregroundStyle(.secondary)
-                        TextField("例如：浙A12345", text: $licensePlate)
+                        TextField("例如：浙A·12345", text: $licensePlate).clearableText($licensePlate)
+                            .onChange(of: licensePlate) { _, value in
+                                let formatted = value.formattedLicensePlate
+                                if licensePlate != formatted { licensePlate = formatted }
+                            }
                             .textInputAutocapitalization(.characters)
                             .autocorrectionDisabled()
                     }
@@ -1014,12 +1073,13 @@ struct TripEditorView: View {
                     )
                 }
                 Section("备注") {
-                    TextField("同行人、旅行主题或准备事项", text: $note, axis: .vertical)
+                    TextField("同行人、旅行主题或准备事项", text: $note, axis: .vertical).clearableText($note)
                         .lineLimit(3...6)
+                }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .sheet(item: $smartTrip) { target in
+            .cloudEditSheet(item: $smartTrip) { target in
                 TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: trip == nil, onCreated: { _ in dismiss() })
             }
             .navigationTitle(trip == nil ? "新建旅程" : "编辑旅程")
@@ -1027,7 +1087,7 @@ struct TripEditorView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }.disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("保存") { save() }.disabled((trip == nil && creationMethod != "普通新建") || title.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
@@ -1060,7 +1120,7 @@ struct TripEditorView: View {
             )
             trip.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
             trip.destination = destination.trimmingCharacters(in: .whitespacesAndNewlines)
-            trip.licensePlate = licensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            trip.licensePlate = licensePlate.formattedLicensePlate
             trip.note = note
         } else {
             let newTrip = Trip(
@@ -1070,7 +1130,7 @@ struct TripEditorView: View {
                 endDate: calendar.startOfDay(for: endDate),
                 note: note
             )
-            newTrip.licensePlate = licensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            newTrip.licensePlate = licensePlate.formattedLicensePlate
             modelContext.insert(newTrip)
             for seed in JourneyHierarchyService.daySeeds(from: startDate, through: endDate, calendar: calendar) {
                 let day = TripDay(
@@ -1083,5 +1143,58 @@ struct TripEditorView: View {
             }
         }
         dismiss()
+    }
+}
+
+
+struct TripFloatingCreateButton: View {
+    let title: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 48, height: 48)
+                .background(Color.tripLake, in: Circle())
+                .shadow(color: .black.opacity(0.16), radius: 8, y: 4)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .padding(.trailing, 20)
+        .padding(.bottom, 16)
+    }
+}
+
+struct TripListSearchBar<Trailing: View>: View {
+    @Binding var text: String
+    let prompt: String
+    @ViewBuilder var trailing: () -> Trailing
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField(prompt, text: $text)
+                .font(.subheadline)
+                .submitLabel(.search)
+                .accessibilityLabel(prompt)
+            if !text.isEmpty {
+                Button { text = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary) }
+                    .accessibilityLabel("清除搜索")
+            }
+            trailing()
+        }
+        .padding(.horizontal, 14)
+        .frame(minHeight: 52)
+        .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 26))
+    }
+}
+
+
+private struct TripMetadataLabelStyle: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(alignment: .center, spacing: 6) {
+            configuration.icon.frame(width: 24, alignment: .center)
+            configuration.title
+        }
     }
 }

@@ -84,6 +84,30 @@ struct ExportedPhotoResource {
 
 @MainActor
 enum PhotoLibraryService {
+    static func localFile(_ identifier: String) -> URL? {
+        guard let url = URL(string: identifier), url.isFileURL else { return nil }
+        // Application container paths can change after reinstalling/updating the app.
+        if url.deletingLastPathComponent().lastPathComponent == "CloudMedia",
+           let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            return support.appendingPathComponent("CloudMedia").appendingPathComponent(url.lastPathComponent)
+        }
+        return url
+    }
+
+    static func isLocallyAvailable(_ identifier: String) -> Bool {
+        if let file = localFile(identifier) {
+            return FileManager.default.isReadableFile(atPath: file.path)
+        }
+        return PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject != nil
+    }
+
+    static func localImage(_ url: URL) -> UIImage? {
+        if let image = UIImage(contentsOfFile: url.path) { return image }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        return (try? generator.copyCGImage(at: .zero, actualTime: nil)).map { UIImage(cgImage: $0) }
+    }
+
     static var status: PHAuthorizationStatus {
         PHPhotoLibrary.authorizationStatus(for: .readWrite)
     }
@@ -131,6 +155,7 @@ enum PhotoLibraryService {
     }
 
     static func shareImage(identifier: String, targetSize: CGSize = CGSize(width: 1_200, height: 800)) async -> UIImage? {
+        if let url = localFile(identifier) { return localImage(url) }
         let authorization = await requestReadWriteAccessIfNeeded()
         guard authorization == .authorized || authorization == .limited else { return nil }
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
@@ -157,6 +182,7 @@ enum PhotoLibraryService {
     }
 
     static func displayImage(identifier: String, targetSize: CGSize = CGSize(width: 2_000, height: 2_000)) async -> UIImage? {
+        if let url = localFile(identifier) { return localImage(url) }
         let authorization = await requestReadWriteAccessIfNeeded()
         guard authorization == .authorized || authorization == .limited else { return nil }
         let cacheKey = PhotoLibraryImageCache.key(
@@ -199,6 +225,12 @@ enum PhotoLibraryService {
         referenceID: UUID,
         to directory: URL
     ) async throws -> ExportedPhotoResource {
+        if let source = localFile(identifier) {
+            let destination = directory.appendingPathComponent(source.lastPathComponent)
+            try FileManager.default.copyItem(at: source, to: destination)
+            return ExportedPhotoResource(fileURL: destination, originalFilename: source.lastPathComponent,
+                uniformTypeIdentifier: UTType(filenameExtension: source.pathExtension)?.identifier ?? UTType.data.identifier)
+        }
         let authorization = status == .notDetermined ? await requestReadWriteAccess() : status
         guard authorization == .authorized || authorization == .limited else {
             throw PhotoLibraryError.permissionDenied
@@ -376,6 +408,9 @@ struct AssetThumbnail: View {
     }
 
     private func load() {
+        if let url = PhotoLibraryService.localFile(identifier) {
+            image = PhotoLibraryService.localImage(url); isMissing = image == nil; return
+        }
         let targetSize = CGSize(width: 480, height: 480)
         let cacheKey = PhotoLibraryImageCache.key(
             identifier: identifier,
@@ -572,6 +607,9 @@ private struct FullSizeAssetImage: View {
     }
 
     private func loadImage() {
+        if let url = PhotoLibraryService.localFile(identifier) {
+            image = PhotoLibraryService.localImage(url); isMissing = image == nil; return
+        }
         image = nil
         isMissing = false
         let assets = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
@@ -599,12 +637,36 @@ private struct FullSizeAssetImage: View {
     }
 }
 
+@MainActor
+private enum VideoPlaybackAudioSession {
+    private static var owners: Set<UUID> = []
+
+    static func activate(_ owner: UUID) {
+        guard !owners.contains(owner) else { return }
+        do {
+            let session = AVAudioSession.sharedInstance()
+            try session.setCategory(.playback, mode: .moviePlayback)
+            try session.setActive(true)
+            owners.insert(owner)
+        } catch {
+            NSLog("Video audio session activation failed: %@", error.localizedDescription)
+        }
+    }
+
+    static func deactivate(_ owner: UUID) {
+        guard owners.remove(owner) != nil, owners.isEmpty else { return }
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}
+
 private struct FullSizeAssetVideo: View {
     let identifier: String
     let isActive: Bool
 
     @State private var player: AVPlayer?
     @State private var failed = false
+    @State private var audioOwner = UUID()
+    @State private var isVisible = false
 
     var body: some View {
         Group {
@@ -624,15 +686,26 @@ private struct FullSizeAssetVideo: View {
             }
         }
         .background(.black)
-        .task(id: identifier) { loadVideo() }
-        .onChange(of: isActive) { _, active in
-            if active { player?.play() }
-            else { player?.pause() }
+        .task(id: identifier) {
+            isVisible = true
+            if isActive { VideoPlaybackAudioSession.activate(audioOwner) }
+            loadVideo()
         }
-        .onDisappear { player?.pause() }
+        .onChange(of: isActive) { _, active in
+            if active && isVisible { VideoPlaybackAudioSession.activate(audioOwner); player?.play() }
+            else { player?.pause(); VideoPlaybackAudioSession.deactivate(audioOwner) }
+        }
+        .onDisappear {
+            isVisible = false
+            player?.pause()
+            VideoPlaybackAudioSession.deactivate(audioOwner)
+        }
     }
 
     private func loadVideo() {
+        if let url = PhotoLibraryService.localFile(identifier) {
+            player = AVPlayer(url: url); player?.play(); return
+        }
         player?.pause()
         player = nil
         failed = false
@@ -645,11 +718,14 @@ private struct FullSizeAssetVideo: View {
         options.isNetworkAccessAllowed = true
         PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { asset, _, _ in
             Task { @MainActor in
+                guard isVisible else { return }
                 guard let asset else {
                     failed = true
                     return
                 }
                 let loadedPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                loadedPlayer.isMuted = false
+                loadedPlayer.volume = 1
                 player = loadedPlayer
                 if isActive { loadedPlayer.play() }
             }
@@ -662,6 +738,8 @@ struct AssetVideoPlayer: View {
     @Environment(\.dismiss) private var dismiss
     @State private var player: AVPlayer?
     @State private var failed = false
+    @State private var audioOwner = UUID()
+    @State private var isVisible = false
 
     var body: some View {
         TripNavigationStack {
@@ -682,10 +760,22 @@ struct AssetVideoPlayer: View {
                 }
             }
         }
-        .task { loadVideo() }
+        .task {
+            isVisible = true
+            VideoPlaybackAudioSession.activate(audioOwner)
+            loadVideo()
+        }
+        .onDisappear {
+            isVisible = false
+            player?.pause()
+            VideoPlaybackAudioSession.deactivate(audioOwner)
+        }
     }
 
     private func loadVideo() {
+        if let url = PhotoLibraryService.localFile(identifier) {
+            player = AVPlayer(url: url); player?.play(); return
+        }
         let result = PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil)
         guard let asset = result.firstObject else {
             failed = true
@@ -695,7 +785,13 @@ struct AssetVideoPlayer: View {
         options.isNetworkAccessAllowed = true
         PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { asset, _, _ in
             Task { @MainActor in
-                if let asset { player = AVPlayer(playerItem: AVPlayerItem(asset: asset)) }
+                guard isVisible else { return }
+                if let asset {
+                    let loadedPlayer = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+                    loadedPlayer.isMuted = false
+                    loadedPlayer.volume = 1
+                    player = loadedPlayer
+                }
                 else { failed = true }
             }
         }

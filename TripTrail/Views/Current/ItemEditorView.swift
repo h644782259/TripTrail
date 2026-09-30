@@ -34,6 +34,7 @@ struct ItemEditorView: View {
     @State private var costText: String
     @State private var showsFavoriteImport = false
     @State private var showsSmartImport = false
+    @State private var creationMethod = "普通新建"
     @State private var smartImportMode: SingleSmartImportMode
     @State private var smartImportFeedback: String?
     @State private var smartImportUsedFallback = false
@@ -101,8 +102,13 @@ struct ItemEditorView: View {
             Form {
                 if item == nil {
                     Section {
-                        Button { showsSmartImport = true } label: {
-                            Label("智能录入", systemImage: "wand.and.stars")
+                        if mode == .favorite {
+                            Picker("新建方式", selection: $creationMethod) {
+                                Text("智能录入").tag("智能录入")
+                                Text("普通新建").tag("普通新建")
+                            }.pickerStyle(.segmented)
+                        } else {
+                            Button { showsSmartImport = true } label: { Label("智能录入", systemImage: "wand.and.stars") }
                         }
                         if mode == .itinerary, day != nil {
                             Button { showsFavoriteImport = true } label: { Label("从收藏导入", systemImage: "heart") }
@@ -120,15 +126,21 @@ struct ItemEditorView: View {
                     }
                 }
 
+                if item == nil && mode == .favorite && creationMethod == "智能录入" {
+                    Section {
+                        Button { showsSmartImport = true } label: { Label("开始智能录入", systemImage: "wand.and.stars") }
+                        Text("通过文字或截图识别收藏，识别后可继续编辑。").font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else {
                 Section("安排") {
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("安排名称")
-                        TextField("例如：广州 → 上海、游览世纪公园", text: $title)
+                        TextField("例如：广州 → 上海、游览世纪公园", text: $title).clearableText($title)
                             .accessibilityLabel("安排名称")
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("补充说明")
-                        TextField("例如：先寄存行李，下午两点后办理入住", text: $note, axis: .vertical)
+                        TextField("例如：先寄存行李，下午两点后办理入住", text: $note, axis: .vertical).clearableText($note)
                             .lineLimit(2...5)
                             .accessibilityLabel("补充说明")
                     }
@@ -163,11 +175,13 @@ struct ItemEditorView: View {
                     }
                 }
 
+                if mode == .favorite { mediaSection }
+
                 Section("地点") {
                     if mode == .favorite {
                         VStack(alignment: .leading, spacing: 6) {
                             editorFieldLabel("城市（选填）")
-                            TextField("例如：杭州，用于筛选收藏", text: $favoriteCity)
+                            TextField("例如：杭州，用于筛选收藏", text: $favoriteCity).clearableText($favoriteCity)
                         }
                     }
                     Picker("地点类型", selection: $locationMode) {
@@ -180,12 +194,12 @@ struct ItemEditorView: View {
                     if locationMode == .single {
                         VStack(alignment: .leading, spacing: 6) {
                             editorFieldLabel("地点名称")
-                            TextField("例如：上海世纪公园", text: $placeName)
+                            TextField("例如：上海世纪公园", text: $placeName).clearableText($placeName)
                                 .accessibilityLabel("地点名称")
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             editorFieldLabel("详细地址（选填）")
-                            TextField("用于提高地图匹配准确度", text: $placeAddress, axis: .vertical)
+                            TextField("用于提高地图匹配准确度", text: $placeAddress, axis: .vertical).clearableText($placeAddress)
                                 .lineLimit(1...3)
                                 .accessibilityLabel("地点详细地址")
                         }
@@ -207,18 +221,13 @@ struct ItemEditorView: View {
                     HStack(spacing: 8) {
                         Text("¥")
                             .foregroundStyle(.secondary)
-                        TextField("输入金额", text: $costText)
+                        TextField("输入金额", text: $costText).clearableText($costText)
                             .keyboardType(.decimalPad)
                             .accessibilityLabel("花费")
                     }
                 }
 
-                Section("照片与视频") {
-                    let visibleMedia = (item?.media ?? [])
-                        .filter { !removedMediaIDs.contains($0.id) }
-                        .sorted { $0.sortOrder < $1.sortOrder }
-                    mediaGrid(existing: visibleMedia, picked: pickedAssets)
-                        .listRowSeparator(.hidden)
+                if mode != .favorite { mediaSection }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
@@ -228,7 +237,8 @@ struct ItemEditorView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") { save() }.disabled(
-                        title.trimmingCharacters(in: .whitespaces).isEmpty
+                        (item == nil && mode == .favorite && creationMethod != "普通新建")
+                            || title.trimmingCharacters(in: .whitespaces).isEmpty
                             || (mode == .itinerary && !isTimePending && endTime <= startTime)
                     )
                 }
@@ -240,10 +250,10 @@ struct ItemEditorView: View {
                 guard item == nil else { return }
                 locationMode = newValue == .transport ? .route : .single
             }
-            .sheet(isPresented: $showsFavoriteImport) {
+            .cloudEditSheet(isPresented: $showsFavoriteImport) {
                 if let day { FavoriteImportSelectionView(day: day) }
             }
-            .sheet(isPresented: $showsSmartImport) {
+            .cloudEditSheet(isPresented: $showsSmartImport) {
                 if mode == .itinerary, let day, let trip = day.trip {
                     TextItineraryImportView(trip: trip, referenceDate: day.date, targetDay: day, onCreated: { _ in dismiss() })
                 } else {
@@ -254,6 +264,7 @@ struct ItemEditorView: View {
                     onCancel: { showsSmartImport = false },
                     onRecognized: { draft in
                         applyRecognizedDraft(draft)
+                        creationMethod = "普通新建"
                         showsSmartImport = false
                     }
                 )
@@ -281,6 +292,16 @@ struct ItemEditorView: View {
             .foregroundStyle(.secondary)
     }
 
+    private var mediaSection: some View {
+        Section("照片与视频") {
+            let visibleMedia = (item?.media ?? [])
+                .filter { !removedMediaIDs.contains($0.id) }
+                .sorted { $0.sortOrder < $1.sortOrder }
+            mediaGrid(existing: visibleMedia, picked: pickedAssets)
+                .listRowSeparator(.hidden)
+        }
+    }
+
     private func locationFields(
         title: String,
         name: Binding<String>,
@@ -288,9 +309,9 @@ struct ItemEditorView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             editorFieldLabel(title)
-            TextField("\(title)名称", text: name)
+            TextField("\(title)名称", text: name).clearableText(name)
                 .accessibilityLabel("\(title)名称")
-            TextField("\(title)详细地址（选填）", text: address, axis: .vertical)
+            TextField("\(title)详细地址（选填）", text: address, axis: .vertical).clearableText(address)
                 .lineLimit(1...3)
                 .accessibilityLabel("\(title)详细地址")
         }
@@ -310,6 +331,7 @@ struct ItemEditorView: View {
         category = draft.category
         startTime = draft.startTime
         endTime = draft.endTime
+        if mode == .favorite, !draft.favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { favoriteCity = draft.favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines) }
         locationMode = draft.locationMode
         if !draft.placeName.isEmpty { placeName = draft.placeName }
         if !draft.placeAddress.isEmpty { placeAddress = draft.placeAddress }
@@ -578,7 +600,7 @@ private struct SingleItinerarySmartImportView: View {
                                     .padding(.vertical, 8)
                                     .allowsHitTesting(false)
                             }
-                            TextEditor(text: $inputText)
+                            TextEditor(text: $inputText).clearableText($inputText, alignment: .topTrailing)
                                 .focused($isInputFocused)
                                 .frame(height: 220)
                                 .scrollContentBackground(.hidden)

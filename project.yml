@@ -12,6 +12,9 @@ settings:
 targets:
   TripTrail:
     type: application
+    configFiles:
+      Debug: Config/Cloud.xcconfig
+      Release: Config/Cloud.xcconfig
     platform: iOS
     sources:
       - path: TripTrail

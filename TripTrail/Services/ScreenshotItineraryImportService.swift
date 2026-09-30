@@ -5,6 +5,7 @@ import Vision
 struct ItineraryScreenshotDraft: Identifiable {
     let id = UUID()
     var recognitionNotice: String? = nil
+    var favoriteCity: String = ""
     var title: String
     var category: PlaceCategory
     var startTime: Date

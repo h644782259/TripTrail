@@ -209,8 +209,12 @@ enum ItineraryRoutePlanning {
                 }
         }
 
+        return removingAdjacentDuplicates(rawPoints)
+    }
+
+    static func removingAdjacentDuplicates(_ points: [ItineraryRoutePoint]) -> [ItineraryRoutePoint] {
         var result: [ItineraryRoutePoint] = []
-        for point in rawPoints {
+        for point in points {
             if let previous = result.last,
                normalizedLocation(previous.target) == normalizedLocation(point.target) {
                 continue
@@ -221,9 +225,9 @@ enum ItineraryRoutePlanning {
     }
 
     private static func normalizedLocation(_ target: JourneyLocationTarget) -> String {
-        target.displayName
-            .replacingOccurrences(of: " ", with: "")
-            .lowercased()
+        [target.displayName, target.address].map {
+            $0.components(separatedBy: .whitespacesAndNewlines).joined().lowercased()
+        }.joined(separator: "\u{0}")
     }
 }
 
@@ -244,7 +248,7 @@ enum HierarchyDeletionCopy {
     static let storyEntryTitle = "删除这条记录？"
 
     static func tripMessage(title: String) -> String {
-        "“\(title)”及其中的每日安排和媒体引用将被永久删除。"
+        "“\(title)”将移入回收站，24 小时内可恢复。云端项目会同步从其他设备移除。"
     }
 
     static func tripDayMessage(title: String) -> String {
@@ -256,7 +260,7 @@ enum HierarchyDeletionCopy {
     }
 
     static func storyMessage(title: String) -> String {
-        "“\(title)”及其中的每日记录、回忆和媒体引用将被永久删除，原旅程不会受到影响。"
+        "“\(title)”将移入回收站，24 小时内可恢复。云端项目会同步从其他设备移除，原旅程不受影响。"
     }
 
     static func storyDayMessage(title: String) -> String {
@@ -271,6 +275,8 @@ enum HierarchyDeletionCopy {
 @Model
 final class Trip {
     var licensePlate: String = ""
+    var licensePlateDisplay: String { licensePlate.formattedLicensePlate }
+
     var id: UUID = UUID()
     var title: String = ""
     var destination: String = ""
@@ -885,4 +891,16 @@ struct TravelVoucher: Codable, Identifiable, Equatable {
     let name: String
     let mimeType: String
     let dataBase64: String
+}
+
+
+extension String {
+    var formattedLicensePlate: String {
+        let value = filter { !$0.isWhitespace && $0 != "·" }.uppercased()
+        let characters = Array(value)
+        guard characters.count > 2,
+              "京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼".contains(characters[0]),
+              "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(characters[1]) else { return value }
+        return String(characters.prefix(2)) + "·" + String(characters.dropFirst(2))
+    }
 }

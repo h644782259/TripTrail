@@ -9,6 +9,7 @@ struct PortablePackageExportResult {
     let url: URL
     let mediaCount: Int
     let mediaBytes: Int64
+    var skippedMedia: [String] = []
 }
 
 struct PortablePackageMediaEntry: Codable, Equatable {
@@ -78,7 +79,8 @@ enum PortablePackageService {
         kind: PortablePackageKind,
         contentData: Data,
         mediaReferences: [MediaReference],
-        fileExtension: String
+        fileExtension: String,
+        skipUnavailableMedia: Bool = false
     ) async throws -> PortablePackageExportResult {
         let uniqueReferences = unique(mediaReferences)
         let workDirectory = FileManager.default.temporaryDirectory
@@ -87,6 +89,8 @@ enum PortablePackageService {
         defer { try? FileManager.default.removeItem(at: workDirectory) }
 
         var payloads: [ExportedPayload] = []
+        var skippedIDs = Set<String>()
+        var skippedNames: [String] = []
         for reference in uniqueReferences {
             do {
                 let exported = try await PhotoLibraryService.exportOriginal(
@@ -112,18 +116,22 @@ enum PortablePackageService {
                         fileURL: exported.fileURL
                     )
                 )
-            } catch let error as PortablePackageError {
-                throw error
             } catch {
-                throw PortablePackageError.missingMedia(reference.caption.isEmpty ? reference.kind.rawValue : reference.caption)
+                if error is CancellationError { throw error }
+                guard skipUnavailableMedia else {
+                    throw PortablePackageError.missingMedia(reference.caption.isEmpty ? reference.kind.rawValue : reference.caption)
+                }
+                skippedIDs.insert(reference.id.uuidString.lowercased())
+                skippedNames.append(reference.caption.isEmpty ? reference.kind.rawValue : reference.caption)
             }
         }
+        let exportedContent = try removingUnavailableMedia(from: contentData, identifiers: skippedIDs)
 
         let manifest = Manifest(
             format: formatName,
             formatVersion: formatVersion,
             kind: kind,
-            contentData: contentData,
+            contentData: exportedContent,
             media: payloads.map(\.entry)
         )
         let encoder = JSONEncoder()
@@ -136,8 +144,25 @@ enum PortablePackageService {
         return PortablePackageExportResult(
             url: outputURL,
             mediaCount: payloads.count,
-            mediaBytes: payloads.reduce(0) { $0 + $1.entry.byteCount }
+            mediaBytes: payloads.reduce(0) { $0 + $1.entry.byteCount },
+            skippedMedia: skippedNames
         )
+    }
+
+    static func removingUnavailableMedia(from contentData: Data, identifiers skippedIDs: Set<String>) throws -> Data {
+        guard !skippedIDs.isEmpty else { return contentData }
+        func filtered(_ value: Any) -> Any {
+            if let array = value as? [Any] { return array.map(filtered) }
+            guard var object = value as? [String: Any] else { return value }
+            if let media = object["media"] as? [[String: Any]] {
+                object["media"] = media.filter { !skippedIDs.contains(($0["id"] as? String ?? "").lowercased()) }
+            }
+            if let cover = object["coverMedia"] as? [String: Any], skippedIDs.contains((cover["id"] as? String ?? "").lowercased()) {
+                object.removeValue(forKey: "coverMedia")
+            }
+            return object.mapValues(filtered)
+        }
+        return try JSONSerialization.data(withJSONObject: filtered(JSONSerialization.jsonObject(with: contentData)))
     }
 
     static func open(_ url: URL) throws -> OpenedPortablePackage? {
@@ -265,5 +290,57 @@ enum PortablePackageService {
 
     private static func decodeUInt64(_ data: Data) -> UInt64 {
         data.reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+    }
+}
+
+
+/// Owns only app-generated temporary files, never user documents or Photos assets.
+final class TemporaryFileOwner {
+    private var urls: Set<URL> = []
+    func keep(_ url: URL) { urls.insert(url) }
+    // Once handed to another app, its read lifetime is independent of our preview.
+    func handOff(_ url: URL) {
+        guard urls.remove(url) != nil else { return }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3 * 60 * 60) {
+            try? FileManager.default.removeItem(at: url)
+        }
+    }
+    static func shareURL(filename: String) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("TripTrailShared", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(filename)
+    }
+    func remove(_ url: URL?) {
+        guard let url, urls.remove(url) != nil else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+    func clear() {
+        for url in urls { try? FileManager.default.removeItem(at: url) }
+        urls.removeAll()
+    }
+    deinit { clear() }
+
+    // Run once before any new import/export starts. Only known legacy temp names qualify.
+    static func cleanPreviousSession(in root: URL = FileManager.default.temporaryDirectory) {
+        let manager = FileManager.default
+        for url in (try? manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] {
+            let name = url.lastPathComponent
+            let isWork = ["TripTrailPackage-", "TripTrailImport-", "TripTrailIncoming-"].contains { name.hasPrefix($0) }
+            let isPackage = ["triptrail", "triptrailbackup"].contains(url.pathExtension.lowercased())
+                && (name.hasPrefix("TripTrail-") || name.hasPrefix("旅迹"))
+            if name == "TripTrailShared" || isPackage {
+                // Preserve recent files even across a process restart while WeChat reads.
+                let files = name == "TripTrailShared"
+                    ? ((try? manager.contentsOfDirectory(at: url, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+                    : [url]
+                for file in files {
+                    if let modified = try? file.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate,
+                       modified < Date().addingTimeInterval(-3 * 60 * 60) {
+                        try? manager.removeItem(at: file)
+                    }
+                }
+            } else if isWork { try? manager.removeItem(at: url) }
+        }
     }
 }

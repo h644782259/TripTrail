@@ -77,7 +77,8 @@ enum DataBackupService {
             kind: .backup,
             contentData: data,
             mediaReferences: media,
-            fileExtension: "triptrailbackup"
+            fileExtension: "triptrailbackup",
+            skipUnavailableMedia: true
         )
     }
 
@@ -1225,5 +1226,82 @@ private struct MediaRecord: Codable {
         reference.caption = caption
         reference.createdAt = createdAt
         return reference
+    }
+}
+
+// Cloud uses the versioned portable record representation, never a whole-device restore.
+@MainActor
+enum CloudRecordAdapter {
+    static func records(_ context: ModelContext) throws -> [CloudLocalRecord] {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        let trips = try context.fetch(FetchDescriptor<Trip>()).map {
+            CloudLocalRecord(id: $0.id, kind: "trip", title: $0.title, data: try encoder.encode(TripRecord($0)), media: $0.allItems.flatMap(\.media))
+        }
+        let stories = try context.fetch(FetchDescriptor<TravelStory>()).map {
+            CloudLocalRecord(id: $0.id, kind: "story", title: $0.title, data: try encoder.encode(StoryRecord($0)), media: $0.allMedia + [$0.coverMedia].compactMap { $0 })
+        }
+        let favorites = try context.fetch(FetchDescriptor<ItineraryItem>()).filter(\.isFavorite).map {
+            CloudLocalRecord(id: $0.id, kind: "favorite", title: $0.title, data: try encoder.encode(ItineraryItemRecord($0)), media: $0.media)
+        }
+        return trips + stories + favorites
+    }
+
+    static func apply(_ data: Data, kind: String, context: ModelContext) throws {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .millisecondsSince1970
+        try context.save()
+        do {
+        switch kind {
+        case "trip":
+            let fresh = try decoder.decode(TripRecord.self, from: data).makeModel()
+            if let old = try context.fetch(FetchDescriptor<Trip>()).first(where: { $0.id == fresh.id }) {
+                old.title = fresh.title; old.destination = fresh.destination; old.licensePlate = fresh.licensePlate
+                old.startDate = fresh.startDate; old.endDate = fresh.endDate; old.note = fresh.note; old.createdAt = fresh.createdAt
+                old.days.forEach(context.delete)
+                let days = fresh.days; fresh.days = []
+                old.days = days
+                for day in days { day.trip = old }
+            } else { context.insert(fresh) }
+        case "story":
+            let fresh = try decoder.decode(StoryRecord.self, from: data).makeModel()
+            if let old = try context.fetch(FetchDescriptor<TravelStory>()).first(where: { $0.id == fresh.id }) {
+                old.title = fresh.title; old.destination = fresh.destination; old.startDate = fresh.startDate; old.endDate = fresh.endDate
+                old.summary = fresh.summary; old.createdAt = fresh.createdAt; old.sourceTripID = fresh.sourceTripID
+                old.syncScopeRaw = fresh.syncScopeRaw; old.sourceSelectionIDsRaw = fresh.sourceSelectionIDsRaw
+                old.coverZoom = fresh.coverZoom; old.coverOffsetX = fresh.coverOffsetX; old.coverOffsetY = fresh.coverOffsetY
+                old.entries.forEach(context.delete); old.days.forEach(context.delete)
+                if let cover = old.coverMedia { context.delete(cover) }
+                let days = fresh.days; let entries = fresh.entries; let cover = fresh.coverMedia
+                fresh.days = []; fresh.entries = []; fresh.coverMedia = nil
+                old.days = days; old.entries = entries; old.coverMedia = cover
+                for day in days { day.story = old }; for entry in entries { entry.story = old }; cover?.storyCover = old
+            } else { context.insert(fresh) }
+        case "favorite":
+            let fresh = try decoder.decode(ItineraryItemRecord.self, from: data).makeFavoriteModel()
+            if let old = try context.fetch(FetchDescriptor<ItineraryItem>()).first(where: { $0.id == fresh.id && $0.isFavorite }) {
+                old.title = fresh.title; old.categoryRaw = fresh.categoryRaw; old.startTime = fresh.startTime; old.endTime = fresh.endTime
+                old.address = fresh.address; old.note = fresh.note; old.locationModeRaw = fresh.locationModeRaw
+                old.placeName = fresh.placeName; old.placeAddress = fresh.placeAddress
+                old.originName = fresh.originName; old.originAddress = fresh.originAddress
+                old.destinationName = fresh.destinationName; old.destinationAddress = fresh.destinationAddress
+                old.playDurationMinutes = fresh.playDurationMinutes; old.reservationInfo = fresh.reservationInfo; old.cost = fresh.cost
+                old.isCompleted = fresh.isCompleted; old.executionStatusRaw = fresh.executionStatusRaw
+                old.isAutomaticCompletionOverridden = fresh.isAutomaticCompletionOverridden
+                old.isFixedTime = fresh.isFixedTime; old.isTimePending = fresh.isTimePending; old.vouchers = fresh.vouchers
+                old.favoriteCity = fresh.favoriteCity; old.favoriteCreatedAt = fresh.favoriteCreatedAt
+                old.sourceFavoriteID = fresh.sourceFavoriteID; old.sortOrder = fresh.sortOrder
+                old.media.forEach(context.delete)
+                let media = fresh.media; fresh.media = []; old.media = media
+                for reference in media { reference.itineraryItem = old }
+            } else { context.insert(fresh) }
+        default: throw CloudSyncError.message("不支持的云端内容类型")
+        }
+        try context.save()
+        } catch {
+            context.rollback()
+            throw error
+        }
     }
 }

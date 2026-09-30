@@ -616,9 +616,10 @@ enum ZhipuVisionItineraryService {
             rawText: rawText.isEmpty ? "由大模型增强识别生成" : rawText,
             sourceAssetIdentifiers: sourceAssetIdentifiers
         )
-        guard let draft = singleItemDraft(from: journey) else {
+        guard var draft = singleItemDraft(from: journey) else {
             throw ZhipuVisionItineraryError.invalidStructuredResult
         }
+        draft.favoriteCity = payload.item.city?.trimmed ?? ""
         return draft
     }
 
@@ -897,6 +898,7 @@ enum ZhipuVisionItineraryService {
               "locationMode": "单地点|起终点",
               "placeName": "单地点名称",
               "placeAddress": "单地点详细地址",
+              "city": "地点所属城市（选填）；仅依据原文或明确地址提取，不确定为空，不推测跨城市路线的城市",
               "origin": "出发位置",
               "originAddress": "出发地详细地址",
               "destination": "到达位置",
@@ -955,6 +957,7 @@ enum ZhipuVisionItineraryService {
               "locationMode": "单地点|起终点",
               "placeName": "单地点名称",
               "placeAddress": "单地点详细地址",
+              "city": "地点所属城市（选填）；仅依据原文或明确地址提取，不确定为空，不推测跨城市路线的城市",
               "origin": "出发位置",
               "originAddress": "出发地详细地址",
               "destination": "到达位置",
@@ -1020,6 +1023,7 @@ enum ZhipuVisionItineraryService {
                 "locationMode": "单地点|起终点",
                 "placeName": "单地点实体名称",
                 "placeAddress": "单地点详细地址",
+              "city": "地点所属城市（选填）；仅依据原文或明确地址提取，不确定为空，不推测跨城市路线的城市",
                 "origin": "出发地实体名称",
                 "originAddress": "出发地详细地址",
                 "destination": "目的地实体名称",
@@ -1043,6 +1047,7 @@ enum ZhipuVisionItineraryService {
                 "locationMode": "单地点|起终点",
                 "placeName": "单地点实体名称",
                 "placeAddress": "单地点详细地址",
+              "city": "地点所属城市（选填）；仅依据原文或明确地址提取，不确定为空，不推测跨城市路线的城市",
                 "origin": "出发地实体名称",
                 "originAddress": "出发地详细地址",
                 "destination": "目的地实体名称",
@@ -1179,6 +1184,7 @@ private struct SingleItemPayload: Decodable {
 }
 
 private struct JourneyItemPayload: Decodable {
+    let city: String?
     let title: String?
     let category: String?
     let startAt: String?
@@ -1197,6 +1203,7 @@ private struct JourneyItemPayload: Decodable {
     let sourceText: String?
 
     enum CodingKeys: String, CodingKey {
+        case city, favoriteCity
         case title, category, startAt, endAt, address, locationMode, placeName, placeAddress
         case origin, originAddress, destination, destinationAddress
         case reservationInfo, cost, note, sourceText
@@ -1212,6 +1219,12 @@ private struct JourneyItemPayload: Decodable {
         locationMode = try container.decodeIfPresent(String.self, forKey: .locationMode)
         placeName = try container.decodeIfPresent(String.self, forKey: .placeName)
         placeAddress = try container.decodeIfPresent(String.self, forKey: .placeAddress)
+        let suppliedCity = try container.decodeIfPresent(String.self, forKey: .city)?.trimmed
+        if let suppliedCity, !suppliedCity.isEmpty {
+            city = suppliedCity
+        } else {
+            city = try container.decodeIfPresent(String.self, forKey: .favoriteCity)?.trimmed
+        }
         origin = try container.decodeIfPresent(String.self, forKey: .origin)
         originAddress = try container.decodeIfPresent(String.self, forKey: .originAddress)
         destination = try container.decodeIfPresent(String.self, forKey: .destination)

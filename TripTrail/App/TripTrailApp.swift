@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct TripTrailApp: App {
     private let modelContainer: ModelContainer = {
+        TemporaryFileOwner.cleanPreviousSession()
         let schema = Schema([
             Trip.self,
             TripDay.self,

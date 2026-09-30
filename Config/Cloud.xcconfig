@@ -1,0 +1,4 @@
+// Public client configuration is supplied locally and never committed.
+SUPABASE_URL = https:/$()/spb-nxpqknocdb70j1pz.supabase.opentrust.net
+SUPABASE_ANON_KEY =
+#include? "Cloud.local.xcconfig"

@@ -3,6 +3,14 @@ import XCTest
 
 @MainActor
 final class AmapServiceTests: XCTestCase {
+    func testAdjacentStopsCollapseButReturnVisitRemains() throws {
+        let a = AmapStop(name: "A", address: "", latitude: 30, longitude: 120)
+        let b = AmapStop(name: "B", address: "", latitude: 31, longitude: 121)
+        XCTAssertEqual(AmapService.routeURL(stops: [a, a, b, b, a], mode: .car),
+                       AmapService.routeURL(stops: [a, b, a], mode: .car))
+        XCTAssertNil(AmapService.routeURL(stops: [a, a], mode: .car))
+    }
+
     func testTransportValuesMatchAmapURI() {
         XCTAssertEqual(TransportMode.car.amapValue, "car")
         XCTAssertEqual(TransportMode.walk.amapValue, "walk")

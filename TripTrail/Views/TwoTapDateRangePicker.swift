@@ -2,6 +2,7 @@ import SwiftUI
 
 enum DateRangePickerDisplayStyle {
     case form
+    case compact
     case compactOnColor
 }
 
@@ -66,6 +67,7 @@ struct TwoTapDateRangePicker: View {
     let showsTimeSelection: Bool
     let displayStyle: DateRangePickerDisplayStyle
     let showsEndpointTitles: Bool
+    var onOpen: (() -> Void)?
 
     @State private var isPresented = false
     @State private var visibleMonth = Date()
@@ -84,7 +86,8 @@ struct TwoTapDateRangePicker: View {
         preservesTimeComponents: Bool = false,
         showsTimeSelection: Bool = false,
         displayStyle: DateRangePickerDisplayStyle = .form,
-        showsEndpointTitles: Bool = true
+        showsEndpointTitles: Bool = true,
+        onOpen: (() -> Void)? = nil
     ) {
         self.title = title
         self.startTitle = startTitle
@@ -95,12 +98,13 @@ struct TwoTapDateRangePicker: View {
         self.showsTimeSelection = showsTimeSelection
         self.displayStyle = displayStyle
         self.showsEndpointTitles = showsEndpointTitles
+        self.onOpen = onOpen
         _draftStartTime = State(initialValue: startDate.wrappedValue)
         _draftEndTime = State(initialValue: endDate.wrappedValue)
     }
 
     var body: some View {
-        Button(action: openPicker) {
+        Button(action: { onOpen?(); openPicker() }) {
             switch displayStyle {
             case .form:
                 VStack(alignment: .leading, spacing: 10) {
@@ -121,15 +125,17 @@ struct TwoTapDateRangePicker: View {
                     }
                 }
                 .contentShape(Rectangle())
-            case .compactOnColor:
+            case .compact, .compactOnColor:
                 HStack(spacing: 7) {
                     Image(systemName: "calendar")
                     Text("\(dateText(startDate)) — \(dateText(endDate))")
-                    Image(systemName: "chevron.right")
-                        .font(.caption2.bold())
+                    if displayStyle == .compactOnColor {
+                        Image(systemName: "chevron.right")
+                            .font(.caption2.bold())
+                    }
                 }
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(displayStyle == .compactOnColor ? Color.white.opacity(0.9) : Color.tripLakeText)
                 .contentShape(Rectangle())
             }
         }

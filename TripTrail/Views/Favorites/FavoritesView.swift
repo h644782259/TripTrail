@@ -11,12 +11,11 @@ struct FavoritesView: View {
     @State private var showsNewFavorite = false
     @State private var favoriteToEdit: ItineraryItem?
     @State private var favoriteToDelete: ItineraryItem?
-    @State private var locationToOpen: JourneyLocationTarget?
+    @State private var favoriteToOpen: ItineraryItem?
     @State private var placeMessage: String?
 
-    private let columns = [
-        GridItem(.adaptive(minimum: 160, maximum: 220), spacing: 12, alignment: .top)
-    ]
+    @ScaledMetric(relativeTo: .body) private var minimumCardHeight: CGFloat = 240
+    private let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
 
     private var favorites: [ItineraryItem] {
         FavoriteArrangementService.filtered(
@@ -44,60 +43,66 @@ struct FavoritesView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
+                GeometryReader { geometry in
                 ScrollView {
-                    VStack(spacing: 14) {
-                        filterBar
+                    VStack(spacing: 8) {
 
                         if favorites.isEmpty {
                             ContentUnavailableView.search(text: searchText)
                                 .frame(minHeight: 320)
                         } else {
-                            LazyVGrid(columns: columns, spacing: 12) {
+                            LazyVGrid(columns: columns, spacing: 4) {
                                 ForEach(favorites) { favorite in
                                     FavoriteArrangementCard(
                                         favorite: favorite,
+                                        cardHeight: max(minimumCardHeight, (geometry.size.height - 12) / 2),
                                         onEdit: { favoriteToEdit = favorite },
                                         onDelete: { favoriteToDelete = favorite },
-                                        onNavigate: { locationToOpen = $0 }
+                                        onNavigate: { favoriteToOpen = favorite }
                                     )
                                 }
                             }
                         }
                     }
-                    .padding()
+                    .padding(.horizontal, 12)
+                    .padding(.top, 4)
                     .padding(.bottom, 96)
+                }
                 }
             }
         }
         .background(Color.tripCanvas.ignoresSafeArea())
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, prompt: "搜索名称、城市、地点或备注")
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showsNewFavorite = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .accessibilityLabel("新建收藏")
-            }
+        .toolbar(.hidden, for: .navigationBar)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            TripListSearchBar(text: $searchText, prompt: "搜索名称、城市、地点或备注") { filterMenu }
+                .padding(.horizontal).padding(.top, 8).padding(.bottom, 2)
+                .background(Color.tripCanvas)
         }
-        .sheet(isPresented: $showsNewFavorite) {
+        .overlay(alignment: .bottomTrailing) {
+            TripFloatingCreateButton(title: "新建收藏") { showsNewFavorite = true }
+        }
+        .cloudEditSheet(isPresented: $showsNewFavorite) {
             ItemEditorView(day: nil, mode: .favorite)
         }
-        .sheet(item: $favoriteToEdit) {
+        .cloudEditSheet(item: $favoriteToEdit) {
             ItemEditorView(day: nil, item: $0, mode: .favorite)
+                .task(id: $0.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "favorite", recordID: favoriteToEdit?.id, automatic: true) }
         }
-        .sheet(item: $locationToOpen) { target in
+        .cloudEditSheet(item: $favoriteToOpen) { favorite in
             NavigationOptionsSheet(
                 onAmap: {
+                    guard let target = favorite.locationTargets.last else {
+                        placeMessage = "请先为这条收藏填写地点。"
+                        return
+                    }
                     Task {
                         let result = await AmapService.openPlace(name: target.name, address: target.address)
                         placeMessage = result.message(destinationName: target.displayName)
                     }
                 },
-                onXiaohongshu: { openDiscovery(.xiaohongshu, target: target) },
-                onDouyin: { openDiscovery(.douyin, target: target) }
+                onXiaohongshu: { openDiscovery(.xiaohongshu, title: favorite.title) },
+                onDouyin: { openDiscovery(.douyin, title: favorite.title) }
             )
         }
         .alert("提示", isPresented: Binding(
@@ -113,32 +118,25 @@ struct FavoritesView: View {
             set: { if !$0 { favoriteToDelete = nil } }
         ), presenting: favoriteToDelete) { favorite in
             Button("确认删除", role: .destructive) {
-                modelContext.delete(favorite)
+                guard CloudSyncService.shared.trash(id: favorite.id, kind: "favorite", context: modelContext) else { return }
                 favoriteToDelete = nil
             }
             Button("取消", role: .cancel) { favoriteToDelete = nil }
         } message: { favorite in
-            Text("“\(favorite.title)”将从收藏中删除，已导入旅程的安排不受影响。")
+            Text("“\(favorite.title)”将移入回收站，24 小时内可恢复。云端收藏会同步删除，已导入旅程的安排不受影响。")
         }
     }
 
-    private func openDiscovery(_ platform: PlaceDiscoveryPlatform, target: JourneyLocationTarget) {
+    private func openDiscovery(_ platform: PlaceDiscoveryPlatform, title: String) {
         Task {
-            let opened = await PlaceDiscoveryService.open(platform, name: target.name, address: target.address)
+            let opened = await PlaceDiscoveryService.open(platform, name: title, address: "")
             if !opened {
                 placeMessage = "暂时无法打开\(platform.displayName)，请检查网络或稍后重试。"
             }
         }
     }
 
-    private var filterBar: some View {
-        HStack(spacing: 10) {
-            Label("\(favoriteCount) 个想去的地方", systemImage: "heart.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.tripInk)
-
-            Spacer(minLength: 8)
-
+    private var filterMenu: some View {
             Menu {
                 Button {
                     selectedCategory = nil
@@ -161,78 +159,91 @@ struct FavoritesView: View {
                     }
                 }
             } label: {
-                Label(selectedCategory?.rawValue ?? "全部类型", systemImage: "line.3.horizontal.decrease.circle")
-                    .font(.subheadline.weight(.semibold))
+                Label(selectedCategory?.rawValue ?? "全部类型", systemImage: "chevron.down")
+                    .font(.subheadline)
+                    .fixedSize()
+                    .frame(minHeight: 44)
             }
-        }
-        .padding(14)
-        .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
     }
+
 }
 
 private struct FavoriteArrangementCard: View {
-    @ScaledMetric(relativeTo: .body) private var cardHeight: CGFloat = 280
     let favorite: ItineraryItem
+    let cardHeight: CGFloat
     let onEdit: () -> Void
     let onDelete: () -> Void
-    let onNavigate: (JourneyLocationTarget) -> Void
+    let onNavigate: () -> Void
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
-            VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 7) {
-                        Image(systemName: favorite.category.symbol)
-                        Text(favorite.category.rawValue)
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.tripLakeText)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 5)
-                    .background(Color.tripLake.opacity(0.11), in: Capsule())
-
-                    Text(favorite.title)
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                        .multilineTextAlignment(.leading)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center, spacing: 4) {
+                Button(action: onNavigate) {
+                    CloudTitle(id: favorite.id, kind: "favorite", title: favorite.title.isEmpty ? "未命名收藏" : favorite.title, trailingBadge: true)
+                        .font(.headline).foregroundStyle(Color.tripLakeText)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("选择高德地图、小红书或抖音打开；长按打开功能菜单")
 
+                }
+
+                if let media = favorite.media.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                    Color.clear.frame(maxHeight: .infinity)
+                        .overlay {
+                            AssetThumbnail(identifier: media.localIdentifier, showsVideoBadge: media.kind == .video)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                } else {
                     let city = FavoriteArrangementService.city(for: favorite)
                     if !city.isEmpty, city != "未设置城市" {
                         Label(city, systemImage: "building.2")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
                     }
-
                     ForEach(favorite.locationTargets) { target in
-                        HStack(alignment: .firstTextBaseline, spacing: 4) {
-                            Button { onNavigate(target) } label: {
-                                Label(target.displayName, systemImage: target.role == .origin ? "location.circle" : "mappin.and.ellipse")
-                                    .lineLimit(1)
-                                    .multilineTextAlignment(.leading)
-                                    .foregroundStyle(Color.tripLakeText)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityHint("选择地图或搜索平台打开地点")
-                            LocationCopyButton(text: target.displayName)
+                        Label {
+                            Text(target.displayName)
+                                .lineLimit(2).truncationMode(.tail)
+                        } icon: {
+                            Image(systemName: target.role == .origin ? "location.circle" : target.role == .destination ? "flag.checkered" : "mappin.and.ellipse")
+                                .accessibilityLabel(target.role == .origin ? "起点" : target.role == .destination ? "终点" : "地点")
                         }
-                    }
-
-                    if !favorite.note.isEmpty {
-                        Text(favorite.note)
-                            .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 0)
-
-                    if favorite.cost > 0 {
-                        HStack(spacing: 8) {
-                            if favorite.cost > 0 {
-                                Text("¥\(favorite.cost, specifier: "%.0f")")
-                            }
-                        }
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color.tripLakeText)
                     }
                 }
+                if !favorite.note.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if favorite.media.isEmpty {
+                            Text("补充说明").font(.caption2.weight(.medium)).foregroundStyle(.tertiary)
+                        }
+                        Text(favorite.note)
+                            .font(.caption).foregroundStyle(.secondary)
+                            .lineLimit(favorite.media.isEmpty ? 12 : 2)
+                            .truncationMode(.tail)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: favorite.media.isEmpty ? .infinity : nil, alignment: .topLeading)
+                }
+                if favorite.media.isEmpty && favorite.note.isEmpty { Spacer(minLength: 0) }
+                HStack(spacing: 6) {
+                    Label(favorite.category.rawValue, systemImage: favorite.category.symbol)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.tripLakeText)
+                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .background(Color.tripLake.opacity(0.11), in: Capsule())
+                    Spacer(minLength: 0)
+                    if favorite.cost > 0 {
+                        Text("¥\(favorite.cost, specifier: "%.0f")")
+                            .font(.caption.weight(.semibold))
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                }
+            }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -245,18 +256,16 @@ private struct FavoriteArrangementCard: View {
                 }
                 .contentShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
                 .onTapGesture(perform: onEdit)
+                .contextMenu {
+                    CloudModeAction(id: favorite.id, kind: "favorite")
+                    Divider()
+                    Button("删除", systemImage: "trash", role: .destructive, action: onDelete)
+                }
                 .accessibilityAction(named: "编辑收藏", onEdit)
+                .accessibilityAction(named: "删除收藏", onDelete)
+                .accessibilityHint("轻点编辑，长按打开功能菜单")
 
-            Menu {
-                Button("编辑收藏", systemImage: "pencil", action: onEdit)
-                Button("删除收藏", systemImage: "trash", role: .destructive, action: onDelete)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.subheadline.bold())
-                    .frame(width: 38, height: 38)
-                    .contentShape(Rectangle())
-            }
-            .accessibilityLabel("\(favorite.title)更多操作")
+
         }
     }
 }
@@ -388,7 +397,7 @@ private struct FavoriteSelectionRow: View {
                 .background(Color.tripLake.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(favorite.title)
+                CloudTitle(id: favorite.id, kind: "favorite", title: favorite.title)
                     .font(.headline)
                     .foregroundStyle(.primary)
                 Text(favorite.locationSummary.isEmpty ? favorite.category.rawValue : favorite.locationSummary)

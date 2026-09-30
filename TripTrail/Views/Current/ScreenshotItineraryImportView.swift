@@ -49,9 +49,13 @@ struct ScreenshotItineraryImportView: View {
             Form {
                 if isCreatingTrip {
                     Section("创建旅程") {
-                        TextField("旅程名称", text: $newTripTitle)
-                        TextField("目的地（选填）", text: $newTripDestination)
-                        TextField("车牌号（选填）", text: $newTripLicensePlate).textInputAutocapitalization(.characters).autocorrectionDisabled()
+                        TextField("旅程名称", text: $newTripTitle).clearableText($newTripTitle)
+                        TextField("目的地（选填）", text: $newTripDestination).clearableText($newTripDestination)
+                        TextField("车牌号（选填）", text: $newTripLicensePlate).clearableText($newTripLicensePlate)
+                            .onChange(of: newTripLicensePlate) { _, value in
+                                let formatted = value.formattedLicensePlate
+                                if newTripLicensePlate != formatted { newTripLicensePlate = formatted }
+                            }.textInputAutocapitalization(.characters).autocorrectionDisabled()
                         if days.allSatisfy({ $0.date == nil }) {
                             DatePicker("出发日期", selection: $newTripStartDate, displayedComponents: .date)
                             Text("没有具体日期的安排将从出发日开始按天生成。")
@@ -159,11 +163,11 @@ struct ScreenshotItineraryImportView: View {
             VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("安排名称/说明")
-                        TextField("例如：游览世纪公园", text: item.title)
+                        TextField("例如：游览世纪公园", text: item.title).clearableText(item.title)
                     }
                     VStack(alignment: .leading, spacing: 6) {
                         editorFieldLabel("补充说明")
-                        TextField("例如：先寄存行李", text: item.note, axis: .vertical)
+                        TextField("例如：先寄存行李", text: item.note, axis: .vertical).clearableText(item.note)
                             .lineLimit(2...5)
                     }
                     Picker("类型", selection: item.category) {
@@ -200,11 +204,11 @@ struct ScreenshotItineraryImportView: View {
                     if item.wrappedValue.locationMode == .single {
                         VStack(alignment: .leading, spacing: 6) {
                             editorFieldLabel("地点名称")
-                            TextField("例如：上海世纪公园", text: item.placeName)
+                            TextField("例如：上海世纪公园", text: item.placeName).clearableText(item.placeName)
                         }
                         VStack(alignment: .leading, spacing: 6) {
                             editorFieldLabel("详细地址（选填）")
-                            TextField("用于提高地图匹配准确度", text: item.placeAddress, axis: .vertical)
+                            TextField("用于提高地图匹配准确度", text: item.placeAddress, axis: .vertical).clearableText(item.placeAddress)
                                 .lineLimit(1...3)
                         }
                     } else {
@@ -213,7 +217,7 @@ struct ScreenshotItineraryImportView: View {
                     }
                     HStack(spacing: 8) {
                         Text("¥").foregroundStyle(.secondary)
-                        TextField("输入金额", value: item.cost, format: .number)
+                        TripAmountInput(value: item.cost)
                             .keyboardType(.decimalPad)
                     }
             }
@@ -318,7 +322,7 @@ struct ScreenshotItineraryImportView: View {
         if isCreatingTrip {
             trip.title = newTripTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             trip.destination = newTripDestination.trimmingCharacters(in: .whitespacesAndNewlines)
-            trip.licensePlate = newTripLicensePlate.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            trip.licensePlate = newTripLicensePlate.formattedLicensePlate
             trip.startDate = newTripStartDate
             trip.endDate = newTripStartDate
             modelContext.insert(trip)
@@ -355,8 +359,8 @@ struct ScreenshotItineraryImportView: View {
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             editorFieldLabel(title)
-            TextField("地点名称", text: name)
-            TextField("详细地址（选填）", text: address, axis: .vertical)
+            TextField("地点名称", text: name).clearableText(name)
+            TextField("详细地址（选填）", text: address, axis: .vertical).clearableText(address)
                 .lineLimit(1...3)
         }
     }

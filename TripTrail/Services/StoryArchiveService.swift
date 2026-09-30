@@ -10,6 +10,26 @@ struct StoryArchiveResult {
 
 @MainActor
 enum StoryArchiveService {
+    /// Create each finished trip's footprint once; never resync over edited memories.
+    @discardableResult
+    static func archiveFinishedTrips(modelContext: ModelContext, relativeTo date: Date = Date()) throws -> [TravelStory] {
+        let trips = try modelContext.fetch(FetchDescriptor<Trip>())
+        var stories = try modelContext.fetch(FetchDescriptor<TravelStory>())
+        var created: [TravelStory] = []
+        for trip in trips where TripTimelineOrdering.phase(for: trip, relativeTo: date) == .history {
+            guard !CloudSyncService.shared.isDeleted("story:\(trip.id.uuidString.lowercased())") else { continue }
+            guard !stories.contains(where: { $0.sourceTripID == trip.id }) else { continue }
+            let result = try archive(trip: trip, selectedItems: trip.allItems, syncScope: .trip,
+                                     sourceIDs: [], summary: trip.note, modelContext: modelContext)
+            // The same source creates the same cloud record on different devices.
+            result.story.id = trip.id
+            stories.append(result.story)
+            created.append(result.story)
+        }
+        if !created.isEmpty { try modelContext.save() }
+        return created
+    }
+
     static func archive(
         trip: Trip,
         selectedItems: [ItineraryItem],

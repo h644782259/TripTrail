@@ -45,7 +45,7 @@ struct SharedJourneyImportView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
+                    Button("关闭") { dismiss() }.disabled(isImporting)
                 }
             }
             .safeAreaInset(edge: .bottom) {
@@ -62,6 +62,7 @@ struct SharedJourneyImportView: View {
                 .padding()
                 .background(.bar)
             }
+            .interactiveDismissDisabled(isImporting)
             .alert("收藏提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
                 Button("好", role: .cancel) { message = nil }
             } message: {

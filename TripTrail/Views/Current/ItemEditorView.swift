@@ -155,9 +155,14 @@ struct ItemEditorView: View {
                         Text("通过文字或截图识别收藏，识别后可继续编辑。").font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
-                Section(isFootprint ? "安排标题" : "安排") {
+                Section(isFootprint ? "安排标题" : "安排名称") {
                     TextField("安排标题", text: $title).clearableText($title)
                         .accessibilityLabel("安排标题")
+                }
+                if mode == .itinerary && !isFootprint {
+                    Section("补充说明") {
+                        TextField("填写安排的补充说明", text: $note, axis: .vertical).clearableText($note).lineLimit(2...5)
+                    }
                 }
                 if isFootprint {
                     memorySection
@@ -170,7 +175,7 @@ struct ItemEditorView: View {
                             onCommit: { isTimePending = false }, onClear: { isTimePending = true })
                     }
                 } else {
-                Section("安排") {
+                Section {
                     Picker("类型", selection: $category) {
                         ForEach(PlaceCategory.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
                     }
@@ -269,8 +274,10 @@ struct ItemEditorView: View {
                         memorySection
                         mediaSection
                     }
-                    Section("补充说明") {
-                        TextField("填写安排的补充说明", text: $note, axis: .vertical).clearableText($note).lineLimit(2...5)
+                    if isFootprint {
+                        Section("补充说明") {
+                            TextField("填写安排的补充说明", text: $note, axis: .vertical).clearableText($note).lineLimit(2...5)
+                        }
                     }
                 }
                 }

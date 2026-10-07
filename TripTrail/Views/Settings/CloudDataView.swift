@@ -272,32 +272,37 @@ struct CloudVersionNotice: View {
     let kind: String
     @Environment(\.modelContext) private var context
     @ObservedObject private var cloud = CloudSyncService.shared
+    @State private var dismissedKey: String?
+    @State private var detailsKey: String?
     @State private var error: String?
-    @State private var showsDetails = false
+    private var record: CloudRemoteRecord? {
+        cloud.remote.first { $0.kind == kind && cloud.conflicts.contains($0.key) }
+    }
     var body: some View {
-        if let record = cloud.remote.first(where: { $0.kind == kind && cloud.conflicts.contains($0.key) }) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("“\(record.title)”与云端内容不同").font(.subheadline.bold()).lineLimit(2)
+        Color.clear.frame(height: 0)
+            .alert("内容冲突", isPresented: Binding(
+                get: { record != nil && record?.key != dismissedKey && detailsKey == nil && error == nil },
+                set: { if !$0 { dismissedKey = record?.key } }
+            )) {
+                if let record {
+                    Button("查看详情") { detailsKey = record.key }
+                    Button("使用云端") { resolve(record.key, useCloud: true) }
+                    Button("使用本地") { resolve(record.key, useCloud: false) }
+                }
+            } message: {
                 Text("检测到内容冲突，请选择使用“云端”/“本地”版本")
-                    .font(.caption).foregroundStyle(.secondary)
-                HStack {
-                    Button("云端") { resolve(record.key, useCloud: true) }
-                    Button("本地") { resolve(record.key, useCloud: false) }
-                    Button("查看详情") { showsDetails = true }
-                    Spacer()
-                }.font(.subheadline).disabled(cloud.busy)
-                if cloud.busy { ProgressView().controlSize(.small) }
-                if let error { Text(error).font(.caption).foregroundStyle(.red) }
             }
-            .padding(12)
-            .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.tripLake.opacity(0.3)))
-            .padding(.horizontal, 12).padding(.vertical, 4)
-            .sheet(isPresented: $showsDetails) { CloudConflictDetailsView(key: record.key) }
-        }
+            .sheet(isPresented: Binding(get: { detailsKey != nil }, set: { if !$0 { detailsKey = nil } })) {
+                if let detailsKey { CloudConflictDetailsView(key: detailsKey) }
+            }
+            .alert("处理失败", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil; dismissedKey = nil } })) {
+                Button("确定") { error = nil; dismissedKey = nil }
+            } message: { Text(error ?? "") }
+            .onChange(of: cloud.conflicts) { _, conflicts in
+                if let dismissedKey, !conflicts.contains(dismissedKey) { self.dismissedKey = nil }
+            }
     }
     private func resolve(_ key: String, useCloud: Bool) {
-        error = nil
         Task {
             do { try await cloud.resolve(key, useCloud: useCloud, context: context) }
             catch { self.error = error.localizedDescription }
@@ -305,30 +310,11 @@ struct CloudVersionNotice: View {
     }
 }
 
+// The root presenter owns conflict alerts so detail screens do not show duplicate banners.
 struct CloudSaveNotice: View {
     let id: UUID
     let kind: String
-    @Environment(\.modelContext) private var context
-    @ObservedObject private var cloud = CloudSyncService.shared
-    @State private var showsDetails = false
-    private var key: String { "\(kind):\(id.uuidString.lowercased())" }
-    private func resolve(_ useCloud: Bool) {
-        Task { do { try await cloud.resolve(key, useCloud: useCloud, context: context) }
-            catch { cloud.message = error.localizedDescription } }
-    }
-    var body: some View {
-        if cloud.conflicts.contains(key) {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("检测到内容冲突，请选择使用“云端”/“本地”版本")
-                HStack {
-                    Button("查看详情") { showsDetails = true }
-                    Button("云端") { resolve(true) }
-                    Button("本地") { resolve(false) }
-                }.disabled(cloud.busy)
-            }.font(.footnote).padding().background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
-                .sheet(isPresented: $showsDetails) { CloudConflictDetailsView(key: key) }
-        }
-    }
+    var body: some View { EmptyView() }
 }
 
 struct CloudConflictDetailsView: View {

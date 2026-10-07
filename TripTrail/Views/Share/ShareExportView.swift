@@ -332,7 +332,7 @@ struct ShareExportView: View {
             .background(Color.tripCanvas)
             .navigationTitle("分享预览")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("返回") { dismiss() } } }
             .task(id: selectionKey) {
                 do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
                 await updatePreviewImages()

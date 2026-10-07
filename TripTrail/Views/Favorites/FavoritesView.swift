@@ -15,14 +15,24 @@ struct FavoritesView: View {
     @State private var placeMessage: String?
 
     @ScaledMetric(relativeTo: .body) private var minimumCardHeight: CGFloat = 240
-    private func columns(for width: CGFloat) -> [GridItem] {
-        Array(repeating: GridItem(.flexible(), spacing: 4), count: 2)
+    private func columnCount(in size: CGSize) -> Int {
+        guard UIDevice.current.userInterfaceIdiom == .pad,
+              size.width >= 600, size.width > size.height else { return 2 }
+        // Keep landscape cards near their portrait width instead of stretching
+        // two cards across the entire tablet and making them taller than the viewport.
+        return max(3, min(6, Int((size.width - 20) / 264)))
+    }
+
+    private func columns(in size: CGSize) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 4), count: columnCount(in: size))
     }
 
     private func cardHeight(in size: CGSize) -> CGFloat {
         if UIDevice.current.userInterfaceIdiom == .pad && size.width >= 600 {
-            let cardWidth = (size.width - 24 - 4) / 2
-            return cardWidth * 4 / 3
+            let count = CGFloat(columnCount(in: size))
+            let cardWidth = (size.width - 24 - 4 * (count - 1)) / count
+            let viewportLimit = max(minimumCardHeight, size.height - 104)
+            return min(cardWidth * 4 / 3, viewportLimit)
         }
         return max(minimumCardHeight, (size.height - 12) / 2)
     }
@@ -61,7 +71,7 @@ struct FavoritesView: View {
                             ContentUnavailableView.search(text: searchText)
                                 .frame(minHeight: 320)
                         } else {
-                            LazyVGrid(columns: columns(for: geometry.size.width), spacing: 4) {
+                            LazyVGrid(columns: columns(in: geometry.size), spacing: 4) {
                                 ForEach(favorites) { favorite in
                                     FavoriteArrangementCard(
                                         favorite: favorite,

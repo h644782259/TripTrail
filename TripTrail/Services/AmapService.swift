@@ -108,8 +108,8 @@ enum AmapService {
             URLQueryItem(name: "dname", value: destinationName),
             URLQueryItem(name: "dlat", value: String(latitude)),
             URLQueryItem(name: "dlon", value: String(longitude)),
-            // MapKit 返回 WGS-84 语义坐标，交给高德完成国测偏移。
-            URLQueryItem(name: "dev", value: "1"),
+            // 高德 Web 服务返回 GCJ-02 坐标，不再二次偏移。
+            URLQueryItem(name: "dev", value: "0"),
             URLQueryItem(name: "t", value: routeType(for: mode))
         ]
         components.queryItems = queryItems
@@ -150,8 +150,8 @@ enum AmapService {
             URLQueryItem(name: "dlat", value: String(endLatitude)),
             URLQueryItem(name: "dlon", value: String(endLongitude)),
             URLQueryItem(name: "dname", value: endName),
-            // MapKit 提供 WGS-84 坐标，由高德完成坐标转换。
-            URLQueryItem(name: "dev", value: "1"),
+            // 与 Android 对齐，所有点位使用高德 GCJ-02 坐标。
+            URLQueryItem(name: "dev", value: "0"),
             URLQueryItem(name: "t", value: routeType(for: mode))
         ]
 
@@ -159,7 +159,7 @@ enum AmapService {
         if !viaStops.isEmpty {
             let viaLongitudes = viaStops.compactMap(\.longitude).map { String($0) }.joined(separator: "|")
             let viaLatitudes = viaStops.compactMap(\.latitude).map { String($0) }.joined(separator: "|")
-            let viaNames = viaStops.map { stopDisplayName($0) }.joined(separator: "|")
+            let viaNames = viaStops.map { stopDisplayName($0).replacingOccurrences(of: "|", with: "｜") }.joined(separator: "|")
             components.queryItems?.append(contentsOf: [
                 URLQueryItem(name: "vian", value: String(viaStops.count)),
                 URLQueryItem(name: "vialons", value: viaLongitudes),
@@ -199,27 +199,58 @@ enum AmapService {
     }
 
     private static func resolvedStop(for stop: AmapStop) async -> AmapStopResolution {
-        if stop.hasValidCoordinate { return .resolved(stop) }
 
         let placeName = stop.name.trimmingCharacters(in: .whitespacesAndNewlines)
         let address = stop.address.trimmingCharacters(in: .whitespacesAndNewlines)
         let destinationName = placeName.isEmpty ? address : placeName
         guard !destinationName.isEmpty else { return .notFound }
 
-        let places: [ResolvedPlace]
-        do {
-            places = try await PlaceSearchService.search(destinationName)
-        } catch {
-            return .searchFailed
+        var seen = Set<String>()
+        let queries = [[address, placeName].filter { !$0.isEmpty }.joined(separator: " "), placeName, address]
+            .filter { !$0.isEmpty && seen.insert($0).inserted }
+        var failed = false
+        for query in queries {
+            do {
+                let places = try await searchAmap(query)
+                if let place = bestMatch(for: destinationName, in: places) ?? places.first {
+                    return .resolved(AmapStop(name: destinationName, address: place.address,
+                                              latitude: place.latitude, longitude: place.longitude))
+                }
+            } catch { failed = true }
         }
-        guard let place = bestMatch(for: destinationName, in: places) else { return .notFound }
+        return failed ? .searchFailed : .notFound
+    }
 
-        return .resolved(AmapStop(
-            name: destinationName,
-            address: place.address,
-            latitude: place.latitude,
-            longitude: place.longitude
-        ))
+    private static var nextLookup = Date.distantPast
+    private static var placeCache: [String: [ResolvedPlace]] = [:]
+    private static func searchAmap(_ query: String) async throws -> [ResolvedPlace] {
+        if let cached = placeCache[query] { return cached }
+        let key = Bundle.main.object(forInfoDictionaryKey: "AmapWebKey") as? String ?? ""
+        guard !key.isEmpty, !key.hasPrefix("$(") else { throw CloudSyncError.message("未配置高德地点搜索服务") }
+        let delay = nextLookup.timeIntervalSinceNow
+        nextLookup = max(Date(), nextLookup).addingTimeInterval(1.1)
+        if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+        var url = URLComponents(string: "https://restapi.amap.com/v3/place/text")!
+        url.queryItems = [.init(name: "key", value: key), .init(name: "keywords", value: query),
+                          .init(name: "offset", value: "10"), .init(name: "page", value: "1"),
+                          .init(name: "extensions", value: "base"), .init(name: "output", value: "JSON")]
+        var request = URLRequest(url: url.url!)
+        request.timeoutInterval = 15
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200,
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  object["status"] as? String == "1" else { throw URLError(.badServerResponse) }
+            let places = (object["pois"] as? [[String: Any]] ?? []).compactMap { poi -> ResolvedPlace? in
+                let coordinate = (poi["location"] as? String ?? "").split(separator: ",")
+                guard coordinate.count == 2, let lon = Double(coordinate[0]), let lat = Double(coordinate[1]),
+                      (-90...90).contains(lat), (-180...180).contains(lon) else { return nil }
+                return ResolvedPlace(name: poi["name"] as? String ?? query,
+                                     address: poi["address"] as? String ?? "", latitude: lat, longitude: lon)
+            }
+            if !places.isEmpty { placeCache[query] = places }
+            return places
+        } catch { throw CloudSyncError.message("高德地点查询失败，请检查网络和服务配置") }
     }
 
     private static func normalizedPlaceName(_ value: String) -> String {

@@ -55,6 +55,8 @@ enum FavoriteArrangementService {
                 endTime: end,
                 sortOrder: initialSortOrder + index
             )
+            item.transport = favorite.transport
+            item.attractionTypeRaw = favorite.attractionTypeRaw
             item.address = favorite.address
             item.note = favorite.note
             item.locationModeRaw = favorite.locationModeRaw

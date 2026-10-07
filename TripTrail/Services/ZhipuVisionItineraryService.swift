@@ -629,6 +629,8 @@ enum ZhipuVisionItineraryService {
         return ItineraryScreenshotDraft(
             title: item.title,
             category: item.category,
+            transport: item.transport,
+            attractionTypeRaw: item.attractionTypeRaw,
             startTime: item.startTime,
             endTime: item.endTime,
             address: item.address,
@@ -730,6 +732,8 @@ enum ZhipuVisionItineraryService {
         return ItineraryJourneyItemDraft(
             title: title.isEmpty ? "待补充的安排" : title,
             category: category,
+            transport: TransportMode.recognized(payload.transportMode),
+            attractionTypeRaw: AttractionType(rawValue: payload.attractionType ?? "")?.rawValue ?? "unknown",
             startTime: start,
             endTime: end,
             address: address,
@@ -893,6 +897,8 @@ enum ZhipuVisionItineraryService {
             "items": [{
               "title": "地点、酒店名称或安排名称",
               "category": "attraction|restaurant|hotel|transport|other",
+              "transportMode": "unknown|flight|high_speed_rail|train|driving|taxi|bus|subway|ferry|bicycle|walk",
+              "attractionType": "unknown|mountain|water|park|museum|heritage|temple|theme_park|viewpoint|other",
               "startAt": "yyyy-MM-dd HH:mm",
               "endAt": "yyyy-MM-dd HH:mm",
               "locationMode": "单地点|起终点",
@@ -952,6 +958,8 @@ enum ZhipuVisionItineraryService {
             "items": [{
               "title": "地点、酒店名称或安排名称",
               "category": "attraction|restaurant|hotel|transport|other",
+              "transportMode": "unknown|flight|high_speed_rail|train|driving|taxi|bus|subway|ferry|bicycle|walk",
+              "attractionType": "unknown|mountain|water|park|museum|heritage|temple|theme_park|viewpoint|other",
               "startAt": "yyyy-MM-dd HH:mm 或 null",
               "endAt": "yyyy-MM-dd HH:mm 或 null",
               "locationMode": "单地点|起终点",
@@ -1011,13 +1019,15 @@ enum ZhipuVisionItineraryService {
         switch purpose {
         case .itinerary:
             return """
-            这是“行程安排”录入协议 itinerary_item_v2。需要时间、预约和花费；未出现的字段用 null、空字符串或 0，不要虚构。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
+            这是“行程安排”录入协议 itinerary_item_v2。需要时间、预约和花费；未出现的字段用 null、空字符串或 0，不要虚构。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。attractionType 只根据明确景点信息选择细分类，无依据或非景点返回 unknown。transportMode 仅表示交通安排本身的明确交通方式，无依据或非交通安排返回 unknown。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
             {
               "schemaVersion": 2,
               "kind": "itinerary_item",
               "item": {
                 "title": "安排名称/说明",
                 "category": "attraction|restaurant|hotel|transport|other",
+              "transportMode": "unknown|flight|high_speed_rail|train|driving|taxi|bus|subway|ferry|bicycle|walk",
+              "attractionType": "unknown|mountain|water|park|museum|heritage|temple|theme_park|viewpoint|other",
                 "startAt": "yyyy-MM-dd HH:mm 或 null",
                 "endAt": "yyyy-MM-dd HH:mm 或 null",
                 "locationMode": "单地点|起终点",
@@ -1037,13 +1047,15 @@ enum ZhipuVisionItineraryService {
             """
         case .favorite:
             return """
-            这是“收藏地点”录入协议 favorite_item_v2。用户尚未计划出行，不得生成日期、开始时间、结束时间、执行状态或预约信息。重点提取地点、类型、想去理由和花费参考。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
+            这是“收藏地点”录入协议 favorite_item_v2。用户尚未计划出行，不得生成日期、开始时间、结束时间、执行状态或预约信息。重点提取地点、类型、想去理由和花费参考。住宿安排只表示入住办理，未提供办理时长时默认 1 小时，不将退房时间作为结束时间。attractionType 只根据明确景点信息选择细分类，无依据或非景点返回 unknown。transportMode 仅表示交通安排本身的明确交通方式，无依据或非交通安排返回 unknown。不返回 transport、distanceText 或 routeInfo 字段，不推测从上一地点前往的方式、距离或时长。只输出 JSON：
             {
               "schemaVersion": 2,
               "kind": "favorite_item",
               "item": {
                 "title": "想去的地点或安排名称",
                 "category": "attraction|restaurant|hotel|transport|other",
+              "transportMode": "unknown|flight|high_speed_rail|train|driving|taxi|bus|subway|ferry|bicycle|walk",
+              "attractionType": "unknown|mountain|water|park|museum|heritage|temple|theme_park|viewpoint|other",
                 "locationMode": "单地点|起终点",
                 "placeName": "单地点实体名称",
                 "placeAddress": "单地点详细地址",
@@ -1187,6 +1199,8 @@ private struct JourneyItemPayload: Decodable {
     let city: String?
     let title: String?
     let category: String?
+    let transportMode: String?
+    let attractionType: String?
     let startAt: String?
     let endAt: String?
     let address: String?
@@ -1204,6 +1218,7 @@ private struct JourneyItemPayload: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case city, favoriteCity
+        case transportMode, attractionType
         case title, category, startAt, endAt, address, locationMode, placeName, placeAddress
         case origin, originAddress, destination, destinationAddress
         case reservationInfo, cost, note, sourceText
@@ -1213,6 +1228,8 @@ private struct JourneyItemPayload: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         title = try container.decodeIfPresent(String.self, forKey: .title)
         category = try container.decodeIfPresent(String.self, forKey: .category)
+        transportMode = try container.decodeIfPresent(String.self, forKey: .transportMode)
+        attractionType = try container.decodeIfPresent(String.self, forKey: .attractionType)
         startAt = try container.decodeIfPresent(String.self, forKey: .startAt)
         endAt = try container.decodeIfPresent(String.self, forKey: .endAt)
         address = try container.decodeIfPresent(String.self, forKey: .address)

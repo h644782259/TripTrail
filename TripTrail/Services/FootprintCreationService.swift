@@ -21,6 +21,11 @@ enum FootprintCreationService {
             endDate: normalizedEnd,
             summary: summary.trimmingCharacters(in: .whitespacesAndNewlines)
         )
+        let trip = Trip(title: story.title, destination: story.destination,
+                        startDate: normalizedStart, endDate: normalizedEnd)
+        trip.id = story.id; trip.journalSummary = story.summary
+        story.journey = trip; story.sourceTripID = trip.id; story.usesUnifiedJourney = true
+        modelContext.insert(trip)
         modelContext.insert(story)
 
         for seed in JourneyHierarchyService.daySeeds(from: normalizedStart, through: normalizedEnd) {
@@ -30,6 +35,9 @@ enum FootprintCreationService {
                 sortOrder: seed.sortOrder,
                 story: story
             )
+            let canonicalDay = TripDay(date: seed.date, title: seed.title, sortOrder: seed.sortOrder, trip: trip)
+            canonicalDay.id = day.id; trip.days.append(canonicalDay)
+            day.journeyDay = canonicalDay; day.sourceDayID = canonicalDay.id; day.usesUnifiedJourney = true
             story.days.append(day)
         }
         return story

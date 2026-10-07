@@ -13,13 +13,14 @@ private enum TripHomeSection: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .current: "进行中/待出发"
-        case .completed: "已结束"
+        case .completed: "已完成"
         }
     }
 }
 
 struct CurrentTripsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.scenePhase) private var scenePhase
     @Query(sort: \Trip.startDate, order: .forward) private var trips: [Trip]
     @State private var showsNewTrip = false
@@ -62,10 +63,8 @@ struct CurrentTripsView: View {
                 } else {
                     sectionPicker
                     switch selectedSection {
-                    case .current:
-                        currentTripsContent
-                    case .completed:
-                        completedTripsContent
+                    case .current: currentTripsContent
+                    case .completed: completedTripsContent
                     }
                 }
             }
@@ -213,7 +212,25 @@ struct CurrentTripsView: View {
         }
     }
 
-    private var sectionPicker: some View {
+    @ViewBuilder private var sectionPicker: some View {
+        if UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular {
+            HStack(spacing: 6) {
+                ForEach(TripHomeSection.allCases) { section in
+                    Button { selectedSection = section } label: {
+                        Text("\(section.title) \(tripCount(for: section))")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity, minHeight: 48)
+                            .contentShape(Capsule())
+                            .background(selectedSection == section ? Color.tripSurface : .clear, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(selectedSection == section ? [.isSelected] : [])
+                }
+            }
+            .padding(5)
+            .background(Color.tripInk.opacity(0.08), in: Capsule())
+            .accessibilityLabel("旅程分类")
+        } else {
         Picker("旅程分类", selection: $selectedSection) {
             ForEach(TripHomeSection.allCases) { section in
                 Text("\(section.title) \(tripCount(for: section))")
@@ -222,6 +239,7 @@ struct CurrentTripsView: View {
         }
         .pickerStyle(.segmented)
         .accessibilityLabel("旅程分类")
+        }
     }
 
     @ViewBuilder
@@ -248,7 +266,7 @@ struct CurrentTripsView: View {
     private var completedTripsContent: some View {
         if historyTrips.isEmpty {
             ContentUnavailableView(
-                "还没有已结束的旅程",
+                "还没有已完成的旅程",
                 systemImage: "clock.arrow.circlepath",
                 description: Text("结束日期已过的旅程会自动出现在这里。")
             )
@@ -277,9 +295,11 @@ struct CurrentTripsView: View {
                 }
             }
             .buttonStyle(.plain)
+            .contentShape(RoundedRectangle(cornerRadius: isFeatured ? 28 : 24, style: .continuous))
             .accessibilityHint("打开这段旅程")
 
             HStack(spacing: 0) {
+                CloudBadge(id: trip.id, kind: "trip", expandedHitTarget: true).font(.title3)
             Menu {
                 Button("编辑旅程", systemImage: "pencil") {
                     tripToEdit = trip
@@ -287,7 +307,7 @@ struct CurrentTripsView: View {
                 Button("分享旅程", systemImage: "square.and.arrow.up") {
                     tripToShare = trip
                 }
-                Button("规划全行程路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                Button("规划路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                     requestRoutePlanning(for: trip)
                 }
                 CloudModeAction(id: trip.id, kind: "trip")
@@ -306,10 +326,6 @@ struct CurrentTripsView: View {
             .accessibilityLabel("\(trip.title)更多操作")
             }
             .padding(12)
-        }
-        .overlay(alignment: .bottomTrailing) {
-            CloudBadge(id: trip.id, kind: "trip").font(.title3)
-                .frame(width: 40, height: 24).padding(.trailing, 12).padding(.bottom, 16)
         }
     }
 
@@ -457,7 +473,7 @@ struct CurrentTripsView: View {
             }
             Spacer()
             Image(systemName: "figure.walk.motion")
-                .font(.system(size: 48, weight: .medium))
+                .font(.tripSystem(size: 48, weight: .medium))
                 .foregroundStyle(Color.tripLake)
         }
         .foregroundStyle(Color.tripInk)
@@ -489,8 +505,25 @@ private struct WholeTripDraftRequest: Identifiable {
 
 private struct FeaturedTripHero: View {
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var cardWidth: CGFloat = 0
     let trip: Trip
     let referenceDate: Date
+
+    private var isTabletLayout: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular
+    }
+
+    private var cardScale: CGFloat { isTabletLayout ? 1.35 : 1 }
+
+    private func cardFont(_ style: UIFont.TextStyle, weight: Font.Weight = .regular) -> Font {
+        .system(size: UIFont.preferredFont(forTextStyle: style).pointSize * cardScale, weight: weight)
+    }
+
+    private var minimumHeight: CGFloat {
+        guard isTabletLayout else { return phase == .current ? 252 : 192 }
+        return max(phase == .current ? 380 : 320, cardWidth * 0.4)
+    }
 
     private var calendar: Calendar { .current }
     private var today: Date { calendar.startOfDay(for: referenceDate) }
@@ -525,14 +558,14 @@ private struct FeaturedTripHero: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 14) {
-                VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 14 * cardScale) {
+            HStack(alignment: .top, spacing: 14 * cardScale) {
+                VStack(alignment: .leading, spacing: 7 * cardScale) {
                     Label(eyebrowText, systemImage: phase == .current ? "location.fill" : "calendar.badge.clock")
-                        .font(.caption.weight(.bold))
+                        .font(cardFont(.caption1, weight: .bold))
                         .foregroundStyle(Color.tripLakeText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10 * cardScale)
+                        .padding(.vertical, 6 * cardScale)
                         .background(Color.tripSurface.opacity(0.72), in: Capsule())
                         .overlay {
                             Capsule()
@@ -540,7 +573,7 @@ private struct FeaturedTripHero: View {
                         }
 
                     Text(trip.title)
-                        .font(.system(size: 30, weight: .heavy, design: .rounded))
+                        .font(.system(size: 30 * cardScale, weight: .heavy, design: .rounded))
                         .foregroundStyle(Color.tripInk)
                         .lineLimit(2)
                         .minimumScaleFactor(0.78)
@@ -551,9 +584,9 @@ private struct FeaturedTripHero: View {
                             Text(destinationText)
                         } icon: {
                             Image(systemName: "mappin.and.ellipse").resizable().scaledToFit()
-                                .frame(width: 18, height: 18)
+                                .frame(width: 18 * cardScale, height: 18 * cardScale)
                         }
-                            .labelStyle(TripMetadataLabelStyle())
+                            .labelStyle(TripHeroMetadataLabelStyle(scale: cardScale))
                             .lineLimit(1)
                     }
 
@@ -562,31 +595,31 @@ private struct FeaturedTripHero: View {
                             Text(trip.licensePlateDisplay)
                         } icon: {
                             Image(systemName: "car.side").resizable().scaledToFit()
-                                .frame(width: 18, height: 18)
+                                .frame(width: 18 * cardScale, height: 18 * cardScale)
                         }
-                            .labelStyle(TripMetadataLabelStyle())
+                            .labelStyle(TripHeroMetadataLabelStyle(scale: cardScale))
                             .lineLimit(1)
                     }
                     Label {
                         Text(dateRangeText)
                     } icon: {
                         Image(systemName: "calendar").resizable().scaledToFit()
-                            .frame(width: 18, height: 18)
+                            .frame(width: 18 * cardScale, height: 18 * cardScale)
                     }
-                        .labelStyle(TripMetadataLabelStyle())
+                        .labelStyle(TripHeroMetadataLabelStyle(scale: cardScale))
                         .lineLimit(1)
                 }
-                .font(.caption)
+                .font(cardFont(.caption1))
                 .foregroundStyle(Color.tripInk.opacity(0.68))
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 progressRing
-                    .padding(.top, 38)
+                    .padding(.top, 38 * cardScale)
             }
 
             if !trip.note.isEmpty {
                 Text(trip.note)
-                    .font(.subheadline)
+                    .font(cardFont(.subheadline))
                     .foregroundStyle(Color.tripInk.opacity(0.72))
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
@@ -596,13 +629,18 @@ private struct FeaturedTripHero: View {
                 todayScheduleSummary
             }
         }
-        .padding(phase == .current ? 22 : 20)
-        .padding(.trailing, 4)
+        .padding((phase == .current ? 22 : 20) * cardScale)
+        .padding(.trailing, 4 * cardScale)
         .frame(
             maxWidth: .infinity,
-            minHeight: phase == .current ? 252 : 192,
+            minHeight: minimumHeight,
             alignment: .topLeading
         )
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            geometry.size.width
+        } action: { width in
+            cardWidth = width
+        }
         .background {
             ZStack {
                 Image("JourneyLakeHero")
@@ -624,10 +662,12 @@ private struct FeaturedTripHero: View {
                     )
                 }
             }
+            .allowsHitTesting(false)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 28 * cardScale, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 28 * cardScale, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
+            RoundedRectangle(cornerRadius: 28 * cardScale, style: .continuous)
                 .stroke(
                     phase == .current ? Color.tripLake.opacity(0.30) : Color.tripMist.opacity(0.32),
                     lineWidth: 0.8
@@ -664,8 +704,10 @@ private struct FeaturedTripHero: View {
             ProgressView(value: todayProgressFraction)
                 .tint(Color.tripLake)
 
-            scheduleLine(title: "正在进行", item: currentArrangement)
-            scheduleLine(title: "接下来", item: nextArrangement).padding(.trailing, 40)
+            if completedTodayCount < todayItems.count {
+                scheduleLine(title: "正在进行", item: currentArrangement)
+                scheduleLine(title: "接下来", item: nextArrangement).padding(.trailing, 40)
+            }
         }
         .padding(.top, 2)
     }
@@ -680,7 +722,7 @@ private struct FeaturedTripHero: View {
                 .foregroundStyle(item == nil ? Color.tripInk.opacity(0.62) : Color.tripInk)
                 .lineLimit(1)
         }
-        .font(.caption)
+        .font(cardFont(.caption1))
     }
 
     private var progressRing: some View {
@@ -689,28 +731,28 @@ private struct FeaturedTripHero: View {
                 .fill(.ultraThinMaterial)
 
             Circle()
-                .stroke(Color.tripLake.opacity(0.24), lineWidth: 7)
+                .stroke(Color.tripLake.opacity(0.24), lineWidth: 7 * cardScale)
 
             Circle()
                 .trim(from: 0, to: ringFraction)
                 .stroke(
                     Color.tripLake,
-                    style: StrokeStyle(lineWidth: 7, lineCap: .round)
+                    style: StrokeStyle(lineWidth: 7 * cardScale, lineCap: .round)
                 )
                 .rotationEffect(.degrees(-90))
 
             VStack(spacing: -1) {
                 Text(ringCaption)
-                    .font(.caption2.weight(.medium))
+                    .font(cardFont(.caption2, weight: .medium))
                     .foregroundStyle(Color.tripInk.opacity(0.62))
                 Text(ringValue)
-                    .font(.system(size: 19, weight: .bold, design: .rounded))
+                    .font(.system(size: 19 * cardScale, weight: .bold, design: .rounded))
                     .foregroundStyle(Color.tripInk)
                     .minimumScaleFactor(0.72)
                     .lineLimit(1)
             }
         }
-        .frame(width: 80, height: 80)
+        .frame(width: 80 * cardScale, height: 80 * cardScale)
         .shadow(color: Color.black.opacity(0.08), radius: 8, y: 3)
         .accessibilityHidden(true)
     }
@@ -767,6 +809,7 @@ private struct FeaturedTripHero: View {
 
     private var todayScheduleAccessibilityText: String? {
         guard phase == .current else { return nil }
+        if !todayItems.isEmpty && completedTodayCount == todayItems.count { return "今日安排全部完成，共 \(todayItems.count) 项" }
         return "今日安排，已完成 \(completedTodayCount) 项，共 \(todayItems.count) 项，正在进行：\(arrangementTitle(currentArrangement))，接下来：\(arrangementTitle(nextArrangement))"
     }
 
@@ -998,6 +1041,7 @@ struct TripEditorView: View {
     @State private var note: String
     @State private var smartTrip: Trip?
     @State private var creationMethod = "普通新建"
+    @State private var saveError: String?
 
     init(trip: Trip? = nil) {
         self.trip = trip
@@ -1077,6 +1121,9 @@ struct TripEditorView: View {
             .cloudEditSheet(item: $smartTrip) { target in
                 TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: trip == nil, onCreated: { _ in dismiss() })
             }
+            .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {
+                Button("确定", role: .cancel) { }
+            } message: { Text(saveError ?? "") }
             .navigationTitle(trip == nil ? "新建旅程" : "编辑旅程")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -1137,6 +1184,12 @@ struct TripEditorView: View {
                 newTrip.days.append(day)
             }
         }
+        do { try modelContext.save() }
+        catch { saveError = error.localizedDescription; return }
+        if let trip {
+            Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                key: "trip:\(trip.id.uuidString.lowercased())", entityID: trip.id) }
+        }
         dismiss()
     }
 }
@@ -1148,7 +1201,7 @@ struct TripFloatingCreateButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus")
-                .font(.system(size: 21, weight: .semibold))
+                .font(.tripSystem(size: 21, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
                 .background(Color.tripLake, in: Circle())
@@ -1157,7 +1210,7 @@ struct TripFloatingCreateButton: View {
         .buttonStyle(.plain)
         .accessibilityLabel(title)
         .padding(.trailing, 20)
-        .padding(.bottom, 16)
+        .padding(.bottom, UIDevice.current.userInterfaceIdiom == .pad ? 104 : 16)
     }
 }
 
@@ -1189,6 +1242,16 @@ private struct TripMetadataLabelStyle: LabelStyle {
     func makeBody(configuration: Configuration) -> some View {
         HStack(alignment: .center, spacing: 6) {
             configuration.icon.frame(width: 24, alignment: .center)
+            configuration.title
+        }
+    }
+}
+
+private struct TripHeroMetadataLabelStyle: LabelStyle {
+    let scale: CGFloat
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 6 * scale) {
+            configuration.icon.frame(width: 24 * scale, alignment: .center)
             configuration.title
         }
     }

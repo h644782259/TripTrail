@@ -2,10 +2,20 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>ZhipuAPIKey</key>
+    <string>$(Z_AI_KEY)</string>
+    <key>DeepSeekAPIKey</key>
+    <string>$(DS_KEY)</string>
     <key>SupabaseURL</key>
     <string>$(SUPABASE_URL)</string>
     <key>SupabaseAnonKey</key>
     <string>$(SUPABASE_ANON_KEY)</string>
+    <key>AmapWebKey</key>
+    <string>$(GAODE_WEB_KEY)</string>
+    <key>HeFengWeatherKey</key>
+    <string>$(HE_FENG_WEATHER_KEY)</string>
+    <key>HeFengWeatherHost</key>
+    <string>$(HE_FENG_WEATHER_HOST)</string>
     <key>CFBundleDisplayName</key>
     <string>旅迹</string>
     <key>CFBundleDevelopmentRegion</key>
@@ -105,6 +115,15 @@
     <string>旅迹读取您选择的照片和视频，用于行程展示，以及在您主动操作时生成完整换机备份或带媒体的分享文件。</string>
     <key>NSPhotoLibraryAddUsageDescription</key>
     <string>旅迹需要将您生成的分享卡片，以及您主动导入的旅迹媒体保存到系统相簿。</string>
+    <key>UIUserInterfaceStyle</key>
+    <string>Light</string>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
     <key>UILaunchScreen</key>
     <dict/>
     <key>UISupportedInterfaceOrientations</key>

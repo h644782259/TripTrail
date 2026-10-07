@@ -47,6 +47,52 @@ enum PlaceCategory: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+enum AttractionType: String, CaseIterable, Identifiable, Codable {
+    case automatic = "unknown", mountain, water, park, museum, heritage, temple, themePark = "theme_park", viewpoint, other
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .automatic: "自动识别"
+        case .mountain: "山岳"
+        case .water: "湖泊海滨"
+        case .park: "公园"
+        case .museum: "博物馆"
+        case .heritage: "古迹古镇"
+        case .temple: "寺庙宗教"
+        case .themePark: "主题乐园"
+        case .viewpoint: "观景点"
+        case .other: "其他景点"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .mountain: "mountain.2.fill"
+        case .water: "water.waves"
+        case .park: "tree.fill"
+        case .museum: "building.columns.fill"
+        case .heritage: "building.2.fill"
+        case .temple: "building.columns"
+        case .themePark: "ferriswheel"
+        case .viewpoint: "binoculars.fill"
+        default: "camera.fill"
+        }
+    }
+    func resolved(_ title: String, _ note: String) -> AttractionType {
+        guard self == .automatic else { return self }
+        for text in [title, note] {
+            for (words, type): ([String], AttractionType) in [
+                (["博物馆", "美术馆", "展览馆", "纪念馆"], .museum),
+                (["寺", "教堂", "清真寺", "道观"], .temple),
+                (["乐园", "游乐场", "迪士尼", "环球影城"], .themePark),
+                (["古镇", "古城", "遗址", "故宫", "长城"], .heritage),
+                (["观景台", "观景点"], .viewpoint), (["公园", "植物园"], .park),
+                (["湖", "海滩", "海滨", "沙滩", "瀑布"], .water), (["山", "峰", "峡谷"], .mountain)
+            ] { if words.contains(where: text.contains) { return type } }
+        }
+        return .other
+    }
+}
+
 enum TransportMode: String, CaseIterable, Identifiable, Codable {
     case car = "驾车"
     case walk = "步行"
@@ -54,8 +100,60 @@ enum TransportMode: String, CaseIterable, Identifiable, Codable {
     case bus = "公交"
     case train = "火车"
     case flight = "飞机"
+    case driving = "自驾"
+    case highSpeedRail = "高铁"
+    case taxi = "打车"
+    case subway = "地铁"
+    case ferry = "轮船"
 
     var id: String { rawValue }
+
+    // The legacy car value was assigned to every arrangement, so treat it as automatic.
+    var displayName: String { self == .car ? "自动识别" : self == .driving ? "驾车" : rawValue }
+    var symbol: String {
+        switch self {
+        case .car: "arrow.left.arrow.right"
+        case .driving: "car.fill"
+        case .walk: "figure.walk"
+        case .ride: "bicycle"
+        case .bus: "bus.fill"
+        case .train, .highSpeedRail: "tram.fill"
+        case .flight: "airplane"
+        case .taxi: "car.side.fill"
+        case .subway: "tram.tunnel.fill"
+        case .ferry: "ferry.fill"
+        }
+    }
+    static func recognized(_ value: String?) -> TransportMode {
+        let value = value?.lowercased() ?? ""
+        switch value {
+        case "flight", "plane", "飞机": return .flight
+        case "high_speed_rail", "高铁", "动车": return .highSpeedRail
+        case "train", "火车": return .train
+        case "car", "driving", "驾车", "自驾": return .driving
+        case "taxi", "打车": return .taxi
+        case "subway", "metro", "地铁": return .subway
+        case "bus", "公交", "大巴": return .bus
+        case "ferry", "船", "轮船": return .ferry
+        case "bicycle", "ride", "骑行": return .ride
+        case "walk", "步行": return .walk
+        default: return .car
+        }
+    }
+    func resolved(title: String, note: String) -> TransportMode {
+        guard self == .car else { return self }
+        for text in [title, note] {
+            for (words, mode): ([String], TransportMode) in [
+                (["取车", "还车", "租车", "自驾", "驾车", "开车", "接机", "送机"], .driving),
+                (["打车", "出租车", "网约车"], .taxi), (["地铁"], .subway),
+                (["航班", "起飞", "飞机", "登机", "航空"], .flight),
+                (["高铁", "动车"], .highSpeedRail), (["火车", "列车", "车次"], .train),
+                (["公交", "大巴", "巴士"], .bus), (["轮船", "渡轮", "轮渡", "乘船"], .ferry),
+                (["骑行", "自行车"], .ride), (["步行", "徒步"], .walk)
+            ] { if words.contains(where: text.contains) { return mode } }
+        }
+        return .car
+    }
 
     var amapValue: String {
         switch self {
@@ -186,6 +284,7 @@ struct ItineraryRoutePoint: Identifiable, Equatable {
     let endTime: Date
     let target: JourneyLocationTarget
     var isTimePending: Bool = false
+    var isCompleted: Bool = false
 }
 
 enum ItineraryRoutePlanning {
@@ -202,7 +301,8 @@ enum ItineraryRoutePlanning {
                             startTime: item.startTime,
                             endTime: item.endTime,
                             target: target,
-                            isTimePending: item.isTimePending
+                            isTimePending: item.isTimePending,
+                            isCompleted: item.executionStatus == .completed
                         )
                     }
                 }
@@ -273,6 +373,13 @@ enum HierarchyDeletionCopy {
 
 @Model
 final class Trip {
+    var journalSummary: String = ""
+    var coverZoom: Double = 1
+    var coverOffsetX: Double = 0
+    var coverOffsetY: Double = 0
+    @Relationship(deleteRule: .cascade, inverse: \MediaReference.tripCover)
+    var coverMedia: MediaReference?
+
     var licensePlate: String = ""
     var licensePlateDisplay: String { licensePlate.formattedLicensePlate }
 
@@ -379,10 +486,14 @@ enum TripTimelineOrdering {
 
 @Model
 final class TripDay {
+    var journalNote: String = ""
+    var journalDetails: String = ""
+
     var id: UUID = UUID()
     var date: Date = Date()
     var title: String = ""
     var note: String = ""
+    var city: String = ""
     var sortOrder: Int = 0
     var trip: Trip?
 
@@ -495,6 +606,9 @@ struct TripCalendarProgress: Equatable {
 
 @Model
 final class ItineraryItem {
+    var journalNote: String = ""
+    var journalSupplement: String = ""
+
     var id: UUID = UUID()
     var title: String = ""
     var categoryRaw: String = PlaceCategory.attraction.rawValue
@@ -510,6 +624,7 @@ final class ItineraryItem {
     var destinationName: String = ""
     var destinationAddress: String = ""
     // Retained for SwiftData compatibility with existing stores; no longer a user-facing field.
+    var attractionTypeRaw: String = "unknown"
     var transportRaw: String = TransportMode.car.rawValue
     var distanceText: String = ""
     var playDurationMinutes: Int = 60
@@ -549,6 +664,11 @@ final class ItineraryItem {
         set { transportRaw = newValue.rawValue }
     }
 
+    var arrangementSymbol: String {
+        category == .transport ? transport.resolved(title: title, note: note).symbol : category == .attraction ? (AttractionType(rawValue: attractionTypeRaw) ?? .automatic).resolved(title, note).symbol : category.symbol
+    }
+
+
     var locationMode: ArrangementLocationMode {
         get {
             ArrangementLocationMode(rawValue: locationModeRaw)
@@ -571,9 +691,7 @@ final class ItineraryItem {
     var locationTargets: [JourneyLocationTarget] {
         switch locationMode {
         case .single:
-            let fallbackName = placeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? JourneyLocationText.entityName(from: title, arrangementTitle: title)
-                : JourneyLocationText.entityName(from: placeName, arrangementTitle: title)
+            let fallbackName = JourneyLocationText.entityName(from: placeName, arrangementTitle: title)
             let fallbackAddress = placeAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? address
                 : placeAddress
@@ -660,6 +778,11 @@ final class ItineraryItem {
 
 @Model
 final class MediaReference {
+    static func precedes(_ lhs: MediaReference, _ rhs: MediaReference) -> Bool {
+        if lhs.sortOrder != rhs.sortOrder { return lhs.sortOrder < rhs.sortOrder }
+        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
     var id: UUID = UUID()
     var localIdentifier: String = ""
     var kindRaw: String = MediaKind.image.rawValue
@@ -669,6 +792,7 @@ final class MediaReference {
     var itineraryItem: ItineraryItem?
     var storyEntry: StoryEntry?
     var storyCover: TravelStory?
+    var tripCover: Trip?
 
     init(localIdentifier: String, kind: MediaKind, sortOrder: Int = 0) {
         self.localIdentifier = localIdentifier
@@ -684,22 +808,73 @@ final class MediaReference {
 
 @Model
 final class TravelStory {
+    var journey: Trip?
+    var usesUnifiedJourney: Bool = false
     var id: UUID = UUID()
-    var title: String = ""
-    var destination: String = ""
-    var startDate: Date = Date()
-    var endDate: Date = Date()
-    var summary: String = ""
-    var createdAt: Date = Date()
+    @Attribute(originalName: "title")
+    var legacyTitle: String = ""
+    var title: String {
+        get { journey?.title ?? legacyTitle }
+        set { if let journey { journey.title = newValue } else { legacyTitle = newValue } }
+    }
+    @Attribute(originalName: "destination")
+    var legacyDestination: String = ""
+    var destination: String {
+        get { journey?.destination ?? legacyDestination }
+        set { if let journey { journey.destination = newValue } else { legacyDestination = newValue } }
+    }
+    @Attribute(originalName: "startDate")
+    var legacyStartDate: Date = Date()
+    var startDate: Date {
+        get { journey?.startDate ?? legacyStartDate }
+        set { if let journey { journey.startDate = newValue } else { legacyStartDate = newValue } }
+    }
+    @Attribute(originalName: "endDate")
+    var legacyEndDate: Date = Date()
+    var endDate: Date {
+        get { journey?.endDate ?? legacyEndDate }
+        set { if let journey { journey.endDate = newValue } else { legacyEndDate = newValue } }
+    }
+    @Attribute(originalName: "summary")
+    var legacySummary: String = ""
+    var summary: String {
+        get { journey?.journalSummary ?? legacySummary }
+        set { if let journey { journey.journalSummary = newValue } else { legacySummary = newValue } }
+    }
+    @Attribute(originalName: "createdAt")
+    var legacyCreatedAt: Date = Date()
+    var createdAt: Date {
+        get { journey?.createdAt ?? legacyCreatedAt }
+        set { if let journey { journey.createdAt = newValue } else { legacyCreatedAt = newValue } }
+    }
     var sourceTripID: UUID?
     var syncScopeRaw: String = StorySyncScope.trip.rawValue
     var sourceSelectionIDsRaw: String = ""
-    var coverZoom: Double = 1
-    var coverOffsetX: Double = 0
-    var coverOffsetY: Double = 0
+    @Attribute(originalName: "coverZoom")
+    var legacyCoverZoom: Double = 1
+    var coverZoom: Double {
+        get { journey?.coverZoom ?? legacyCoverZoom }
+        set { if let journey { journey.coverZoom = newValue } else { legacyCoverZoom = newValue } }
+    }
+    @Attribute(originalName: "coverOffsetX")
+    var legacyCoverOffsetX: Double = 0
+    var coverOffsetX: Double {
+        get { journey?.coverOffsetX ?? legacyCoverOffsetX }
+        set { if let journey { journey.coverOffsetX = newValue } else { legacyCoverOffsetX = newValue } }
+    }
+    @Attribute(originalName: "coverOffsetY")
+    var legacyCoverOffsetY: Double = 0
+    var coverOffsetY: Double {
+        get { journey?.coverOffsetY ?? legacyCoverOffsetY }
+        set { if let journey { journey.coverOffsetY = newValue } else { legacyCoverOffsetY = newValue } }
+    }
 
-    @Relationship(deleteRule: .cascade, inverse: \MediaReference.storyCover)
-    var coverMedia: MediaReference?
+    @Relationship(deleteRule: .nullify, originalName: "coverMedia", inverse: \MediaReference.storyCover)
+    var legacyCoverMedia: MediaReference?
+    var coverMedia: MediaReference? {
+        get { journey != nil ? journey!.coverMedia : legacyCoverMedia }
+        set { if let journey { journey.coverMedia = newValue } else { legacyCoverMedia = newValue } }
+    }
 
     @Relationship(deleteRule: .cascade, inverse: \StoryEntry.story)
     var entries: [StoryEntry] = []
@@ -749,13 +924,40 @@ enum StorySyncScope: String, Codable {
 
 @Model
 final class StoryDay {
+    var journeyDay: TripDay?
+    var usesUnifiedJourney: Bool = false
     var id: UUID = UUID()
-    var date: Date = Date()
-    var title: String = ""
-    var note: String = ""
-    var details: String = ""
+    @Attribute(originalName: "date")
+    var legacyDate: Date = Date()
+    var date: Date {
+        get { journeyDay?.date ?? legacyDate }
+        set { if let journeyDay { journeyDay.date = newValue } else { legacyDate = newValue } }
+    }
+    @Attribute(originalName: "title")
+    var legacyTitle: String = ""
+    var title: String {
+        get { journeyDay?.title ?? legacyTitle }
+        set { if let journeyDay { journeyDay.title = newValue } else { legacyTitle = newValue } }
+    }
+    @Attribute(originalName: "note")
+    var legacyNote: String = ""
+    var note: String {
+        get { journeyDay?.journalNote ?? legacyNote }
+        set { if let journeyDay { journeyDay.journalNote = newValue } else { legacyNote = newValue } }
+    }
+    @Attribute(originalName: "details")
+    var legacyDetails: String = ""
+    var details: String {
+        get { journeyDay?.journalDetails ?? legacyDetails }
+        set { if let journeyDay { journeyDay.journalDetails = newValue } else { legacyDetails = newValue } }
+    }
     var didMigrateInlineSummary: Bool = false
-    var sortOrder: Int = 0
+    @Attribute(originalName: "sortOrder")
+    var legacySortOrder: Int = 0
+    var sortOrder: Int {
+        get { journeyDay?.sortOrder ?? legacySortOrder }
+        set { if let journeyDay { journeyDay.sortOrder = newValue } else { legacySortOrder = newValue } }
+    }
     var sourceDayID: UUID?
     var story: TravelStory?
 
@@ -782,35 +984,147 @@ final class StoryDay {
 
 @Model
 final class StoryEntry {
+    var journeyItem: ItineraryItem?
+    var usesUnifiedJourney: Bool = false
     var id: UUID = UUID()
-    var title: String = ""
-    var categoryRaw: String = PlaceCategory.attraction.rawValue
-    var startTime: Date?
-    var endTime: Date?
-    var timeLabel: String = ""
-    var address: String = ""
-    var supplementalInfo: String = ""
-    var note: String = ""
-    var locationModeRaw: String = ""
-    var placeName: String = ""
-    var placeAddress: String = ""
-    var originName: String = ""
-    var originAddress: String = ""
-    var destinationName: String = ""
-    var destinationAddress: String = ""
+    @Attribute(originalName: "title")
+    var legacyTitle: String = ""
+    var title: String {
+        get { journeyItem?.title ?? legacyTitle }
+        set { if let journeyItem { journeyItem.title = newValue } else { legacyTitle = newValue } }
+    }
+    @Attribute(originalName: "categoryRaw")
+    var legacyCategoryRaw: String = PlaceCategory.attraction.rawValue
+    var categoryRaw: String {
+        get { journeyItem?.categoryRaw ?? legacyCategoryRaw }
+        set { if let journeyItem { journeyItem.categoryRaw = newValue } else { legacyCategoryRaw = newValue } }
+    }
+    @Attribute(originalName: "startTime")
+    var legacyStartTime: Date?
+    var startTime: Date? {
+        get { if let journeyItem { return journeyItem.isTimePending ? nil : journeyItem.startTime }; return legacyStartTime }
+        set { if let journeyItem { journeyItem.isTimePending = newValue == nil; if let newValue { journeyItem.startTime = newValue } } else { legacyStartTime = newValue } }
+    }
+    @Attribute(originalName: "endTime")
+    var legacyEndTime: Date?
+    var endTime: Date? {
+        get { if let journeyItem { return journeyItem.isTimePending ? nil : journeyItem.endTime }; return legacyEndTime }
+        set { if let journeyItem { journeyItem.isTimePending = newValue == nil; if let newValue { journeyItem.endTime = newValue } } else { legacyEndTime = newValue } }
+    }
+    @Attribute(originalName: "timeLabel")
+    var legacyTimeLabel: String = ""
+    var timeLabel: String {
+        get { journeyItem?.timeRangeText ?? legacyTimeLabel }
+        set { legacyTimeLabel = newValue }
+    }
+    @Attribute(originalName: "address")
+    var legacyAddress: String = ""
+    var address: String {
+        get { journeyItem?.address ?? legacyAddress }
+        set { if let journeyItem { journeyItem.address = newValue } else { legacyAddress = newValue } }
+    }
+    @Attribute(originalName: "supplementalInfo")
+    var legacySupplementalInfo: String = ""
+    var supplementalInfo: String {
+        get { journeyItem?.journalSupplement ?? legacySupplementalInfo }
+        set { if let journeyItem { journeyItem.journalSupplement = newValue } else { legacySupplementalInfo = newValue } }
+    }
+    var legacyArrangementNote: String = ""
+    var arrangementNote: String {
+        get { journeyItem?.note ?? legacyArrangementNote }
+        set { if let journeyItem { journeyItem.note = newValue } else { legacyArrangementNote = newValue } }
+    }
+    @Attribute(originalName: "note")
+    var legacyNote: String = ""
+    var note: String {
+        get { journeyItem?.journalNote ?? legacyNote }
+        set { if let journeyItem { journeyItem.journalNote = newValue } else { legacyNote = newValue } }
+    }
+    @Attribute(originalName: "locationModeRaw")
+    var legacyLocationModeRaw: String = ""
+    var locationModeRaw: String {
+        get { journeyItem?.locationModeRaw ?? legacyLocationModeRaw }
+        set { if let journeyItem { journeyItem.locationModeRaw = newValue } else { legacyLocationModeRaw = newValue } }
+    }
+    @Attribute(originalName: "placeName")
+    var legacyPlaceName: String = ""
+    var placeName: String {
+        get { journeyItem?.placeName ?? legacyPlaceName }
+        set { if let journeyItem { journeyItem.placeName = newValue } else { legacyPlaceName = newValue } }
+    }
+    @Attribute(originalName: "placeAddress")
+    var legacyPlaceAddress: String = ""
+    var placeAddress: String {
+        get { journeyItem?.placeAddress ?? legacyPlaceAddress }
+        set { if let journeyItem { journeyItem.placeAddress = newValue } else { legacyPlaceAddress = newValue } }
+    }
+    @Attribute(originalName: "originName")
+    var legacyOriginName: String = ""
+    var originName: String {
+        get { journeyItem?.originName ?? legacyOriginName }
+        set { if let journeyItem { journeyItem.originName = newValue } else { legacyOriginName = newValue } }
+    }
+    @Attribute(originalName: "originAddress")
+    var legacyOriginAddress: String = ""
+    var originAddress: String {
+        get { journeyItem?.originAddress ?? legacyOriginAddress }
+        set { if let journeyItem { journeyItem.originAddress = newValue } else { legacyOriginAddress = newValue } }
+    }
+    @Attribute(originalName: "destinationName")
+    var legacyDestinationName: String = ""
+    var destinationName: String {
+        get { journeyItem?.destinationName ?? legacyDestinationName }
+        set { if let journeyItem { journeyItem.destinationName = newValue } else { legacyDestinationName = newValue } }
+    }
+    @Attribute(originalName: "destinationAddress")
+    var legacyDestinationAddress: String = ""
+    var destinationAddress: String {
+        get { journeyItem?.destinationAddress ?? legacyDestinationAddress }
+        set { if let journeyItem { journeyItem.destinationAddress = newValue } else { legacyDestinationAddress = newValue } }
+    }
     // Retained for SwiftData compatibility with existing stores; no longer a user-facing field.
-    var transportRaw: String = TransportMode.car.rawValue
-    var routeInfo: String = ""
-    var cost: Double = 0
+    @Attribute(originalName: "attractionTypeRaw")
+    var legacyAttractionTypeRaw: String = "unknown"
+    var attractionTypeRaw: String {
+        get { journeyItem?.attractionTypeRaw ?? legacyAttractionTypeRaw }
+        set { if let journeyItem { journeyItem.attractionTypeRaw = newValue } else { legacyAttractionTypeRaw = newValue } }
+    }
+    @Attribute(originalName: "transportRaw")
+    var legacyTransportRaw: String = TransportMode.car.rawValue
+    var transportRaw: String {
+        get { journeyItem?.transportRaw ?? legacyTransportRaw }
+        set { if let journeyItem { journeyItem.transportRaw = newValue } else { legacyTransportRaw = newValue } }
+    }
+    @Attribute(originalName: "routeInfo")
+    var legacyRouteInfo: String = ""
+    var routeInfo: String {
+        get { journeyItem?.distanceText ?? legacyRouteInfo }
+        set { if let journeyItem { journeyItem.distanceText = newValue } else { legacyRouteInfo = newValue } }
+    }
+    @Attribute(originalName: "cost")
+    var legacyCost: Double = 0
+    var cost: Double {
+        get { journeyItem?.cost ?? legacyCost }
+        set { if let journeyItem { journeyItem.cost = newValue } else { legacyCost = newValue } }
+    }
     var didPrefillSourceMemory: Bool = false
     var sourceMemoryPrefill: String?
-    var sortOrder: Int = 0
+    @Attribute(originalName: "sortOrder")
+    var legacySortOrder: Int = 0
+    var sortOrder: Int {
+        get { journeyItem?.sortOrder ?? legacySortOrder }
+        set { if let journeyItem { journeyItem.sortOrder = newValue } else { legacySortOrder = newValue } }
+    }
     var sourceItemID: UUID?
     var story: TravelStory?
     var storyDay: StoryDay?
 
-    @Relationship(deleteRule: .cascade, inverse: \MediaReference.storyEntry)
-    var media: [MediaReference] = []
+    @Relationship(deleteRule: .nullify, originalName: "media", inverse: \MediaReference.storyEntry)
+    var legacyMedia: [MediaReference] = []
+    var media: [MediaReference] {
+        get { journeyItem?.media ?? legacyMedia }
+        set { if let journeyItem { journeyItem.media = newValue } else { legacyMedia = newValue } }
+    }
 
     init(title: String, category: PlaceCategory, sortOrder: Int) {
         self.title = title
@@ -828,6 +1142,12 @@ final class StoryEntry {
         set { transportRaw = newValue.rawValue }
     }
 
+    var arrangementSymbol: String {
+        if let journeyItem { return journeyItem.arrangementSymbol }
+        return category == .transport ? transport.resolved(title: title, note: arrangementNote).symbol : category == .attraction ? (AttractionType(rawValue: attractionTypeRaw) ?? .automatic).resolved(title, arrangementNote).symbol : category.symbol
+    }
+
+
     var locationMode: ArrangementLocationMode {
         get {
             ArrangementLocationMode(rawValue: locationModeRaw)
@@ -839,9 +1159,7 @@ final class StoryEntry {
     var locationTargets: [JourneyLocationTarget] {
         switch locationMode {
         case .single:
-            let fallbackName = placeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? JourneyLocationText.entityName(from: title, arrangementTitle: title)
-                : JourneyLocationText.entityName(from: placeName, arrangementTitle: title)
+            let fallbackName = JourneyLocationText.entityName(from: placeName, arrangementTitle: title)
             let fallbackAddress = placeAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? address
                 : placeAddress
@@ -878,9 +1196,7 @@ final class StoryEntry {
     }
 
     var sortedMedia: [MediaReference] {
-        media.sorted { lhs, rhs in
-            lhs.sortOrder == rhs.sortOrder ? lhs.createdAt < rhs.createdAt : lhs.sortOrder < rhs.sortOrder
-        }
+        media.sorted(by: MediaReference.precedes)
     }
 }
 
@@ -901,5 +1217,27 @@ extension String {
               "京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼".contains(characters[0]),
               "ABCDEFGHIJKLMNOPQRSTUVWXYZ".contains(characters[1]) else { return value }
         return String(characters.prefix(2)) + "·" + String(characters.dropFirst(2))
+    }
+}
+
+extension ItineraryItem {
+    func retainSelectedLocation() {
+        if locationMode == .single {
+            originName = ""; originAddress = ""; destinationName = ""; destinationAddress = ""
+        } else {
+            placeName = ""; placeAddress = ""
+        }
+        address = locationMode == .single ? placeAddress : destinationAddress
+    }
+}
+
+extension StoryEntry {
+    func retainSelectedLocation() {
+        if locationMode == .single {
+            originName = ""; originAddress = ""; destinationName = ""; destinationAddress = ""
+        } else {
+            placeName = ""; placeAddress = ""
+        }
+        address = locationMode == .single ? placeAddress : destinationAddress
     }
 }

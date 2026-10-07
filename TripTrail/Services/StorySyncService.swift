@@ -149,6 +149,8 @@ enum StorySyncService {
                     if !storyDay.entries.contains(where: { $0.id == entry.id }) { storyDay.entries.append(entry) }
                 }
                 updateSkeleton(entry, from: sourceItem, sortOrder: itemIndex)
+                entry.transport = sourceItem.transport
+                entry.attractionTypeRaw = sourceItem.attractionTypeRaw
             }
 
             for entry in storyDay.entries.filter({ $0.sourceItemID.map { !desiredItemIDs.contains($0) } == true }) {

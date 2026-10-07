@@ -39,6 +39,7 @@ create table public.triptrail_trip_days (
   "date" double precision not null,
   "title" text not null,
   "note" text not null,
+  "city" text,
   "sortOrder" integer not null,
   primary key(root_id,id)
 );
@@ -69,6 +70,7 @@ create table public.triptrail_trip_items (
   "destinationName" text,
   "destinationAddress" text,
   "transportRaw" text,
+  "attractionTypeRaw" text,
   "distanceText" text,
   "playDurationMinutes" integer not null,
   "reservationInfo" text not null,
@@ -160,6 +162,7 @@ create table public.triptrail_story_entries (
   "destinationName" text,
   "destinationAddress" text,
   "transportRaw" text,
+  "attractionTypeRaw" text,
   "routeInfo" text,
   "cost" double precision,
   "didPrefillSourceMemory" boolean,
@@ -195,6 +198,7 @@ create table public.triptrail_favorites (
   "destinationName" text,
   "destinationAddress" text,
   "transportRaw" text,
+  "attractionTypeRaw" text,
   "distanceText" text,
   "playDurationMinutes" integer not null,
   "reservationInfo" text not null,
@@ -364,9 +368,9 @@ if expected_revision = 0 then
     end if;
 delete from public.triptrail_trip_days where root_id=record_id;
 for d in select value from jsonb_array_elements(record_payload->'days') loop
-insert into public.triptrail_trip_days ("root_id","id","date","title","note","sortOrder") select record_id,r."id",r."date",r."title",r."note",r."sortOrder" from jsonb_populate_record(null::public.triptrail_trip_days, d) r;
+insert into public.triptrail_trip_days ("root_id","id","date","title","note","city","sortOrder") select record_id,r."id",r."date",r."title",r."note",r."city",r."sortOrder" from jsonb_populate_record(null::public.triptrail_trip_days, d) r;
  for i in select value from jsonb_array_elements(d->'items') loop
-insert into public.triptrail_trip_items ("root_id","parent_id","id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") select record_id,(d->>'id')::uuid,r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_trip_items, i) r;for m in select value from jsonb_array_elements(coalesce(nullif(i->'media','null'::jsonb),'[]'::jsonb)) loop
+insert into public.triptrail_trip_items ("root_id","parent_id","id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","attractionTypeRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") select record_id,(d->>'id')::uuid,r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."attractionTypeRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_trip_items, i) r;for m in select value from jsonb_array_elements(coalesce(nullif(i->'media','null'::jsonb),'[]'::jsonb)) loop
  insert into public.triptrail_trip_item_media ("root_id","parent_id","id","localIdentifier","kindRaw","caption","createdAt","sortOrder","cloudPath") select record_id,(i->>'id')::uuid,r."id",r."localIdentifier",r."kindRaw",r."caption",r."createdAt",r."sortOrder",r."cloudPath" from jsonb_populate_record(null::public.triptrail_trip_item_media, m) r;
 end loop;for m in select value from jsonb_array_elements(coalesce(nullif(i->'vouchers','null'::jsonb),'[]'::jsonb)) loop
  insert into public.triptrail_trip_item_vouchers ("root_id","parent_id","id","name","mimeType","dataBase64") select record_id,(i->>'id')::uuid,r."id",r."name",r."mimeType",r."dataBase64" from jsonb_populate_record(null::public.triptrail_trip_item_vouchers, m) r;
@@ -390,7 +394,7 @@ for d in select value from jsonb_array_elements(record_payload->'days') loop
 insert into public.triptrail_story_days ("root_id","id","date","title","note","details","didMigrateInlineSummary","sortOrder","sourceDayID") select record_id,r."id",r."date",r."title",r."note",r."details",r."didMigrateInlineSummary",r."sortOrder",r."sourceDayID" from jsonb_populate_record(null::public.triptrail_story_days, d) r;
 end loop;
 for i in select value from jsonb_array_elements(record_payload->'entries') loop
-insert into public.triptrail_story_entries ("root_id","id","title","categoryRaw","startTime","endTime","timeLabel","address","supplementalInfo","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","routeInfo","cost","didPrefillSourceMemory","sourceMemoryPrefill","sortOrder","sourceItemID","storyDayID") select record_id,r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."timeLabel",r."address",r."supplementalInfo",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."routeInfo",r."cost",r."didPrefillSourceMemory",r."sourceMemoryPrefill",r."sortOrder",r."sourceItemID",r."storyDayID" from jsonb_populate_record(null::public.triptrail_story_entries, i) r;for m in select value from jsonb_array_elements(coalesce(nullif(i->'media','null'::jsonb),'[]'::jsonb)) loop
+insert into public.triptrail_story_entries ("root_id","id","title","categoryRaw","startTime","endTime","timeLabel","address","supplementalInfo","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","attractionTypeRaw","routeInfo","cost","didPrefillSourceMemory","sourceMemoryPrefill","sortOrder","sourceItemID","storyDayID") select record_id,r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."timeLabel",r."address",r."supplementalInfo",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."attractionTypeRaw",r."routeInfo",r."cost",r."didPrefillSourceMemory",r."sourceMemoryPrefill",r."sortOrder",r."sourceItemID",r."storyDayID" from jsonb_populate_record(null::public.triptrail_story_entries, i) r;for m in select value from jsonb_array_elements(coalesce(nullif(i->'media','null'::jsonb),'[]'::jsonb)) loop
  insert into public.triptrail_story_entry_media ("root_id","parent_id","id","localIdentifier","kindRaw","caption","createdAt","sortOrder","cloudPath") select record_id,(i->>'id')::uuid,r."id",r."localIdentifier",r."kindRaw",r."caption",r."createdAt",r."sortOrder",r."cloudPath" from jsonb_populate_record(null::public.triptrail_story_entry_media, m) r;
 end loop;
 end loop;
@@ -399,10 +403,10 @@ insert into public.triptrail_story_cover_media ("root_id","id","localIdentifier"
 end if;
 else
 if expected_revision = 0 then
-        insert into public.triptrail_favorites ("id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") select r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_favorites, record_payload) r on conflict(id) do nothing;
+        insert into public.triptrail_favorites ("id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","attractionTypeRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") select r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."attractionTypeRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_favorites, record_payload) r on conflict(id) do nothing;
         if not found then raise sqlstate 'PT409' using message='Cloud revision conflict'; end if;
     else
-        update public.triptrail_favorites t set ("id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") = (select r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_favorites,record_payload) r),
+        update public.triptrail_favorites t set ("id","title","categoryRaw","startTime","endTime","address","note","locationModeRaw","placeName","placeAddress","originName","originAddress","destinationName","destinationAddress","transportRaw","attractionTypeRaw","distanceText","playDurationMinutes","reservationInfo","cost","isCompleted","executionStatusRaw","isAutomaticCompletionOverridden","isFixedTime","isTimePending","isFavorite","favoriteCity","favoriteCreatedAt","sourceFavoriteID","sortOrder") = (select r."id",r."title",r."categoryRaw",r."startTime",r."endTime",r."address",r."note",r."locationModeRaw",r."placeName",r."placeAddress",r."originName",r."originAddress",r."destinationName",r."destinationAddress",r."transportRaw",r."attractionTypeRaw",r."distanceText",r."playDurationMinutes",r."reservationInfo",r."cost",r."isCompleted",r."executionStatusRaw",r."isAutomaticCompletionOverridden",r."isFixedTime",r."isTimePending",r."isFavorite",r."favoriteCity",r."favoriteCreatedAt",r."sourceFavoriteID",r."sortOrder" from jsonb_populate_record(null::public.triptrail_favorites,record_payload) r),
             revision=t.revision+1, updated_at=now()
         where t.id=record_id and t.revision=expected_revision;
         if not found then raise sqlstate 'PT409' using message='Cloud revision conflict'; end if;

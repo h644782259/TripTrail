@@ -10,7 +10,6 @@ enum EnhancedRecognitionSettings {
         case deepseek
         var id: String { rawValue }
         var displayName: String { self == .zhipu ? "智谱" : "DeepSeek" }
-        var apiKeyLabel: String { "\(displayName) API Key" }
     }
 
     static var provider: Provider {
@@ -19,7 +18,11 @@ enum EnhancedRecognitionSettings {
     }
 
     static var activeAPIKey: String? {
-        provider == .zhipu ? ZhipuAPIKeyStore.load() : DeepSeekAPIKeyStore.load()
+        let name = provider == .zhipu ? "ZhipuAPIKey" : "DeepSeekAPIKey"
+        guard let value = Bundle.main.object(forInfoDictionaryKey: name) as? String else { return nil }
+        let key = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty, !key.contains("$(") else { return nil }
+        return key
     }
 
     static var isEnabled: Bool {

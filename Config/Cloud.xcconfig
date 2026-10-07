@@ -1,4 +1,8 @@
 // Public client configuration is supplied locally and never committed.
 SUPABASE_URL = https:/$()/spb-nxpqknocdb70j1pz.supabase.opentrust.net
 SUPABASE_ANON_KEY =
+HE_FENG_WEATHER_KEY =
+HE_FENG_WEATHER_HOST = nd5xmg8j7x.re.qweatherapi.com
+Z_AI_KEY =
+DS_KEY =
 #include? "Cloud.local.xcconfig"

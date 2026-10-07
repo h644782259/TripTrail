@@ -65,8 +65,11 @@ enum FootprintBrowseService {
 
 struct StoriesView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TravelStory.startDate, order: .reverse) private var stories: [TravelStory]
+    @Query(sort: \TravelStory.legacyStartDate, order: .reverse) private var storedStories: [TravelStory]
     @Query(sort: \Trip.startDate, order: .forward) private var trips: [Trip]
+    private var stories: [TravelStory] {
+        storedStories.filter { $0.journey.map { TripTimelineOrdering.phase(for: $0) == .history } ?? false }
+    }
     @State private var storyToEdit: TravelStory?
     @State private var storyToShare: TravelStory?
     @State private var storyToDelete: TravelStory?
@@ -104,7 +107,7 @@ struct StoriesView: View {
                     ContentUnavailableView {
                         Label("足迹还空着", systemImage: "book.closed")
                     } description: {
-                        Text("新建足迹，或从旅程中收录。")
+                        Text("旅行结束后，记录与照片会在这里展示。")
                     } actions: {
                         Button("新建足迹", systemImage: "plus") { creatingStory = true }
                             .buttonStyle(.borderedProminent)
@@ -196,7 +199,7 @@ struct StoriesView: View {
         .contextMenu {
             Button("编辑足迹", systemImage: "pencil") { storyToEdit = story }
             Button("分享足迹", systemImage: "square.and.arrow.up") { storyToShare = story }
-            CloudModeAction(id: story.id, kind: "story")
+            CloudModeAction(id: story.id, kind: "trip")
             Divider()
             Button("删除足迹", systemImage: "trash", role: .destructive) { storyToDelete = story }
         }
@@ -277,7 +280,7 @@ struct StoriesView: View {
 
     private func delete(_ story: TravelStory) {
         if storyToEdit?.id == story.id { storyToEdit = nil }
-        guard CloudSyncService.shared.trash(id: story.id, kind: "story", context: modelContext) else { return }
+        guard CloudSyncService.shared.trash(id: story.id, kind: "trip", context: modelContext) else { return }
         storyToDelete = nil
     }
 
@@ -362,7 +365,7 @@ private struct StoryCard: View {
             Menu {
                 Button("编辑足迹", systemImage: "pencil", action: onEdit)
             Button("分享足迹", systemImage: "square.and.arrow.up", action: onShare)
-                CloudModeAction(id: story.id, kind: "story")
+                CloudModeAction(id: story.id, kind: "trip")
                 Divider()
                 Button("删除足迹", systemImage: "trash", role: .destructive, action: onDelete)
             } label: {
@@ -412,16 +415,21 @@ private struct StoryCard: View {
         }
         .cardSurface()
         .overlay(alignment: .bottomTrailing) {
-            CloudBadge(id: story.id, kind: "story").font(.title3)
-                .frame(width: 40, height: 24).padding(.trailing, 12).padding(.bottom, 16)
+            CloudBadge(id: story.id, kind: "trip", expandedHitTarget: true).font(.title3)
+                .padding(.trailing, 10).padding(.bottom, 6)
         }
         .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
     }
 
     @ViewBuilder
     private var thumbnail: some View {
-        if story.coverMedia != nil {
-            NavigationLink(value: story) {
+        if let cover = story.coverMedia {
+            Button {
+                mediaPreview = AssetMediaPreviewRequest(
+                    items: [AssetMediaPreviewItem(identifier: cover.localIdentifier, kind: cover.kind)],
+                    initialIdentifier: cover.localIdentifier
+                )
+            } label: {
                 StoryCoverArtwork(
                     story: story,
                     targetSize: CGSize(width: 360, height: 360)
@@ -430,8 +438,8 @@ private struct StoryCard: View {
                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             }
             .buttonStyle(.plain)
-            .accessibilityLabel("查看\(story.title)")
-            .accessibilityHint("进入足迹详情")
+            .accessibilityLabel("查看\(story.title)封面")
+            .accessibilityHint("打开媒体预览")
         } else if let media = story.allMedia.first {
             Button {
                 showMedia(media)

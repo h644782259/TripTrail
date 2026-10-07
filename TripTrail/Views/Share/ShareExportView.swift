@@ -12,14 +12,24 @@ extension UTType {
     )
 }
 
+enum ShareField: String, CaseIterable, Identifiable {
+    case title = "安排标题", time = "时间", location = "地点", category = "类型"
+    case memory = "回忆", supplement = "补充说明", cost = "花费", media = "照片与视频"
+    var id: String { rawValue }
+    static let required: Set<ShareField> = [.title, .location, .category]
+    static var selectable: [ShareField] { allCases.filter { !required.contains($0) } }
+}
+
 struct ShareCardItem: Identifiable {
     let id: UUID
     let time: String
     let title: String
     let detail: String
     let completed: Bool
+    var category: PlaceCategory = .other
+    var symbol: String = "camera.fill"
     let statusText: String
-    let photoAssetIdentifiers: [String]
+    var photoAssetIdentifiers: [String]
 }
 
 struct ShareCardSection: Identifiable {
@@ -27,7 +37,7 @@ struct ShareCardSection: Identifiable {
     let title: String
     let dateText: String
     let narrative: String
-    let items: [ShareCardItem]
+    var items: [ShareCardItem]
 }
 
 struct ShareCardData {
@@ -39,105 +49,115 @@ struct ShareCardData {
     let destination: String
     let dateRange: String
     let summary: String
-    let sections: [ShareCardSection]
-    let coverAssetIdentifier: String?
+    var sections: [ShareCardSection]
+    var coverAssetIdentifier: String?
     let coverZoom: Double
     let coverOffsetX: Double
     let coverOffsetY: Double
 
-    init(trip: Trip, day selectedDay: TripDay? = nil) {
-        let days = selectedDay.map { [$0] } ?? trip.sortedDays
+    init(trip: Trip, day selectedDay: TripDay? = nil, selectedItemIDs: Set<UUID>? = nil, fields: Set<ShareField> = Set(ShareField.allCases)) {
+        let days = (selectedDay.map { [$0] } ?? trip.sortedDays).filter { day in selectedItemIDs == nil || day.sortedItems.contains { selectedItemIDs!.contains($0.id) } }
         id = trip.id
         scopeID = selectedDay?.id ?? trip.id
-        scopeLabel = selectedDay == nil ? "整段旅程" : "单日旅程"
+        scopeLabel = selectedItemIDs.map { $0.count == trip.totalCount ? "整段旅程" : "所选旅程安排" } ?? (selectedDay == nil ? "整段旅程" : "单日旅程")
         eyebrow = "TRIP PLAN · 旅程计划"
         title = trip.title
         destination = trip.destination
         dateRange = selectedDay?.date.chineseDateText
             ?? "\(trip.startDate.chineseDateText) — \(trip.endDate.chineseDateText)"
         if let selectedDay {
-            summary = selectedDay.note.isEmpty ? "\(selectedDay.items.count) 段当天安排" : selectedDay.note
+            summary = fields.contains(.supplement) ? trip.note : ""
         } else {
-            summary = trip.note.isEmpty ? "\(trip.sortedDays.count) 天 · \(trip.totalCount) 段安排 · \(trip.completedCount) 段已完成" : trip.note
+            summary = fields.contains(.supplement) ? trip.note : ""
         }
         sections = days.enumerated().map { index, day in
             ShareCardSection(
                 id: day.id,
                 title: day.title.isEmpty ? "第 \(index + 1) 天" : day.title,
                 dateText: day.date.formatted(.dateTime.month().day().weekday(.wide)),
-                narrative: selectedDay == nil ? day.note : "",
-                items: day.sortedItems.map {
+                narrative: fields.contains(.supplement) ? day.note : "",
+                items: day.sortedItems.filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }.map {
                     ShareCardItem(
                         id: $0.id,
-                        time: $0.timeRangeText,
-                        title: $0.title,
-                        detail: [$0.locationSummary, $0.category.rawValue, $0.note]
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " · "),
+                        time: fields.contains(.time) && !$0.timeRangeText.isEmpty ? "🕒 \($0.timeRangeText)" : "",
+                        title: fields.contains(.title) ? $0.title : "",
+                        detail: [
+                            [fields.contains(.location) && !$0.locationSummary.isEmpty ? "📍 \($0.locationSummary)" : "", fields.contains(.cost) && $0.cost != 0 ? "💰 ¥\($0.cost)" : ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                            fields.contains(.memory) && !$0.journalNote.isEmpty ? "💭 \($0.journalNote)" : "",
+                            fields.contains(.supplement) && !$0.note.isEmpty ? "📝 \($0.note)" : ""
+                        ].filter { !$0.isEmpty }.joined(separator: "\n"),
                         completed: $0.executionStatus == .completed,
+                        category: fields.contains(.category) ? $0.category : .other,
+                        symbol: fields.contains(.category) ? $0.arrangementSymbol : "circle.fill",
                         statusText: $0.executionStatus.rawValue,
-                        photoAssetIdentifiers: $0.media
+                        photoAssetIdentifiers: fields.contains(.media) ? $0.media
                             .sorted { $0.sortOrder < $1.sortOrder }
                             .filter { $0.kind == .image }
-                            .map(\.localIdentifier)
+                            .map(\.localIdentifier) : []
                     )
                 }
             )
         }
-        coverAssetIdentifier = days
+        coverAssetIdentifier = fields.contains(.media) ? days
             .flatMap(\.sortedItems)
-            .flatMap { $0.media.sorted { $0.sortOrder < $1.sortOrder } }
+            .filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }
+            .flatMap { $0.media.sorted(by: MediaReference.precedes) }
             .first { $0.kind == .image }?
-            .localIdentifier
+            .localIdentifier : nil
         coverZoom = 1
         coverOffsetX = 0
         coverOffsetY = 0
     }
 
-    init(story: TravelStory, day selectedDay: StoryDay? = nil) {
-        let days = selectedDay.map { [$0] } ?? story.sortedDays
+    init(story: TravelStory, day selectedDay: StoryDay? = nil, selectedItemIDs: Set<UUID>? = nil, fields: Set<ShareField> = Set(ShareField.allCases)) {
+        let days = (selectedDay.map { [$0] } ?? story.sortedDays).filter { day in selectedItemIDs == nil || day.sortedEntries.contains { selectedItemIDs!.contains($0.id) } }
         id = story.id
         scopeID = selectedDay?.id ?? story.id
-        scopeLabel = selectedDay == nil ? "整段足迹" : "单日足迹"
+        scopeLabel = selectedItemIDs.map { $0.count == story.sortedEntries.count ? "整段足迹" : "所选足迹安排" } ?? (selectedDay == nil ? "整段足迹" : "单日足迹")
         eyebrow = "TRAVEL MEMORY · 旅行足迹"
         title = story.title
         destination = story.destination
         dateRange = selectedDay?.date.chineseDateText
             ?? "\(story.startDate.chineseDateText) — \(story.endDate.chineseDateText)"
         if let selectedDay {
-            summary = selectedDay.note
+            summary = fields.contains(.memory) ? story.summary : ""
         } else {
-            summary = story.summary
+            summary = fields.contains(.memory) ? story.summary : ""
         }
         sections = days.enumerated().map { index, day in
             ShareCardSection(
                 id: day.id,
                 title: day.title.isEmpty ? "第 \(index + 1) 天" : day.title,
                 dateText: day.date.formatted(.dateTime.month().day().weekday(.wide)),
-                narrative: selectedDay == nil
-                    ? [day.note, day.details].filter { !$0.isEmpty }.joined(separator: "\n")
-                    : day.details,
-                items: day.sortedEntries.map {
+                narrative: [fields.contains(.memory) ? day.note : "", fields.contains(.supplement) ? day.details : ""].filter { !$0.isEmpty }.joined(separator: "\n"),
+                items: day.sortedEntries.filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }.map {
                     ShareCardItem(
                         id: $0.id,
-                        time: "",
-                        title: $0.title,
-                        detail: $0.note,
+                        time: fields.contains(.time) && !$0.timeLabel.isEmpty ? "🕒 \($0.timeLabel)" : "",
+                        title: fields.contains(.title) ? $0.title : "",
+                        detail: [
+                            [fields.contains(.location) && !$0.locationTargets.isEmpty ? "📍 " + $0.locationTargets.map(\.displayName).joined(separator: " → ") : "", fields.contains(.cost) && $0.cost != 0 ? "💰 ¥\($0.cost)" : ""].filter { !$0.isEmpty }.joined(separator: " · "),
+                            fields.contains(.memory) && !$0.note.isEmpty ? "💭 \($0.note)" : "",
+                            fields.contains(.supplement) && !$0.arrangementNote.isEmpty ? "📝 \($0.arrangementNote)" : ""
+                        ].filter { !$0.isEmpty }.joined(separator: "\n"),
                         completed: true,
+                        category: fields.contains(.category) ? $0.category : .other,
+                        symbol: fields.contains(.category) ? $0.arrangementSymbol : "circle.fill",
                         statusText: "",
-                        photoAssetIdentifiers: $0.sortedMedia
+                        photoAssetIdentifiers: fields.contains(.media) ? $0.sortedMedia
                             .filter { $0.kind == .image }
-                            .map(\.localIdentifier)
+                            .map(\.localIdentifier) : []
                     )
                 }
             )
         }
         let fallbackCoverIdentifier = days
             .flatMap(\.sortedEntries)
+            .filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }
             .flatMap(\.sortedMedia)
             .first { $0.kind == .image }?
             .localIdentifier
-        coverAssetIdentifier = story.coverMedia?.localIdentifier ?? fallbackCoverIdentifier
+        coverAssetIdentifier = fields.contains(.media) ? (story.coverMedia?.localIdentifier ?? fallbackCoverIdentifier) : nil
         coverZoom = story.coverMedia == nil ? 1 : story.coverZoom
         coverOffsetX = story.coverMedia == nil ? 0 : story.coverOffsetX
         coverOffsetY = story.coverMedia == nil ? 0 : story.coverOffsetY
@@ -152,12 +172,6 @@ struct ShareCardData {
     }
 }
 
-private struct ShareScopeOption: Identifiable {
-    let id: UUID
-    let title: String
-    let subtitle: String
-}
-
 private enum ShareExportSource {
     var fileTypeLabel: String {
         switch self {
@@ -169,88 +183,61 @@ private enum ShareExportSource {
     case trip(Trip)
     case story(TravelStory)
 
-    var options: [ShareScopeOption] {
+    var allData: ShareCardData {
         switch self {
-        case .trip(let trip):
-            return [ShareScopeOption(id: trip.id, title: "整段旅程", subtitle: "\(trip.sortedDays.count) 天 · \(trip.totalCount) 段安排")] +
-                trip.sortedDays.enumerated().map { index, day in
-                    ShareScopeOption(
-                        id: day.id,
-                        title: day.title.isEmpty ? "第 \(index + 1) 天" : day.title,
-                        subtitle: "\(day.date.compactDayText) · \(day.items.count) 段安排"
-                    )
-                }
-        case .story(let story):
-            return [ShareScopeOption(id: story.id, title: "整段足迹", subtitle: "\(story.sortedDays.count) 天 · \(story.sortedEntries.count) 个片段")] +
-                story.sortedDays.enumerated().map { index, day in
-                    ShareScopeOption(
-                        id: day.id,
-                        title: day.title.isEmpty ? "第 \(index + 1) 天" : day.title,
-                        subtitle: "\(day.date.compactDayText) · \(day.entries.count) 个片段"
-                    )
-                }
+        case .trip(let trip): return ShareCardData(trip: trip)
+        case .story(let story): return ShareCardData(story: story)
         }
     }
 
-    func data(for scopeID: UUID) -> ShareCardData {
+    func initialSelection(scopeID: UUID?) -> Set<UUID> {
+        let sections = allData.sections
+        let chosen = sections.first { $0.id == scopeID }.map { [$0] } ?? sections
+        return Set(chosen.flatMap(\.items).map(\.id))
+    }
+
+    func data(for ids: Set<UUID>, fields: Set<ShareField>) -> ShareCardData {
         switch self {
-        case .trip(let trip):
-            ShareCardData(trip: trip, day: trip.sortedDays.first { $0.id == scopeID })
-        case .story(let story):
-            ShareCardData(story: story, day: story.sortedDays.first { $0.id == scopeID })
+        case .trip(let trip): return ShareCardData(trip: trip, selectedItemIDs: ids, fields: fields)
+        case .story(let story): return ShareCardData(story: story, selectedItemIDs: ids, fields: fields)
         }
     }
 
     @MainActor
-    func portableData(for scopeID: UUID) throws -> Data {
+    func portableData(for ids: Set<UUID>, excludedMedia: Set<UUID>, fields: Set<ShareField>, includeMedia: Bool = false) throws -> Data {
+        let data: Data
         switch self {
-        case .trip(let trip):
-            return try SharedJourneyService.makeShareData(
-                trip: trip,
-                selectedDay: trip.sortedDays.first { $0.id == scopeID }
-            )
-        case .story(let story):
-            return try SharedJourneyService.makeShareData(
-                story: story,
-                selectedDay: story.sortedDays.first { $0.id == scopeID }
-            )
+        case .trip(let trip): data = try SharedJourneyService.makeShareData(trip: trip, selectedItemIDs: ids, includeMedia: includeMedia)
+        case .story(let story): data = try SharedJourneyService.makeShareData(story: story, selectedItemIDs: ids, includeMedia: includeMedia)
+        }
+        return try SharedJourneyService.filterShareFields(fields, from: SharedJourneyService.excludingMedia(excludedMedia, from: data))
+    }
+
+    @MainActor
+    func media(for ids: Set<UUID>) -> [MediaReference] {
+        switch self {
+        case .trip(let trip): return trip.allItems.filter { ids.contains($0.id) }.flatMap(\.media) + [trip.coverMedia].compactMap { $0 }
+        case .story(let story): return story.sortedEntries.filter { ids.contains($0.id) }.flatMap(\.media) + [story.coverMedia].compactMap { $0 }
         }
     }
 
     @MainActor
-    func portablePackage(for scopeID: UUID) async throws -> PortablePackageExportResult {
-        switch self {
-        case .trip(let trip):
-            return try await SharedJourneyService.makeSharePackage(
-                trip: trip,
-                selectedDay: trip.sortedDays.first { $0.id == scopeID }
-            )
-        case .story(let story):
-            return try await SharedJourneyService.makeSharePackage(
-                story: story,
-                selectedDay: story.sortedDays.first { $0.id == scopeID }
-            )
-        }
-    }
-
-    func mediaCount(for scopeID: UUID) -> Int {
-        switch self {
-        case .trip(let trip):
-            let days = trip.sortedDays.first { $0.id == scopeID }.map { [$0] } ?? trip.sortedDays
-            return days.flatMap(\.sortedItems).flatMap(\.media).count
-        case .story(let story):
-            let days = story.sortedDays.first { $0.id == scopeID }.map { [$0] } ?? story.sortedDays
-            return days.flatMap(\.sortedEntries).flatMap(\.media).count + (story.coverMedia == nil ? 0 : 1)
-        }
+    func portablePackage(for ids: Set<UUID>, excludedMedia: Set<UUID>, fields: Set<ShareField>) async throws -> PortablePackageExportResult {
+        try await PortablePackageService.makePackage(kind: .sharedJourney, contentData: portableData(for: ids, excludedMedia: excludedMedia, fields: fields, includeMedia: fields.contains(.media)), mediaReferences: fields.contains(.media) ? media(for: ids).filter { !excludedMedia.contains($0.id) } : [], fileExtension: "triptrail")
     }
 }
 
 struct ShareExportView: View {
     @Environment(\.dismiss) private var dismiss
     private let source: ShareExportSource
-    @State private var selectedScopeID: UUID
+    private let initialScopeID: UUID?
+    @State private var selectedItemIDs: Set<UUID>
+    @State private var selectedFields = Set(ShareField.allCases).subtracting([.cost, .time])
+    @State private var excludedMediaIDs: Set<UUID> = []
     @State private var coverImage: UIImage?
     @State private var photoImages: [String: UIImage] = [:]
+    @State private var imageCache = NSCache<NSString, UIImage>()
+    @State private var isPreparingImage = false
     @State private var renderedImage: UIImage?
     @State private var showsImageShare = false
     @State private var isPreparingPortableFile = false
@@ -262,37 +249,69 @@ struct ShareExportView: View {
 
     init(trip: Trip, initialScopeID: UUID? = nil) {
         source = .trip(trip)
-        _selectedScopeID = State(initialValue: initialScopeID ?? trip.id)
+        self.initialScopeID = initialScopeID
+        _selectedItemIDs = State(initialValue: ShareExportSource.trip(trip).initialSelection(scopeID: initialScopeID))
     }
 
     init(story: TravelStory, initialScopeID: UUID? = nil) {
         source = .story(story)
-        _selectedScopeID = State(initialValue: initialScopeID ?? story.id)
+        self.initialScopeID = initialScopeID
+        _selectedItemIDs = State(initialValue: ShareExportSource.story(story).initialSelection(scopeID: initialScopeID))
     }
 
-    private var data: ShareCardData { source.data(for: selectedScopeID) }
+    private var selectionSections: [ShareCardSection] {
+        let sections = source.allData.sections
+        if let initialScopeID, sections.contains(where: { $0.id == initialScopeID }) {
+            return sections.filter { $0.id == initialScopeID }
+        }
+        return sections
+    }
+    private var selectableItemIDs: Set<UUID> { Set(selectionSections.flatMap(\.items).map(\.id)) }
+    private var availableMedia: [MediaReference] {
+        var seen = Set<UUID>()
+        return source.media(for: selectedItemIDs).filter { seen.insert($0.id).inserted }
+    }
+    private var selectionKey: String {
+        selectedItemIDs.map(\.uuidString).sorted().joined() + ":" + excludedMediaIDs.map(\.uuidString).sorted().joined() + selectedFields.map(\.rawValue).sorted().joined()
+    }
+    private var data: ShareCardData {
+        var result = source.data(for: selectedItemIDs, fields: selectedFields)
+        let excludedAssets = Set(availableMedia.filter { excludedMediaIDs.contains($0.id) }.map(\.localIdentifier))
+        result.sections = result.sections.map { section in
+            var value = section
+            value.items = section.items.map { item in
+                var value = item
+                value.photoAssetIdentifiers.removeAll { excludedAssets.contains($0) }
+                return value
+            }
+            return value
+        }
+        if let cover = result.coverAssetIdentifier, excludedAssets.contains(cover) {
+            result.coverAssetIdentifier = result.photoAssetIdentifiers.first
+        }
+        return result
+    }
 
     var body: some View {
         TripNavigationStack {
             ScrollView {
                 VStack(spacing: 18) {
                     scopePicker
+                    fieldPicker
+                    if selectedFields.contains(.media) && !availableMedia.isEmpty { mediaPicker }
 
                     ShareCard(data: data, coverImage: coverImage, photoImages: photoImages)
                         .frame(width: 360)
                         .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
                         .shadow(color: .black.opacity(0.16), radius: 20, y: 10)
 
-                    if renderedImage != nil {
-                        Button {
-                            showsImageShare = true
-                        } label: {
-                            Label("分享精美长图", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
+                    if selectedItemIDs.isEmpty {
+                        Text("请至少选择一个安排").foregroundStyle(.secondary)
                     } else {
-                        ProgressView("正在生成分享长图…")
+                        Button { prepareLongImage() } label: {
+                            if isPreparingImage { ProgressView("正在生成分享长图…").frame(maxWidth: .infinity) }
+                            else { Label("分享精美长图", systemImage: "square.and.arrow.up").frame(maxWidth: .infinity) }
+                        }.buttonStyle(.borderedProminent).disabled(isPreparingImage)
                     }
                     if isPreparingPortableFile {
                         ProgressView("正在生成可导入文件…")
@@ -305,9 +324,7 @@ struct ShareExportView: View {
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
-                        Text("点击后可选择是否包含照片与视频。")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                        .disabled(selectedItemIDs.isEmpty)
                     }
                 }
                 .padding()
@@ -316,20 +333,30 @@ struct ShareExportView: View {
             .navigationTitle("分享预览")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
-            .task(id: selectedScopeID) { await renderLongImage() }
-            .onAppear { isClosed = false }
+            .task(id: selectionKey) {
+                do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+                await updatePreviewImages()
+            }
+            .onAppear {
+                isClosed = false
+                imageCache.countLimit = 40
+                imageCache.totalCostLimit = 48 * 1024 * 1024
+            }
             .onDisappear {
                 isClosed = true
+                imageCache.removeAllObjects()
+                photoImages = [:]; coverImage = nil
+                if !showsImageShare { renderedImage = nil }
                 if portableShareItem == nil { temporaryFiles.clear() }
             }
-            .sheet(isPresented: $showsImageShare) {
+            .sheet(isPresented: $showsImageShare, onDismiss: { renderedImage = nil }) {
                 if let renderedImage {
                     // Share the image itself so receiving apps do not treat it as a document URL.
                     SystemShareSheet(items: [renderedImage])
                 }
             }
             .confirmationDialog("是否包含照片与视频？", isPresented: $showsPortableOptions, titleVisibility: .visible) {
-                let mediaCount = source.mediaCount(for: selectedScopeID)
+                let mediaCount = availableMedia.filter { !excludedMediaIDs.contains($0.id) }.count
                 Button("包含照片与视频（\(mediaCount)）") {
                     preparePortableFile(includeMedia: true)
                 }
@@ -350,23 +377,129 @@ struct ShareExportView: View {
         }
     }
 
+    private func selectionMark(_ selected: Bool) -> some View {
+        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 21, weight: .medium))
+            .foregroundStyle(selected ? Color.tripLake : Color.secondary.opacity(0.35))
+    }
+
     private var scopePicker: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("选择分享范围", systemImage: "rectangle.stack")
-                .font(.headline)
-            Picker("分享范围", selection: $selectedScopeID) {
-                ForEach(source.options) { option in
-                    Text("\(option.title) · \(option.subtitle)").tag(option.id)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("选择分享安排").font(.headline)
+                    Text("已选择 \(selectedItemIDs.count) 个安排").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(selectedItemIDs == selectableItemIDs ? "取消全选" : "全选") {
+                    selectedItemIDs = selectedItemIDs == selectableItemIDs ? [] : selectableItemIDs
+                }.font(.caption.weight(.semibold)).foregroundStyle(Color.tripLakeText)
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(Color.tripLake.opacity(0.09), in: Capsule())
+            }
+            ForEach(selectionSections) { section in
+                let ids = Set(section.items.map(\.id))
+                VStack(spacing: 0) {
+                    Button {
+                        selectedItemIDs = ids.isSubset(of: selectedItemIDs) ? selectedItemIDs.subtracting(ids) : selectedItemIDs.union(ids)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "calendar")
+                                .font(.system(size: 18, weight: .semibold))
+                                .foregroundStyle(Color.tripLakeText)
+                                .frame(width: 34, height: 34)
+                                .background(Color.tripLake.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(section.title).font(.headline.weight(.semibold)).foregroundStyle(Color.tripInk)
+                                Text(section.dateText).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            VStack(spacing: 4) {
+                                selectionMark(!ids.isEmpty && ids.isSubset(of: selectedItemIDs))
+                                Text("\(selectedItemIDs.intersection(ids).count)/\(ids.count)").font(.caption2).foregroundStyle(Color.tripLakeText)
+                            }
+                        }.padding(12).frame(maxWidth: .infinity)
+                            .background(Color.tripLake.opacity(0.11))
+                    }
+                    ForEach(section.items) { item in
+                        Button {
+                            if selectedItemIDs.contains(item.id) { selectedItemIDs.remove(item.id) }
+                            else { selectedItemIDs.insert(item.id) }
+                        } label: {
+                            HStack(spacing: 10) {
+                                selectionMark(selectedItemIDs.contains(item.id))
+                                Text(item.title).font(.subheadline).foregroundStyle(Color.tripInk)
+                                Spacer(minLength: 8)
+                            }.padding(.leading, 28).padding(.trailing, 12)
+                                .frame(minHeight: 48).contentShape(Rectangle())
+                                .overlay(alignment: .bottom) {
+                                    if item.id != section.items.last?.id {
+                                        Rectangle().fill(Color.tripMist.opacity(0.45)).frame(height: 0.5).padding(.leading, 59)
+                                    }
+                                }
+                        }
+                    }
+                }.clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.tripLake.opacity(0.10)))
+            }
+        }.buttonStyle(.plain).cardSurface()
+    }
+
+    private var fieldPicker: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("分享字段").font(.headline)
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 8) {
+                ForEach(ShareField.selectable) { field in
+                    let selected = selectedFields.contains(field)
+                    Button {
+                        if selected { selectedFields.remove(field) }
+                        else { selectedFields.insert(field) }
+                    } label: {
+                        HStack(spacing: 8) {
+                            selectionMark(selected)
+                            Text(field.rawValue).font(.subheadline).foregroundStyle(Color.tripInk)
+                            Spacer(minLength: 0)
+                        }.padding(.horizontal, 12).frame(minHeight: 46)
+                            .background(selected ? Color.tripLake.opacity(0.07) : Color.secondary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+                    }.buttonStyle(.plain)
                 }
             }
-            .pickerStyle(.menu)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .cardSurface()
+        }.cardSurface()
+    }
+
+    private var mediaPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("照片与视频").font(.headline)
+            Text("已选择 \(availableMedia.filter { !excludedMediaIDs.contains($0.id) }.count) / \(availableMedia.count)，取消勾选可排除媒体")
+                .font(.caption).foregroundStyle(.secondary)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 3), spacing: 6) {
+                ForEach(availableMedia) { media in
+                    Button {
+                        if excludedMediaIDs.contains(media.id) { excludedMediaIDs.remove(media.id) }
+                        else { excludedMediaIDs.insert(media.id) }
+                    } label: {
+                        GeometryReader { geometry in
+                            AssetThumbnail(identifier: media.localIdentifier, showsVideoBadge: media.kind == .video)
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .clipped()
+                        }
+                            .aspectRatio(1, contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(alignment: .topTrailing) {
+                                Image(systemName: excludedMediaIDs.contains(media.id) ? "circle" : "checkmark.circle.fill")
+                                    .foregroundStyle(.white, Color.accentColor).padding(6)
+                            }
+                    }.buttonStyle(.plain)
+                }
+            }
+        }.cardSurface()
     }
 
     private func preparePortableFile(includeMedia: Bool) {
         let currentData = data
+        let currentSelection = selectedItemIDs
+        let currentExcludedMedia = excludedMediaIDs
+        let currentFields = selectedFields
         isPreparingPortableFile = true
         Task { @MainActor in
             defer { isPreparingPortableFile = false }
@@ -374,20 +507,20 @@ struct ShareExportView: View {
                 let safeName = currentData.title.replacingOccurrences(of: "/", with: "-")
                 let generatedURL: URL
                 if includeMedia {
-                    let result = try await source.portablePackage(for: currentData.scopeID)
+                    let result = try await source.portablePackage(for: currentSelection, excludedMedia: currentExcludedMedia, fields: currentFields)
                     defer { try? FileManager.default.removeItem(at: result.url) }
                     let namedURL = try TemporaryFileOwner.shareURL(filename: "旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-含媒体-\(UUID().uuidString.prefix(6)).triptrail")
                     try FileManager.default.moveItem(at: result.url, to: namedURL)
                     generatedURL = namedURL
                 } else {
-                    let portableData = try source.portableData(for: currentData.scopeID)
+                    let portableData = try source.portableData(for: currentSelection, excludedMedia: currentExcludedMedia, fields: currentFields)
                     let portableURL = try TemporaryFileOwner.shareURL(filename: "旅迹-\(source.fileTypeLabel)-\(safeName)-\(currentData.scopeLabel)-\(UUID().uuidString.prefix(6)).triptrail")
                     do { try portableData.write(to: portableURL, options: .atomic) }
                     catch { try? FileManager.default.removeItem(at: portableURL); throw error }
                     generatedURL = portableURL
                 }
                 temporaryFiles.keep(generatedURL)
-                guard !isClosed, currentData.scopeID == selectedScopeID else {
+                guard !isClosed, currentSelection == selectedItemIDs, currentExcludedMedia == excludedMediaIDs, currentFields == selectedFields else {
                     temporaryFiles.remove(generatedURL)
                     return
                 }
@@ -399,44 +532,55 @@ struct ShareExportView: View {
     }
 
     @MainActor
-    private func renderLongImage() async {
-        renderedImage = nil
-        coverImage = nil
-        photoImages = [:]
-        let currentData = data
+    private func cachedImage(_ identifier: String, cover: Bool = false) async -> UIImage? {
+        let key = "\(cover ? "cover" : "preview"):\(identifier)" as NSString
+        if let image = imageCache.object(forKey: key) { return image }
+        let image = await PhotoLibraryService.shareImage(identifier: identifier,
+            targetSize: cover ? CGSize(width: 1200, height: 1200) : CGSize(width: 600, height: 600))
+        guard !isClosed, !Task.isCancelled else { return nil }
+        if let image {
+            let cost = image.cgImage.map { $0.bytesPerRow * $0.height } ?? 0
+            imageCache.setObject(image, forKey: key, cost: cost)
+        }
+        return image
+    }
 
-        var loadedPhotos: [String: UIImage] = [:]
-        for identifier in currentData.photoAssetIdentifiers {
-            guard !Task.isCancelled else { return }
-            if let image = await PhotoLibraryService.shareImage(
-                identifier: identifier,
-                targetSize: CGSize(width: 600, height: 600)
-            ) {
-                loadedPhotos[identifier] = image
+    @MainActor
+    private func images(for snapshot: ShareCardData) async -> (UIImage?, [String: UIImage]) {
+        var photos: [String: UIImage] = [:]
+        for identifier in snapshot.photoAssetIdentifiers {
+            guard !Task.isCancelled, !isClosed else { return (nil, [:]) }
+            if let image = await cachedImage(identifier) { photos[identifier] = image }
+        }
+        let cover = if let identifier = snapshot.coverAssetIdentifier { await cachedImage(identifier, cover: true) } else { nil as UIImage? }
+        return (cover, photos)
+    }
+
+    @MainActor
+    private func updatePreviewImages() async {
+        let key = selectionKey
+        let snapshot = data
+        let (cover, photos) = await images(for: snapshot)
+        guard !Task.isCancelled, !isClosed, key == selectionKey else { return }
+        coverImage = cover; photoImages = photos
+    }
+
+    private func prepareLongImage() {
+        guard !isPreparingImage, !selectedItemIDs.isEmpty else { return }
+        let key = selectionKey
+        let snapshot = data
+        isPreparingImage = true
+        Task { @MainActor in
+            defer { isPreparingImage = false }
+            let (cover, photos) = await images(for: snapshot)
+            guard !isClosed, key == selectionKey else { return }
+            guard let image = ShareCardImageRenderer.render(data: snapshot, coverImage: cover, photoImages: photos) else {
+                message = "分享图生成失败，请稍后重试。"
+                return
             }
+            renderedImage = image
+            showsImageShare = true
         }
-
-        let loadedCover: UIImage?
-        if let identifier = currentData.coverAssetIdentifier {
-            loadedCover = await PhotoLibraryService.shareImage(identifier: identifier)
-        } else {
-            loadedCover = nil
-        }
-        guard !Task.isCancelled, currentData.scopeID == selectedScopeID else { return }
-        coverImage = loadedCover
-        photoImages = loadedPhotos
-
-        guard
-            let image = ShareCardImageRenderer.render(
-                data: currentData,
-                coverImage: loadedCover,
-                photoImages: loadedPhotos
-            )
-        else {
-            message = "分享图生成失败，请稍后重试。"
-            return
-        }
-        renderedImage = image
     }
 
 }
@@ -480,6 +624,8 @@ private struct ShareCard: View {
     let coverImage: UIImage?
     let photoImages: [String: UIImage]
 
+    private var singleDayDetails: String { "" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .bottomLeading) {
@@ -509,11 +655,7 @@ private struct ShareCard: View {
                             .font(.system(size: 10, weight: .bold))
                             .tracking(1.35)
                         Spacer()
-                        Text(data.scopeLabel)
-                            .font(.caption2.bold())
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 6)
-                            .background(.ultraThinMaterial, in: Capsule())
+
                     }
                     .foregroundStyle(.white.opacity(0.9))
                     Spacer()
@@ -528,10 +670,17 @@ private struct ShareCard: View {
                     }
                     .font(.caption.bold())
                     .foregroundStyle(.white.opacity(0.88))
+                    if !singleDayDetails.isEmpty {
+                        Text(singleDayDetails)
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.92))
+                            .lineSpacing(3)
+                            .lineLimit(5)
+                    }
                 }
                 .padding(22)
             }
-            .frame(height: 252)
+            .frame(height: singleDayDetails.isEmpty ? 252 : 340)
             .clipped()
 
             VStack(alignment: .leading, spacing: 18) {
@@ -544,7 +693,6 @@ private struct ShareCard: View {
                             .font(.subheadline)
                             .foregroundStyle(Color.tripInk.opacity(0.78))
                             .lineSpacing(3)
-                            .lineLimit(4)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                     .padding(15)
@@ -581,7 +729,6 @@ private struct ShareCard: View {
                                 .font(.caption)
                                 .foregroundStyle(Color.tripInk.opacity(0.68))
                                 .lineSpacing(2)
-                                .lineLimit(4)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                         if section.items.isEmpty {
@@ -597,15 +744,10 @@ private struct ShareCard: View {
                                     HStack(alignment: .center, spacing: 9) {
                                         ZStack {
                                             Circle().fill(item.completed ? Color.tripSage : Color.tripLake.opacity(0.13))
-                                            if item.completed {
-                                                Image(systemName: "checkmark")
-                                                    .font(.caption2.bold())
-                                                    .foregroundStyle(.white)
-                                            } else {
-                                                Text("\(itemIndex + 1)")
-                                                    .font(.caption2.bold())
-                                                    .foregroundStyle(Color.tripLake)
-                                            }
+                                            Image(systemName: item.symbol)
+                                                .font(.caption2.bold())
+                                                .foregroundStyle(item.completed ? .white : Color.tripLake)
+
                                         }
                                         .frame(width: 25, height: 25)
                                         Text(item.title)
@@ -627,7 +769,6 @@ private struct ShareCard: View {
                                             .font(.caption)
                                             .foregroundStyle(Color.tripInk.opacity(0.66))
                                             .lineSpacing(2)
-                                            .lineLimit(4)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
                                     SharePhotoGrid(
@@ -652,15 +793,15 @@ private struct ShareCard: View {
                             }
                         }
                     }
-                    .padding(14)
-                    .background(Color.shareDayPanel, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .padding(data.sections.count > 1 ? 14 : 0)
+                    .background(data.sections.count > 1 ? Color.shareDayPanel : Color.clear, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
                     .overlay {
                         RoundedRectangle(cornerRadius: 20, style: .continuous)
-                            .stroke(Color.tripLake.opacity(0.20), lineWidth: 1)
+                            .stroke(Color.tripLake.opacity(data.sections.count > 1 ? 0.20 : 0), lineWidth: 1)
                     }
                     .overlay(alignment: .leading) {
                         Capsule()
-                            .fill(Color.tripLake.opacity(0.58))
+                            .fill(Color.tripLake.opacity(data.sections.count > 1 ? 0.58 : 0))
                             .frame(width: 3)
                             .padding(.vertical, 20)
                             .padding(.leading, 1)
@@ -761,8 +902,8 @@ private struct SharePhotoGrid: View {
     }
 
     private var columns: [GridItem] {
-        let count = displayedIdentifiers.count == 1 ? 1 : 2
-        return Array(repeating: GridItem(.flexible(), spacing: 5), count: count)
+        let count = 3
+        return Array(repeating: GridItem(.flexible(), spacing: 6), count: count)
     }
 
     var body: some View {
@@ -770,25 +911,32 @@ private struct SharePhotoGrid: View {
             LazyVGrid(columns: columns, spacing: 6) {
                 ForEach(Array(displayedIdentifiers.enumerated()), id: \.element) { index, identifier in
                     if let image = images[identifier] {
-                        ZStack {
-                            Image(uiImage: image)
-                                .resizable()
-                                .scaledToFill()
-                                .aspectRatio(displayedIdentifiers.count == 1 ? 1.6 : 1.15, contentMode: .fit)
-                                .frame(maxWidth: .infinity)
-                                .clipped()
-                            if index == 3, availableIdentifiers.count > displayedIdentifiers.count {
-                                Color.black.opacity(0.42)
-                                Text("+\(availableIdentifiers.count - displayedIdentifiers.count)")
-                                    .font(.title2.bold())
-                                    .foregroundStyle(.white)
+                        Color.clear
+                            .aspectRatio(1, contentMode: .fit)
+                            .overlay {
+                                GeometryReader { proxy in
+                                    Image(uiImage: image)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: proxy.size.width, height: proxy.size.height)
+                                        .clipped()
+                                }
                             }
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                                .stroke(Color.tripSand.opacity(0.22), lineWidth: 1)
-                        }
+                            .overlay {
+                                if index == 3, availableIdentifiers.count > displayedIdentifiers.count {
+                                    ZStack {
+                                        Color.black.opacity(0.42)
+                                        Text("+\(availableIdentifiers.count - displayedIdentifiers.count)")
+                                            .font(.title2.bold())
+                                            .foregroundStyle(.white)
+                                    }
+                                }
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .stroke(Color.tripSand.opacity(0.22), lineWidth: 1)
+                            }
                     }
                 }
             }

@@ -26,7 +26,7 @@ extension Color {
 struct CardSurface: ViewModifier {
     func body(content: Content) -> some View {
         content
-            .padding(16)
+            .padding(UIDevice.current.userInterfaceIdiom == .pad ? 22 : 16)
             .background(Color.tripSurface, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -88,6 +88,11 @@ private struct NavigationPopEdgeGuardInstaller: UIViewRepresentable {
             super.didMoveToWindow()
             coordinator?.install(from: self)
         }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            coordinator?.install(from: self)
+        }
     }
 
     final class Coordinator: NSObject {
@@ -111,6 +116,13 @@ private struct NavigationPopEdgeGuardInstaller: UIViewRepresentable {
                 ? controllers
                 : controllers + [navigationController]
             for controller in targets {
+                for page in controller.viewControllers {
+                    let item = page.navigationItem
+                    if !(item.backBarButtonItem is PlainBackBarButtonItem) {
+                        item.backBarButtonItem = PlainBackBarButtonItem(title: "返回", style: .plain, target: nil, action: nil)
+                        item.backButtonDisplayMode = .minimal
+                    }
+                }
                 EdgeOnlyNavigationPopController.install(
                     on: controller,
                     edgeActivationWidth: edgeActivationWidth
@@ -154,6 +166,14 @@ private struct NavigationPopEdgeGuardInstaller: UIViewRepresentable {
             visit(root)
             return result
         }
+    }
+}
+
+// Keep the native back action and edge gesture, without its long-press history menu.
+private final class PlainBackBarButtonItem: UIBarButtonItem {
+    override var menu: UIMenu? {
+        get { nil }
+        set { }
     }
 }
 
@@ -633,5 +653,88 @@ struct TripAmountInput: View {
                 let parsed = (try? Double(text, format: .number)) ?? 0
                 if parsed != updated { text = updated == 0 ? "" : updated.formatted(.number.grouping(.never)) }
             }
+    }
+}
+
+// Larger reading and editing surfaces on iPad, retaining the user's accessibility size.
+struct TripTabletReading: ViewModifier {
+    @Environment(\.defaultMinListRowHeight) private var minimumRowHeight
+    @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    func body(content: Content) -> some View {
+        content.environment(\.dynamicTypeSize,
+            UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+                ? max(textSize, .xLarge) : textSize)
+            .environment(\.defaultMinListRowHeight,
+                UIDevice.current.userInterfaceIdiom == .pad && sizeClass == .regular
+                    ? max(minimumRowHeight, 56) : minimumRowHeight)
+    }
+}
+
+struct TripEditorPresentation: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            if #available(iOS 18.0, *) {
+                content.presentationSizing(.page)
+            } else {
+                content.presentationDetents([.large])
+            }
+        } else {
+            content
+        }
+    }
+}
+
+private struct TripBottomSheet<Item: Identifiable, Sheet: View>: ViewModifier {
+    @Binding var item: Item?
+    let sheet: (Item) -> Sheet
+    @ViewBuilder func body(content: Content) -> some View {
+        if UIDevice.current.userInterfaceIdiom == .pad {
+            content.fullScreenCover(item: $item) { value in
+                ZStack(alignment: .bottom) {
+                    Color.black.opacity(0.24)
+                        .ignoresSafeArea()
+                        .onTapGesture { item = nil }
+                    VStack(spacing: 0) {
+                        Capsule().fill(.secondary.opacity(0.4))
+                            .frame(width: 40, height: 5).padding(12)
+                            .contentShape(Rectangle())
+                            .gesture(DragGesture().onEnded { value in
+                                if value.translation.height > 40 { item = nil }
+                            })
+                            .accessibilityAction(named: "关闭") { item = nil }
+                        sheet(value)
+                    }
+                    .frame(maxWidth: 760)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 28))
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+                }
+                .presentationBackground(.clear)
+                .modifier(TripTabletReading())
+            }
+            // The transparent cover carries a stationary backdrop; UIKit's
+            // default slide transition would sweep that backdrop up the screen.
+            .transaction(value: item?.id) { transaction in
+                transaction.disablesAnimations = true
+            }
+        } else {
+            content.sheet(item: $item, content: sheet)
+        }
+    }
+}
+
+extension View {
+    func tripBottomSheet<Item: Identifiable, Sheet: View>(item: Binding<Item?>,
+        @ViewBuilder content: @escaping (Item) -> Sheet) -> some View {
+        modifier(TripBottomSheet(item: item, sheet: content))
+    }
+}
+
+extension Font {
+    static func tripSystem(size: CGFloat, weight: Font.Weight = .regular,
+                           design: Font.Design = .default) -> Font {
+        .system(size: size * (UIDevice.current.userInterfaceIdiom == .pad ? 1.16 : 1),
+                weight: weight, design: design)
     }
 }

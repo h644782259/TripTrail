@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct TripTrailApp: App {
     private let modelContainer: ModelContainer = {
+
         TemporaryFileOwner.cleanPreviousSession()
         let schema = Schema([
             Trip.self,
@@ -16,7 +17,10 @@ struct TripTrailApp: App {
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [configuration])
+            try UnifiedJourneyService.prepareStoreBackup()
+            let container = try ModelContainer(for: schema, configurations: [configuration])
+            try UnifiedJourneyService.reconcile(context: container.mainContext)
+            return container
         } catch {
             fatalError("无法创建本地旅行数据库：\(error.localizedDescription)")
         }
@@ -25,7 +29,9 @@ struct TripTrailApp: App {
     var body: some Scene {
         WindowGroup {
             RootTabView()
+                .modifier(TripTabletReading())
                 .tint(.tripLake)
+                .preferredColorScheme(.light)
         }
         .modelContainer(modelContainer)
     }

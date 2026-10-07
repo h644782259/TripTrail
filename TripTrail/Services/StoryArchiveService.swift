@@ -58,6 +58,7 @@ enum StoryArchiveService {
                 endDate: trip.endDate,
                 summary: summary
             )
+            story.id = trip.id
             story.sourceTripID = trip.id
             story.syncScope = syncScope
             story.sourceSelectionIDs = sourceIDs
@@ -138,6 +139,8 @@ enum StoryArchiveService {
                     storyDay.entries.append(entry)
                 }
 
+                entry.transport = sourceItem.transport
+                entry.attractionTypeRaw = sourceItem.attractionTypeRaw
                 // 同步行程与足迹共用的表单字段；足迹独有的回忆和媒体保持独立。
                 entry.apply(sourceItem.footprintSkeleton)
             }

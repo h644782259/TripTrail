@@ -13,6 +13,9 @@ struct UnifiedTimeRangePicker: View {
     @Binding var endTime: Date
     let displayStyle: TimeRangePickerDisplayStyle
     let separator: String
+    let isEmpty: Bool
+    let onCommit: (() -> Void)?
+    let onClear: (() -> Void)?
 
     @State private var isPresented = false
     @State private var draftStartTime: Date
@@ -25,7 +28,10 @@ struct UnifiedTimeRangePicker: View {
         startTime: Binding<Date>,
         endTime: Binding<Date>,
         displayStyle: TimeRangePickerDisplayStyle = .form,
-        separator: String = "–"
+        separator: String = "–",
+        isEmpty: Bool = false,
+        onCommit: (() -> Void)? = nil,
+        onClear: (() -> Void)? = nil
     ) {
         self.title = title
         self.startTitle = startTitle
@@ -34,6 +40,9 @@ struct UnifiedTimeRangePicker: View {
         _endTime = endTime
         self.displayStyle = displayStyle
         self.separator = separator
+        self.isEmpty = isEmpty
+        self.onCommit = onCommit
+        self.onClear = onClear
         _draftStartTime = State(initialValue: startTime.wrappedValue)
         _draftEndTime = State(initialValue: endTime.wrappedValue)
     }
@@ -46,7 +55,7 @@ struct UnifiedTimeRangePicker: View {
                     Text(title)
                         .foregroundStyle(.primary)
                     Spacer()
-                    Text(rangeText(startTime: startTime, endTime: endTime))
+                    Text(isEmpty ? "未设置" : rangeText(startTime: startTime, endTime: endTime))
                         .font(.subheadline.bold())
                         .monospacedDigit()
                         .foregroundStyle(Color.tripInk)
@@ -56,7 +65,7 @@ struct UnifiedTimeRangePicker: View {
                 }
                 .contentShape(Rectangle())
             case .capsule:
-                Text(rangeText(startTime: startTime, endTime: endTime))
+                Text(isEmpty ? "未设置" : rangeText(startTime: startTime, endTime: endTime))
                     .font(.caption.bold())
                     .monospacedDigit()
                     .padding(.horizontal, 11)
@@ -109,6 +118,9 @@ struct UnifiedTimeRangePicker: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if let onClear, !isEmpty {
+                Button("清除时间") { onClear(); isPresented = false }.foregroundStyle(.secondary)
+            }
             HStack(spacing: 12) {
                 Button {
                     isPresented = false
@@ -118,6 +130,7 @@ struct UnifiedTimeRangePicker: View {
                     .buttonStyle(.bordered)
                 Button {
                     commit()
+                    onCommit?()
                 } label: {
                     Text("确定").frame(maxWidth: .infinity)
                 }

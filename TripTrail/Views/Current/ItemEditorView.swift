@@ -14,6 +14,8 @@ struct ItemEditorView: View {
     let day: TripDay?
     let item: ItineraryItem?
     let mode: ItemEditorMode
+    let isFootprint: Bool
+    var onSaved: (() -> Void)? = nil
 
     @State private var favoriteCity: String
     @State private var title: String
@@ -24,12 +26,15 @@ struct ItemEditorView: View {
     @State private var originAddress: String
     @State private var destinationName: String
     @State private var destinationAddress: String
+    @State private var attractionType: AttractionType
+    @State private var transport: TransportMode
     @State private var category: PlaceCategory
     @State private var startTime: Date
     @State private var endTime: Date
     @State private var isTimePending: Bool
     @State private var targetDayID: UUID?
     @State private var isFixedTime: Bool
+    @State private var journalNote: String
     @State private var note: String
     @State private var costText: String
     @State private var showsFavoriteImport = false
@@ -40,6 +45,7 @@ struct ItemEditorView: View {
     @State private var smartImportUsedFallback = false
     @State private var pickerItems: [PhotosPickerItem] = []
     @State private var pickedAssets: [PickedAsset] = []
+    @State private var mediaOrder: [String] = []
     @State private var removedMediaIDs: Set<UUID> = []
     @State private var mediaWarning: String?
     @State private var mediaPreview: AssetMediaPreviewRequest?
@@ -48,12 +54,16 @@ struct ItemEditorView: View {
         day: TripDay?,
         item: ItineraryItem? = nil,
         mode: ItemEditorMode = .itinerary,
+        isFootprint: Bool = false,
         startsWithSmartImport: Bool = false,
-        initialSmartImportMode: SingleSmartImportMode = .text
+        initialSmartImportMode: SingleSmartImportMode = .text,
+        onSaved: (() -> Void)? = nil
     ) {
         self.day = day
         self.item = item
         self.mode = mode
+        self.isFootprint = isFootprint
+        self.onSaved = onSaved
         let base = day?.date ?? item?.day?.date ?? Date()
         let calendar = Calendar.current
         let defaultStart = day?.suggestedStartTime(calendar: calendar)
@@ -76,7 +86,7 @@ struct ItemEditorView: View {
         let isLegacyItem = item?.locationModeRaw.isEmpty != false
         _locationMode = State(initialValue: item?.locationMode ?? .single)
         _placeName = State(initialValue: item.map {
-            $0.placeName.isEmpty && isLegacyItem ? $0.title : $0.placeName
+            $0.placeName
         } ?? "")
         _placeAddress = State(initialValue: item.map {
             $0.placeAddress.isEmpty && isLegacyItem ? $0.address : $0.placeAddress
@@ -85,16 +95,29 @@ struct ItemEditorView: View {
         _originAddress = State(initialValue: item?.originAddress ?? "")
         _destinationName = State(initialValue: item?.destinationName ?? "")
         _destinationAddress = State(initialValue: item?.destinationAddress ?? "")
+        _attractionType = State(initialValue: AttractionType(rawValue: item?.attractionTypeRaw ?? "") ?? .automatic)
+        _transport = State(initialValue: item?.transport ?? .car)
         _category = State(initialValue: item?.category ?? .attraction)
         _startTime = State(initialValue: initialStartTime)
         _endTime = State(initialValue: initialEndTime)
         _isFixedTime = State(initialValue: item?.isFixedTime ?? false)
         _isTimePending = State(initialValue: item?.isTimePending ?? false)
         _targetDayID = State(initialValue: day?.id ?? item?.day?.id)
+        _journalNote = State(initialValue: item?.journalNote ?? "")
         _note = State(initialValue: item?.note ?? "")
         _costText = State(initialValue: item.map { $0.cost == 0 ? "" : String($0.cost) } ?? "")
         _showsSmartImport = State(initialValue: startsWithSmartImport && item == nil)
         _smartImportMode = State(initialValue: initialSmartImportMode)
+    }
+
+    private var locationModeSelection: Binding<ArrangementLocationMode> {
+        Binding(get: { locationMode }, set: { selected in
+            guard selected != locationMode else { return }
+            locationMode = selected
+            placeName = ""; placeAddress = ""
+            originName = ""; originAddress = ""
+            destinationName = ""; destinationAddress = ""
+        })
     }
 
     var body: some View {
@@ -132,20 +155,34 @@ struct ItemEditorView: View {
                         Text("通过文字或截图识别收藏，识别后可继续编辑。").font(.footnote).foregroundStyle(.secondary)
                     }
                 } else {
+                Section(isFootprint ? "安排标题" : "安排") {
+                    TextField("安排标题", text: $title).clearableText($title)
+                        .accessibilityLabel("安排标题")
+                }
+                if isFootprint {
+                    memorySection
+                    mediaSection
+                }
+                if isFootprint {
+                    Section("时间") {
+                        UnifiedTimeRangePicker(title: "时间", startTitle: "开始", endTitle: "结束",
+                            startTime: $startTime, endTime: $endTime, isEmpty: isTimePending,
+                            onCommit: { isTimePending = false }, onClear: { isTimePending = true })
+                    }
+                } else {
                 Section("安排") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("安排名称")
-                        TextField("例如：广州 → 上海、游览世纪公园", text: $title).clearableText($title)
-                            .accessibilityLabel("安排名称")
-                    }
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("补充说明")
-                        TextField("例如：先寄存行李，下午两点后办理入住", text: $note, axis: .vertical).clearableText($note)
-                            .lineLimit(2...5)
-                            .accessibilityLabel("补充说明")
-                    }
                     Picker("类型", selection: $category) {
                         ForEach(PlaceCategory.allCases) { Label($0.rawValue, systemImage: $0.symbol).tag($0) }
+                    }
+                    if mode == .favorite && category == .attraction {
+                        Picker("景点类型", selection: $attractionType) {
+                            ForEach(AttractionType.allCases) { Text($0.label).tag($0) }
+                        }
+                    }
+                    if category == .transport {
+                        Picker("交通方式", selection: $transport) {
+                            ForEach(TransportMode.allCases) { Text($0.displayName).tag($0) }
+                        }
                     }
                     if mode == .itinerary {
                         if let trip = (day ?? item?.day)?.trip, trip.sortedDays.count > 1 {
@@ -175,7 +212,12 @@ struct ItemEditorView: View {
                     }
                 }
 
-                if mode == .favorite { mediaSection }
+                }
+
+                if mode == .favorite {
+                    Section("补充说明") { TextField("补充说明", text: $note, axis: .vertical).clearableText($note) }
+                    mediaSection
+                }
 
                 Section("地点") {
                     if mode == .favorite {
@@ -184,7 +226,7 @@ struct ItemEditorView: View {
                             TextField("例如：杭州，用于筛选收藏", text: $favoriteCity).clearableText($favoriteCity)
                         }
                     }
-                    Picker("地点类型", selection: $locationMode) {
+                    Picker("地点类型", selection: locationModeSelection) {
                         ForEach(ArrangementLocationMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -197,12 +239,7 @@ struct ItemEditorView: View {
                             TextField("例如：上海世纪公园", text: $placeName).clearableText($placeName)
                                 .accessibilityLabel("地点名称")
                         }
-                        VStack(alignment: .leading, spacing: 6) {
-                            editorFieldLabel("详细地址（选填）")
-                            TextField("用于提高地图匹配准确度", text: $placeAddress, axis: .vertical).clearableText($placeAddress)
-                                .lineLimit(1...3)
-                                .accessibilityLabel("地点详细地址")
-                        }
+
                     } else {
                         locationFields(
                             title: "出发地",
@@ -227,11 +264,19 @@ struct ItemEditorView: View {
                     }
                 }
 
-                if mode != .favorite { mediaSection }
+                if mode != .favorite {
+                    if !isFootprint {
+                        memorySection
+                        mediaSection
+                    }
+                    Section("补充说明") {
+                        TextField("填写安排的补充说明", text: $note, axis: .vertical).clearableText($note).lineLimit(2...5)
+                    }
+                }
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle(navigationTitle)
+            .navigationTitle(isFootprint ? "编辑记录" : navigationTitle)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
@@ -292,11 +337,18 @@ struct ItemEditorView: View {
             .foregroundStyle(.secondary)
     }
 
+    private var memorySection: some View {
+        Section("回忆") {
+            TextField("记录这段旅程的回忆", text: $journalNote, axis: .vertical)
+                .clearableText($journalNote).lineLimit(3...8)
+        }
+    }
+
     private var mediaSection: some View {
         Section("照片与视频") {
             let visibleMedia = (item?.media ?? [])
                 .filter { !removedMediaIDs.contains($0.id) }
-                .sorted { $0.sortOrder < $1.sortOrder }
+                .sorted(by: MediaReference.precedes)
             mediaGrid(existing: visibleMedia, picked: pickedAssets)
                 .listRowSeparator(.hidden)
         }
@@ -311,24 +363,21 @@ struct ItemEditorView: View {
             editorFieldLabel(title)
             TextField("\(title)名称", text: name).clearableText(name)
                 .accessibilityLabel("\(title)名称")
-            TextField("\(title)详细地址（选填）", text: address, axis: .vertical).clearableText(address)
-                .lineLimit(1...3)
-                .accessibilityLabel("\(title)详细地址")
         }
     }
 
     private var previewMediaItems: [AssetMediaPreviewItem] {
-        (item?.media ?? [])
-            .filter { !removedMediaIDs.contains($0.id) }
-            .sorted { $0.sortOrder < $1.sortOrder }
-            .map { AssetMediaPreviewItem(identifier: $0.localIdentifier, kind: $0.kind) }
-        + pickedAssets
-            .map { AssetMediaPreviewItem(identifier: $0.id, kind: $0.kind) }
+        ReorderableMediaGrid<EmptyView, EmptyView>.ordered(
+            (item?.media ?? []).filter { !removedMediaIDs.contains($0.id) }.sorted(by: MediaReference.precedes)
+                .map { AssetMediaPreviewItem(identifier: $0.localIdentifier, kind: $0.kind) }
+            + pickedAssets.map { AssetMediaPreviewItem(identifier: $0.id, kind: $0.kind) }, order: mediaOrder)
     }
 
     private func applyRecognizedDraft(_ draft: ItineraryScreenshotDraft) {
         if !draft.title.isEmpty, draft.title != "待补充的安排" { title = draft.title }
         category = draft.category
+        transport = draft.transport
+        attractionType = AttractionType(rawValue: draft.attractionTypeRaw) ?? .automatic
         startTime = draft.startTime
         endTime = draft.endTime
         if mode == .favorite, !draft.favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { favoriteCity = draft.favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -340,7 +389,6 @@ struct ItemEditorView: View {
         if !draft.destinationName.isEmpty { destinationName = draft.destinationName }
         if !draft.destinationAddress.isEmpty { destinationAddress = draft.destinationAddress }
         if locationMode == .single, placeName.isEmpty, !draft.address.isEmpty {
-            placeName = draft.title
             placeAddress = draft.address
         }
         if draft.cost > 0 { costText = String(draft.cost) }
@@ -362,17 +410,13 @@ struct ItemEditorView: View {
 
     @ViewBuilder
     private func mediaGrid(existing: [MediaReference], picked: [PickedAsset]) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
-            ForEach(existing) { reference in
-                removableThumbnail(identifier: reference.localIdentifier, kind: reference.kind) {
-                    removedMediaIDs.insert(reference.id)
-                }
+        ReorderableMediaGrid(assets: existing.map { AssetMediaPreviewItem(identifier: $0.localIdentifier, kind: $0.kind) }
+            + picked.map { AssetMediaPreviewItem(identifier: $0.id, kind: $0.kind) }, order: $mediaOrder) { asset in
+            removableThumbnail(identifier: asset.identifier, kind: asset.kind) {
+                if let reference = existing.first(where: { $0.localIdentifier == asset.identifier }) { removedMediaIDs.insert(reference.id) }
+                pickedAssets.removeAll { $0.id == asset.identifier }
             }
-            ForEach(picked) { asset in
-                removableThumbnail(identifier: asset.id, kind: asset.kind) {
-                    pickedAssets.removeAll { $0.id == asset.id }
-                }
-            }
+        } addTile: {
             let remaining = max(0, 20 - existing.count - picked.count)
             if remaining > 0 {
                 PermissionAwarePhotosPicker(selection: $pickerItems, maxSelectionCount: remaining, matching: .any(of: [.images, .videos])) {
@@ -489,8 +533,11 @@ struct ItemEditorView: View {
             role: .destination
         )
         target.destinationAddress = destinationAddress.trimmingCharacters(in: .whitespacesAndNewlines)
+        target.retainSelectedLocation()
         target.address = locationMode == .single ? target.placeAddress : target.destinationAddress
         target.category = category
+        target.transport = transport
+        if mode == .favorite || item == nil { target.attractionTypeRaw = attractionType.rawValue }
         if isTimePending && !target.isTimePending { target.executionStatus = .notStarted }
         target.isTimePending = isTimePending
         if mode == .itinerary {
@@ -519,6 +566,7 @@ struct ItemEditorView: View {
                 target.endTime = target.startTime.addingTimeInterval(60)
             }
         }
+        target.journalNote = journalNote.trimmingCharacters(in: .whitespacesAndNewlines)
         target.note = note
         target.playDurationMinutes = max(0, Int(target.endTime.timeIntervalSince(target.startTime) / 60))
         if let targetDay = target.day { JourneyHierarchyService.normalizeItems(targetDay.items) }
@@ -526,9 +574,7 @@ struct ItemEditorView: View {
         target.isFavorite = mode == .favorite
         if mode == .favorite { target.favoriteCity = favoriteCity.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-        for reference in target.media where removedMediaIDs.contains(reference.id) {
-            modelContext.delete(reference)
-        }
+        UnifiedJourneyService.removeMedia(ids: removedMediaIDs, from: target, context: modelContext)
         let activeMedia = target.media.filter { !removedMediaIDs.contains($0.id) }
         let existingIDs = Set(activeMedia.map(\.localIdentifier))
         let nextSortOrder = (activeMedia.map(\.sortOrder).max() ?? -1) + 1
@@ -537,6 +583,19 @@ struct ItemEditorView: View {
             reference.itineraryItem = target
             target.media.append(reference)
         }
+        let orderedMedia = target.media.filter { !removedMediaIDs.contains($0.id) }.sorted {
+            let left = mediaOrder.firstIndex(of: $0.localIdentifier) ?? (mediaOrder.count + $0.sortOrder)
+            let right = mediaOrder.firstIndex(of: $1.localIdentifier) ?? (mediaOrder.count + $1.sortOrder)
+            return left == right ? MediaReference.precedes($0, $1) : left < right
+        }
+        for (index, reference) in orderedMedia.enumerated() { reference.sortOrder = index }
+        do { try modelContext.save() } catch {
+            mediaWarning = "保存失败：\(error.localizedDescription)"
+            return
+        }
+        onSaved?()
+        let key = mode == .favorite ? "favorite:\(target.id.uuidString.lowercased())" : (target.day?.trip).map { "trip:\($0.id.uuidString.lowercased())" }
+        if let key { Task { await CloudSyncService.shared.uploadPending(context: modelContext, key: key, entityID: mode == .favorite ? nil : target.id) } }
         dismiss()
     }
 }
@@ -821,5 +880,63 @@ private struct SingleItinerarySmartImportView: View {
                 errorMessage = error.localizedDescription
             }
         }
+    }
+}
+
+// Local gestures avoid Form promoting a transferable drag to the entire list row.
+private struct MediaCellFrames: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+struct ReorderableMediaGrid<Tile: View, AddTile: View>: View {
+    let assets: [AssetMediaPreviewItem]
+    @Binding var order: [String]
+    @ViewBuilder let tile: (AssetMediaPreviewItem) -> Tile
+    @ViewBuilder let addTile: () -> AddTile
+    @State private var spaceID = UUID()
+    @State private var frames: [String: CGRect] = [:]
+    @State private var draggedID: String?
+    @State private var origin: CGPoint?
+    @GestureState private var dragging = false
+
+    static func ordered(_ assets: [AssetMediaPreviewItem], order: [String]) -> [AssetMediaPreviewItem] {
+        let ids = order.filter { id in assets.contains { $0.identifier == id } }
+            + assets.map(\.identifier).filter { !order.contains($0) }
+        return ids.compactMap { id in assets.first { $0.identifier == id } }
+    }
+    var body: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
+            ForEach(Self.ordered(assets, order: order)) { asset in
+                tile(asset)
+                    .contentShape(Rectangle())
+                    .background(GeometryReader { proxy in
+                        Color.clear.preference(key: MediaCellFrames.self, value: [asset.identifier: proxy.frame(in: .named(spaceID))])
+                    })
+                    .overlay { if draggedID == asset.identifier { RoundedRectangle(cornerRadius: 12).stroke(Color.tripLake, lineWidth: 3).allowsHitTesting(false) } }
+                    .simultaneousGesture(LongPressGesture(minimumDuration: 0.3).sequenced(before: DragGesture(minimumDistance: 0, coordinateSpace: .named(spaceID)))
+                        .updating($dragging) { value, state, _ in if case .second(true, _) = value { state = true } }
+                        .onChanged { value in
+                            guard case .second(true, let drag?) = value else { return }
+                            if draggedID == nil {
+                                draggedID = asset.identifier
+                                origin = drag.startLocation
+                            }
+                            guard draggedID == asset.identifier, origin != nil else { return }
+                            let point = drag.location
+                            guard let target = frames.first(where: { $0.key != asset.identifier && $0.value.contains(point) })?.key else { return }
+                            var ids = Self.ordered(assets, order: order).map(\.identifier)
+                            guard let from = ids.firstIndex(of: asset.identifier), let to = ids.firstIndex(of: target) else { return }
+                            ids.remove(at: from); ids.insert(asset.identifier, at: to)
+                            withAnimation(.easeInOut(duration: 0.15)) { order = ids }
+                        }
+                        .onEnded { _ in draggedID = nil; origin = nil })
+            }
+            addTile()
+        }
+        .coordinateSpace(name: spaceID)
+        .onPreferenceChange(MediaCellFrames.self) { frames = $0 }
+        .onChange(of: dragging) { _, active in if !active { draggedID = nil; origin = nil } }
     }
 }

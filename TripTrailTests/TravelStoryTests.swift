@@ -4,6 +4,156 @@ import XCTest
 
 @MainActor
 final class TravelStoryTests: XCTestCase {
+    func testFootprintTypeUsesCanonicalArrangementMetadataInsteadOfMemory() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "类型测试", destination: "宁夏", startDate: now, endDate: now)
+        let day = TripDay(date: now, title: "", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(title: "游览", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        item.note = "参观寺庙"; item.journalNote = "山水风景"
+        day.items = [item]; trip.days = [day]; context.insert(trip)
+        try UnifiedJourneyService.reconcile(context: context)
+        let entry = try XCTUnwrap(context.fetch(FetchDescriptor<TravelStory>()).first?.entries.first)
+        XCTAssertEqual(entry.attractionTypeRaw, item.attractionTypeRaw)
+        XCTAssertEqual(entry.arrangementSymbol, item.arrangementSymbol)
+        entry.note = "海边回忆"
+        XCTAssertEqual(entry.arrangementSymbol, item.arrangementSymbol)
+        XCTAssertEqual(item.note, "参观寺庙")
+    }
+
+    func testShareSelectionFiltersArrangementsAndMediaWithoutChangingSource() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "范围测试", destination: "宁夏", startDate: now, endDate: now)
+        let day = TripDay(date: now, title: "当天", sortOrder: 0, trip: trip)
+        let chosen = ItineraryItem(title: "选择的安排", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        let other = ItineraryItem(title: "不分享的安排", category: .attraction, startTime: now, endTime: now, sortOrder: 1)
+        let image = MediaReference(localIdentifier: "image", kind: .image, sortOrder: 0)
+        let video = MediaReference(localIdentifier: "video", kind: .video, sortOrder: 1)
+        chosen.media = [image, video]; day.items = [chosen, other]; trip.days = [day]; context.insert(trip)
+        try UnifiedJourneyService.reconcile(context: context)
+        let story = try XCTUnwrap(context.fetch(FetchDescriptor<TravelStory>()).first)
+        for data in [try SharedJourneyService.makeShareData(trip: trip, selectedItemIDs: [chosen.id], includeMedia: true), try SharedJourneyService.makeShareData(story: story, selectedItemIDs: [chosen.id], includeMedia: true)] {
+            let filtered = try SharedJourneyService.excludingMedia([image.id], from: data)
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: filtered) as? [String: Any])
+            if let exported = root["trip"] as? [String: Any] {
+                let days = try XCTUnwrap(exported["days"] as? [[String: Any]])
+                let items = try XCTUnwrap(days.first?["items"] as? [[String: Any]])
+                XCTAssertEqual(items.count, 1)
+                XCTAssertEqual((items.first?["media"] as? [[String: Any]])?.count, 1)
+            } else {
+                let exported = try XCTUnwrap(root["story"] as? [String: Any])
+                let entries = try XCTUnwrap(exported["entries"] as? [[String: Any]])
+                XCTAssertEqual(entries.count, 1)
+                XCTAssertEqual((entries.first?["media"] as? [[String: Any]])?.count, 1)
+            }
+            XCTAssertFalse(String(decoding: filtered, as: UTF8.self).contains(image.id.uuidString))
+        }
+        let hidden = try SharedJourneyService.filterShareFields([], from: SharedJourneyService.makeShareData(trip: trip, selectedItemIDs: [chosen.id], includeMedia: true))
+        _ = try SharedJourneyService.inspect(hidden)
+        let hiddenRoot = try XCTUnwrap(JSONSerialization.jsonObject(with: hidden) as? [String: Any])
+        let hiddenTrip = try XCTUnwrap(hiddenRoot["trip"] as? [String: Any])
+        let hiddenDays = try XCTUnwrap(hiddenTrip["days"] as? [[String: Any]])
+        let hiddenItems = try XCTUnwrap(hiddenDays.first?["items"] as? [[String: Any]])
+        XCTAssertEqual(hiddenItems.first?["title"] as? String, "")
+        XCTAssertEqual((hiddenItems.first?["media"] as? [Any])?.count, 0)
+        let card = ShareCardData(trip: trip, selectedItemIDs: [chosen.id], fields: [])
+        XCTAssertEqual(card.sections.first?.items.first?.title, "")
+        XCTAssertEqual(card.sections.first?.items.first?.time, "")
+        XCTAssertTrue(card.photoAssetIdentifiers.isEmpty)
+        XCTAssertEqual(day.items.count, 2)
+        XCTAssertEqual(chosen.media.count, 2)
+    }
+
+    func testUnifiedMediaDeletionRemovesSharedReferenceAndSurvivesCloudRoundTrip() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "媒体删除", destination: "宁夏", startDate: now, endDate: now)
+        let day = TripDay(date: now, title: "", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(title: "安排", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        let image = MediaReference(localIdentifier: "image", kind: .image, sortOrder: 0)
+        let video = MediaReference(localIdentifier: "video", kind: .video, sortOrder: 1)
+        let removedID = image.id; let retainedID = video.id
+        item.media = [image, video]; day.items = [item]; trip.days = [day]; context.insert(trip)
+        try UnifiedJourneyService.reconcile(context: context)
+        let story = try XCTUnwrap(context.fetch(FetchDescriptor<TravelStory>()).first)
+        let entry = try XCTUnwrap(story.entries.first)
+        UnifiedJourneyService.removeMedia(ids: [removedID], from: entry, context: context)
+        try context.save()
+        XCTAssertEqual(entry.media.map(\.id), [retainedID])
+        XCTAssertEqual(item.media.map(\.id), [retainedID])
+        XCTAssertFalse(try context.fetch(FetchDescriptor<MediaReference>()).contains { $0.id == removedID })
+        let record = try XCTUnwrap(CloudRecordAdapter.records(context).first)
+        try CloudRecordAdapter.apply(record.data, kind: "trip", context: context)
+        XCTAssertEqual(entry.media.map(\.id), [retainedID])
+        let restoredVideoID = entry.media.first!.id
+        UnifiedJourneyService.removeMedia(ids: [restoredVideoID], from: entry, context: context)
+        try UnifiedJourneyService.reconcile(context: context)
+        XCTAssertTrue(entry.media.isEmpty)
+        XCTAssertTrue(trip.allItems.first!.media.isEmpty)
+    }
+
+    func testUnifiedJourneyAdaptersShareEditsAndSurviveRemoteReplacement() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "测试", destination: "宁夏", startDate: now, endDate: now)
+        let day = TripDay(date: now, title: "第一天", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(title: "原安排", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        day.items = [item]; trip.days = [day]; context.insert(trip)
+        try UnifiedJourneyService.reconcile(context: context)
+        let story = try XCTUnwrap(context.fetch(FetchDescriptor<TravelStory>()).first)
+        let entry = try XCTUnwrap(story.entries.first)
+        entry.note = "旅行记忆"; entry.title = "更新安排"
+        item.note = "原补充说明"
+        XCTAssertEqual(entry.arrangementNote, "原补充说明")
+        entry.arrangementNote = "更新补充说明"
+        XCTAssertEqual(item.note, "更新补充说明")
+        XCTAssertEqual(item.journalNote, "旅行记忆")
+        XCTAssertEqual(item.title, "更新安排")
+        item.placeName = "沙湖"
+        XCTAssertEqual(entry.placeName, "沙湖")
+        let originalItemID = item.id
+        let records = try CloudRecordAdapter.records(context)
+        XCTAssertEqual(records.map(\.kind), ["trip"])
+        try CloudRecordAdapter.apply(try XCTUnwrap(records.first).data, kind: "trip", context: context)
+        XCTAssertEqual(entry.title, "更新安排")
+        XCTAssertEqual(entry.note, "旅行记忆")
+        XCTAssertEqual(entry.arrangementNote, "更新补充说明")
+        XCTAssertEqual(entry.journeyItem?.id, originalItemID)
+        let replacement = try XCTUnwrap(trip.allItems.first)
+        trip.days.first?.items.removeAll()
+        context.delete(replacement)
+        try UnifiedJourneyService.reconcile(context: context)
+        XCTAssertTrue(story.entries.isEmpty)
+    }
+
+    func testUnifiedJourneyMigratesLegacyMemoryWithoutReplacingItinerary() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "计划", destination: "宁夏", startDate: now, endDate: now)
+        let day = TripDay(date: now, title: "第一天", sortOrder: 0, trip: trip)
+        let item = ItineraryItem(title: "真实安排", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        item.note = "计划备注"; day.items = [item]; trip.days = [day]; context.insert(trip)
+        let story = TravelStory(title: "旧足迹", destination: "宁夏", startDate: now, endDate: now, summary: "游记")
+        story.sourceTripID = trip.id
+        let legacyDay = StoryDay(date: now, title: "旧当天", sortOrder: 0, sourceDayID: day.id, story: story)
+        let entry = StoryEntry(title: "旧安排", category: .attraction, sortOrder: 0)
+        entry.sourceItemID = item.id; entry.note = "旧回忆"; entry.story = story; entry.storyDay = legacyDay
+        legacyDay.entries = [entry]; story.days = [legacyDay]; story.entries = [entry]; context.insert(story)
+        try UnifiedJourneyService.reconcile(context: context)
+        try UnifiedJourneyService.reconcile(context: context)
+        XCTAssertEqual(item.title, "真实安排")
+        XCTAssertEqual(item.note, "计划备注")
+        XCTAssertEqual(item.journalNote, "旧回忆")
+        XCTAssertEqual(trip.journalSummary, "游记")
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<TravelStory>()), 1)
+    }
+
     func testDebugRouteSamplesAreAddedOnceWithOriginAndDestination() throws {
         let calendar = Calendar(identifier: .gregorian)
         let date = try XCTUnwrap(calendar.date(from: DateComponents(year: 2026, month: 7, day: 16)))

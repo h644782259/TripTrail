@@ -1,9 +1,290 @@
 import XCTest
 import SwiftData
+import SwiftUI
 @testable import TripTrail
 
 @MainActor
 final class CloudSyncTests: XCTestCase {
+    func testConflictDiffMatchesStableIDsAndOmitsStorageMetadata() throws {
+        let remote: [String: Any] = ["id": "trip", "title": "旅程", "days": [["id": "DAY", "title": "当天", "items": [["id": "A", "title": "安排A", "note": "云端说明"], ["id": "B", "title": "安排B", "note": "相同"]]]], "media": [["id": "M", "kindRaw": "image", "sortOrder": 0, "localIdentifier": "remote", "cloudPath": "path"]]]
+        let local: [String: Any] = ["id": "trip", "title": "旅程", "days": [["id": "day", "title": "当天", "items": [["id": "b", "title": "安排B", "note": "相同"], ["id": "a", "title": "安排A", "note": "本地说明"]]]], "media": [["id": "m", "kindRaw": "image", "sortOrder": 0, "localIdentifier": "device"]]]
+        let rows = try CloudContentDifference.compare(cloud: JSONSerialization.data(withJSONObject: remote), local: JSONSerialization.data(withJSONObject: local))
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertTrue(rows[0].label.contains("安排A"))
+        XCTAssertEqual(rows[0].cloud, "云端说明")
+        XCTAssertEqual(rows[0].local, "本地说明")
+    }
+
+    func testCloudLibraryRenderingDoesNotSaveOrCreateJourneyAdapters() throws {
+        let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let context = container.mainContext
+        let now = Date()
+        let trip = Trip(title: "列表旅程", destination: "宁夏", startDate: now, endDate: now)
+        context.insert(trip)
+        try context.save()
+        for _ in 0..<20 {
+            _ = CloudLibraryEntry.entries(trips: [trip], items: [], kind: "trip")
+            _ = CloudLibraryEntry.entries(trips: [trip], items: [], kind: "story")
+        }
+        XCTAssertFalse(context.hasChanges)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TravelStory>()).isEmpty)
+    }
+
+    func testScopedBlankDayDeletionPreservesSiblingDraftAndRemoteChanges() throws {
+        let base: [String: Any] = ["id": "trip", "endDate": 2, "days": [["id": "first", "date": 1, "sortOrder": 0, "note": "saved", "items": []], ["id": "blank", "date": 2, "sortOrder": 1, "items": []]]]
+        let current: [String: Any] = ["id": "trip", "endDate": 1, "days": [["id": "first", "date": 1, "sortOrder": 0, "note": "unsubmitted", "items": []]]]
+        let selected = try XCTUnwrap(CloudJSON.scoped(base, current: current, id: "blank") as? [String: Any])
+        XCTAssertFalse(CloudJSON.containsEntity(selected, id: "blank"))
+        XCTAssertEqual(CloudJSON.findEntity(selected, id: "first")?["note"] as? String, "saved")
+        XCTAssertEqual(selected["endDate"] as? Int, 1)
+        var remote = base
+        remote["days"] = [["id": "first", "date": 1, "sortOrder": 0, "note": "remote update", "items": []], ["id": "blank", "date": 2, "sortOrder": 1, "items": []]]
+        let merged = CloudJSON.merge(base: base, local: selected, remote: remote)
+        XCTAssertTrue(merged.conflicts.isEmpty)
+        let received = try XCTUnwrap(merged.value)
+        XCTAssertFalse(CloudJSON.containsEntity(received, id: "blank"))
+        XCTAssertEqual(CloudJSON.findEntity(received, id: "first")?["note"] as? String, "remote update")
+    }
+
+    func testPhotoDisplayOrderIsStableWhenRelationshipArrivalOrderChanges() {
+        let a = MediaReference(localIdentifier: "a", kind: .image, sortOrder: 0)
+        let b = MediaReference(localIdentifier: "b", kind: .image, sortOrder: 0)
+        a.createdAt = Date(timeIntervalSince1970: 1); b.createdAt = a.createdAt
+        a.id = UUID(uuidString: "00000000-0000-0000-0000-000000000001")!
+        b.id = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+        XCTAssertEqual([b, a].sorted(by: MediaReference.precedes).map(\.id), [a, b].sorted(by: MediaReference.precedes).map(\.id))
+    }
+    func testEditorKeepsDraggedOrderAndAppendsNewPhotos() {
+        let assets = ["a", "b", "c"].map { AssetMediaPreviewItem(identifier: $0, kind: .image) }
+        let ordered = ReorderableMediaGrid<EmptyView, EmptyView>.ordered(assets, order: ["removed", "b", "a"])
+        XCTAssertEqual(ordered.map(\.identifier), ["b", "a", "c"])
+    }
+    func testCollectionArrivalOrderIsNotAnEditButPhotoOrderIs() throws {
+        let photos: [[String: Any]] = [["id": "a", "sortOrder": 0, "localIdentifier": "a"], ["id": "b", "sortOrder": 1, "localIdentifier": "b"]]
+        let first = try JSONSerialization.data(withJSONObject: ["id": "trip", "media": photos])
+        let reordered = try JSONSerialization.data(withJSONObject: ["id": "trip", "media": Array(photos.reversed())])
+        XCTAssertEqual(try CloudJSON.fingerprint(first), try CloudJSON.fingerprint(reordered))
+        var changed = photos; changed[0]["sortOrder"] = 1; changed[1]["sortOrder"] = 0
+        XCTAssertNotEqual(try CloudJSON.fingerprint(first), try CloudJSON.fingerprint(JSONSerialization.data(withJSONObject: ["id": "trip", "media": changed])))
+    }
+    func testThreeWayMergeIndependentFieldsAndEntities() throws {
+        let base: [String: Any] = ["id": "trip", "items": [["id": "a", "note": "old", "title": "old"], ["id": "b", "note": "old"]]]
+        let local: [String: Any] = ["id": "trip", "items": [["id": "a", "note": "local", "title": "old"], ["id": "b", "note": "old"]]]
+        let remote: [String: Any] = ["id": "trip", "items": [["id": "b", "note": "remote"], ["id": "a", "note": "old", "title": "remote title"]]]
+        let result = CloudJSON.merge(base: base, local: local, remote: remote)
+        XCTAssertTrue(result.conflicts.isEmpty)
+        let a = try XCTUnwrap(CloudJSON.findEntity(result.value!, id: "a"))
+        XCTAssertEqual(a["note"] as? String, "local")
+        XCTAssertEqual(a["title"] as? String, "remote title")
+        XCTAssertEqual(CloudJSON.findEntity(result.value!, id: "b")?["note"] as? String, "remote")
+    }
+    func testConflictChoicePreservesNonConflictingFields() throws {
+        let base: [String: Any] = ["id": "a", "note": "old", "title": "old", "address": "old"]
+        let local: [String: Any] = ["id": "a", "note": "local", "title": "local", "address": "old"]
+        let remote: [String: Any] = ["id": "a", "note": "remote", "title": "old", "address": "remote"]
+        for preferLocal in [true, false] {
+            let result = CloudJSON.merge(base: base, local: local, remote: remote, preferLocal: preferLocal)
+            XCTAssertEqual(result.conflicts, ["/note"])
+            let value = try XCTUnwrap(result.value as? [String: Any])
+            XCTAssertEqual(value["note"] as? String, preferLocal ? "local" : "remote")
+            XCTAssertEqual(value["title"] as? String, "local")
+            XCTAssertEqual(value["address"] as? String, "remote")
+        }
+    }
+    func testThreeWayDeletionAndConcurrentMediaAddition() throws {
+        let base: [String: Any] = ["id": "a", "note": "old"]
+        let edited: [String: Any] = ["id": "a", "note": "new"]
+        XCTAssertNil(CloudJSON.merge(base: base, local: nil, remote: base).value)
+        XCTAssertFalse(CloudJSON.merge(base: base, local: nil, remote: edited).conflicts.isEmpty)
+        let result = CloudJSON.merge(base: [] as [Any], local: [["id": "l", "localIdentifier": "device"]], remote: [["id": "r", "localIdentifier": "", "cloudPath": "remote"]])
+        XCTAssertTrue(result.conflicts.isEmpty)
+        XCTAssertEqual((result.value as? [Any])?.count, 2)
+    }
+    func testDayMetadataSaveDoesNotIncludePendingItemEdits() throws {
+        let base: [String: Any] = ["id": "day", "title": "old", "note": "旧当天说明", "items": [["id": "a", "note": "old"]]]
+        let local: [String: Any] = ["id": "day", "title": "new", "note": "新当天说明", "items": [["id": "a", "note": "pending"]]]
+        let selected = try XCTUnwrap(CloudJSON.scoped(base, current: local, id: "day"))
+        XCTAssertEqual(CloudJSON.findEntity(selected, id: "a")?["note"] as? String, "old")
+        XCTAssertEqual((selected as? [String: Any])?["title"] as? String, "new")
+        XCTAssertEqual((selected as? [String: Any])?["note"] as? String, "新当天说明")
+        let selectedItem = try XCTUnwrap(CloudJSON.scoped(["id": "trip", "days": []], current: ["id": "trip", "days": [local]], id: "a"))
+        XCTAssertEqual(CloudJSON.findEntity(selectedItem, id: "a")?["note"] as? String, "pending")
+    }
+    func testScopedSaveMergesCloudAndRetainsUnsubmittedSibling() async throws {
+        let date = Calendar.current.startOfDay(for: Date(timeIntervalSince1970: 1_790_000_000))
+        let target = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let trip = Trip(title: "范围保存", destination: "旧城市", startDate: date, endDate: date)
+        let day = TripDay(date: date, title: "当天", sortOrder: 0)
+        let a = ItineraryItem(title: "安排 A", category: .restaurant, startTime: date, endTime: date.addingTimeInterval(3600), sortOrder: 0)
+        let b = ItineraryItem(title: "安排 B", category: .restaurant, startTime: date, endTime: date.addingTimeInterval(3600), sortOrder: 1)
+        let aID = a.id; let bID = b.id
+        day.items = [a, b]; a.day = day; b.day = day; trip.days = [day]; day.trip = trip
+        JourneyHierarchyService.normalizeTripDaySchedule(trip)
+        target.mainContext.insert(trip); try target.mainContext.save()
+        let original = try XCTUnwrap(CloudRecordAdapter.records(target.mainContext).first)
+        let normalized = try JSONSerialization.jsonObject(with: CloudRecordAdapter.normalized(original.data, kind: "trip"))
+        XCTAssertNotNil(CloudJSON.findEntity(normalized, id: aID.uuidString), "归一化不能丢失安排")
+        var serverValue = try JSONSerialization.jsonObject(with: original.data) as! [String: Any]
+        var revision = 1; var uploads = 0; var submitted: [String: Any]?
+        CloudStubURLProtocol.handler = { request in
+            if request.url!.path.contains("triptrail_deleted_records") { return (200, Data("[]".utf8)) }
+            if request.url!.path.contains("triptrail_patch_record") || request.url!.path.contains("triptrail_save_record") {
+                uploads += 1
+                var bytes = request.httpBody ?? Data()
+                if bytes.isEmpty, let stream = request.httpBodyStream {
+                    stream.open(); defer { stream.close() }
+                    var buffer = [UInt8](repeating: 0, count: 4096)
+                    while stream.hasBytesAvailable { let count = stream.read(&buffer, maxLength: buffer.count); if count <= 0 { break }; bytes.append(buffer, count: count) }
+                }
+                let body = try! JSONSerialization.jsonObject(with: bytes) as! [String: Any]
+                submitted = body["record_payload"] as? [String: Any]; serverValue = submitted!; revision += 1
+                return (200, try! JSONSerialization.data(withJSONObject: ["id": trip.id.uuidString, "kind": "trip", "title": "范围保存", "revision": revision, "payload": serverValue]))
+            }
+            return (200, try! JSONSerialization.data(withJSONObject: [["id": trip.id.uuidString, "kind": "trip", "title": "范围保存", "revision": revision, "payload": serverValue]]))
+        }
+        defer { CloudStubURLProtocol.handler = nil }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CloudStubURLProtocol.self]
+        let session = URLSession(configuration: config); defer { session.invalidateAndCancel() }
+        let suite = "ScopedMerge-" + UUID().uuidString; let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let initialBinding = CloudBinding(revision: 1, baseline: try original.fingerprint, origin: Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String ?? "", payload: original.data, localPayload: original.data)
+        defaults.set(try JSONEncoder().encode([original.key: initialBinding]), forKey: "cloud.relational.bindings")
+        let cloud = CloudSyncService(defaults: defaults, session: session, publicKeyOverride: "test-key")
+        // The fixture starts from a shared, already synchronized version.
+
+        let items = try target.mainContext.fetch(FetchDescriptor<ItineraryItem>())
+        items.first { $0.id == aID }!.note = "A 主动保存"
+        items.first { $0.id == bID }!.note = "B 尚未提交"
+        var remoteB = CloudJSON.findEntity(serverValue, id: bID.uuidString)!; remoteB["note"] = "B 云端修改"
+        // Change only B on the other device; A must save without uploading B's pending local edit.
+        var cloudFresh = serverValue
+        var days = cloudFresh["days"] as! [[String: Any]]
+        var cloudItems = days[0]["items"] as! [[String: Any]]
+        cloudItems = cloudItems.map { ($0["id"] as? String)?.lowercased() == bID.uuidString.lowercased() ? remoteB : $0 }
+        days[0]["items"] = cloudItems; cloudFresh["days"] = days; cloudFresh["destination"] = "云端城市"
+        serverValue = cloudFresh; revision += 1
+        let currentValue = try JSONSerialization.jsonObject(with: CloudRecordAdapter.records(target.mainContext).first!.data)
+        let selectedValue = CloudJSON.scoped(try JSONSerialization.jsonObject(with: original.data), current: currentValue, id: aID.uuidString)!
+        XCTAssertEqual(CloudJSON.findEntity(selectedValue, id: aID.uuidString)?["note"] as? String, "A 主动保存", "构建保存范围")
+        let remoteValue = try JSONSerialization.jsonObject(with: CloudRecordAdapter.normalized(JSONSerialization.data(withJSONObject: cloudFresh), kind: "trip"))
+        let mergedValue = CloudJSON.merge(base: try JSONSerialization.jsonObject(with: original.data), local: selectedValue, remote: remoteValue)
+        XCTAssertNotNil(CloudJSON.findEntity(mergedValue.value!, id: aID.uuidString), "构建合并结果")
+        await cloud.uploadPending(context: target.mainContext, key: original.key, entityID: aID)
+        XCTAssertEqual(uploads, 1)
+        XCTAssertEqual(CloudJSON.findEntity(submitted!, id: aID.uuidString)?["note"] as? String, "A 主动保存")
+        XCTAssertEqual(CloudJSON.findEntity(submitted!, id: bID.uuidString)?["note"] as? String, "B 云端修改")
+        let applied = try XCTUnwrap(CloudRecordAdapter.records(target.mainContext).first)
+        let value = try JSONSerialization.jsonObject(with: applied.data)
+        XCTAssertEqual(CloudJSON.findEntity(value, id: bID.uuidString)?["note"] as? String, "B 尚未提交")
+        XCTAssertEqual((value as? [String: Any])?["destination"] as? String, "云端城市")
+        await cloud.uploadPending(context: target.mainContext, key: original.key, entityID: aID)
+        XCTAssertEqual(uploads, 1, "同一安排未再修改时不能重复提交")
+        await cloud.uploadPending(context: target.mainContext, key: original.key, entityID: bID)
+        XCTAssertEqual(uploads, 1, "B 的冲突不能因为 A 已保存而被静默覆盖")
+        XCTAssertTrue(cloud.conflicts.contains(original.key))
+        try await cloud.resolve(original.key, useCloud: false, context: target.mainContext)
+        XCTAssertEqual(uploads, 2)
+        XCTAssertEqual(CloudJSON.findEntity(submitted!, id: bID.uuidString)?["note"] as? String, "B 尚未提交")
+    }
+
+    func testAutomaticStatusChangesDoNotMarkUneditedContentDirty() throws {
+        let base: [String: Any] = ["id": "a", "executionStatusRaw": "未开始", "isCompleted": false, "isTimePending": false]
+        var fresh = base; fresh["executionStatusRaw"] = "已完成"; fresh["isCompleted"] = true
+        let encode: ([String: Any]) throws -> Data = { try JSONSerialization.data(withJSONObject: $0) }
+        XCTAssertEqual(try CloudJSON.businessFingerprint(encode(base)), try CloudJSON.businessFingerprint(encode(fresh)))
+        var pending = base; pending["isTimePending"] = true
+        var completedPending = fresh; completedPending["isTimePending"] = true
+        XCTAssertNotEqual(try CloudJSON.businessFingerprint(encode(pending)), try CloudJSON.businessFingerprint(encode(completedPending)))
+    }
+    func testSavingOneEntityPreservesOtherPendingChanges() throws {
+        let base: [String: Any] = ["id": "trip", "title": "saved", "days": [["id": "day", "items": [["id": "a", "note": "old"], ["id": "b", "note": "old"]]]]]
+        let fresh: [String: Any] = ["id": "trip", "title": "unsaved title", "days": [["id": "day", "items": [["id": "a", "note": "saved edit"], ["id": "b", "note": "unsaved edit"], ["id": "c", "note": "new"]]]]]
+        let saved = try XCTUnwrap(CloudJSON.scoped(base, current: fresh, id: "a") as? [String: Any])
+        XCTAssertEqual(saved["title"] as? String, "saved")
+        let days = try XCTUnwrap(saved["days"] as? [[String: Any]])
+        let items = try XCTUnwrap(days[0]["items"] as? [[String: Any]])
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0]["note"] as? String, "saved edit")
+        XCTAssertEqual(items[1]["note"] as? String, "old")
+        let added = try XCTUnwrap(CloudJSON.scoped(base, current: fresh, id: "c") as? [String: Any])
+        let addedDays = try XCTUnwrap(added["days"] as? [[String: Any]])
+        XCTAssertEqual((addedDays[0]["items"] as? [[String: Any]])?.count, 3)
+    }
+
+    func testFreshInstallDownloadsDayCity() async throws {
+        let id = UUID().uuidString
+        let payload: [String: Any] = ["id": id, "title": "城市同步", "destination": "宁夏", "startDate": 1790870400000, "endDate": 1790870400000, "note": "", "createdAt": 1790870400000, "days": [["id": UUID().uuidString, "date": 1790870400000, "title": "第一天", "city": "银川", "note": "", "sortOrder": 0, "items": []]]]
+        var response = try JSONSerialization.data(withJSONObject: [["id": id, "kind": "trip", "title": "城市同步", "payload": payload, "revision": 20]])
+        var uploads = 0
+        CloudStubURLProtocol.handler = { request in
+            if (request.url!.path.contains("triptrail_save_record") || request.url!.path.contains("triptrail_patch_record")) { uploads += 1; return (409, Data("{}".utf8)) }
+            if request.url!.path.contains("triptrail_deleted_records") { return (200, Data("[]".utf8)) }
+            return (200, response)
+        }
+        defer { CloudStubURLProtocol.handler = nil }
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [CloudStubURLProtocol.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let suite = "FreshCity-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let cloud = CloudSyncService(defaults: defaults, session: session, publicKeyOverride: "test-key")
+        let target = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        await cloud.sync(context: target.mainContext, kind: "trip", automatic: true)
+        let trip = try XCTUnwrap(target.mainContext.fetch(FetchDescriptor<Trip>()).first)
+        XCTAssertEqual(trip.sortedDays.first?.city, "银川")
+        let saved = try XCTUnwrap(CloudRecordAdapter.records(target.mainContext).first)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: saved.data) as? [String: Any])
+        XCTAssertEqual((object["days"] as? [[String: Any]])?.first?["city"] as? String, "银川")
+        trip.note = "本地编辑"
+        var conflictingPayload = payload; conflictingPayload["note"] = "云端编辑"
+        response = try JSONSerialization.data(withJSONObject: [["id": id, "kind": "trip", "title": "城市同步", "payload": conflictingPayload, "revision": 21]])
+        await cloud.uploadPending(context: target.mainContext)
+        XCTAssertEqual(uploads, 0)
+        XCTAssertTrue(cloud.conflicts.contains(saved.key))
+        XCTAssertEqual(trip.note, "本地编辑")
+        XCTAssertEqual(trip.sortedDays.first?.city, "银川")
+        let preview = try await cloud.previewCloudVersion(id: trip.id, kind: "trip")
+        XCTAssertEqual(preview.revision, 21)
+        XCTAssertEqual(trip.note, "本地编辑", "读取预览不能覆盖本地")
+        XCTAssertEqual(uploads, 0)
+        try await cloud.replaceWithPreview(preview, context: target.mainContext)
+        XCTAssertEqual(trip.note, "云端编辑")
+        XCTAssertEqual(trip.sortedDays.first?.city, "银川")
+        XCTAssertFalse(cloud.conflicts.contains(saved.key))
+        XCTAssertEqual(uploads, 0, "覆盖本地不能写入云端")
+        let pureLocal = Trip(title: "仅本地", destination: "成都", startDate: Date(), endDate: Date())
+        target.mainContext.insert(pureLocal)
+        var newerPayload = payload
+        newerPayload["note"] = "云端新说明"
+        response = try JSONSerialization.data(withJSONObject: [["id": id, "kind": "trip", "title": "城市同步", "payload": newerPayload, "revision": 22]])
+        await cloud.sync(context: target.mainContext, kind: "trip")
+        XCTAssertEqual(trip.note, "云端新说明", "本地未改时应自动读取云端更新")
+        XCTAssertFalse(cloud.conflicts.contains(saved.key))
+        await cloud.pullAllCloudVersions(context: target.mainContext)
+        XCTAssertEqual(trip.note, "云端新说明")
+        XCTAssertEqual(trip.sortedDays.first?.city, "银川")
+        XCTAssertTrue(try target.mainContext.fetch(FetchDescriptor<Trip>()).contains { $0.id == pureLocal.id })
+        XCTAssertFalse(cloud.conflicts.contains(saved.key))
+        XCTAssertEqual(uploads, 0, "全局拉取不能上传本地内容")
+        trip.note = "只在本地修改"
+        newerPayload["note"] = trip.note
+        let uploadedResponse = try JSONSerialization.data(withJSONObject: ["id": id, "kind": "trip", "title": "城市同步", "payload": newerPayload, "revision": 23])
+        CloudStubURLProtocol.handler = { request in
+            if request.url!.path.contains("triptrail_deleted_records") { return (200, Data("[]".utf8)) }
+            if (request.url!.path.contains("triptrail_save_record") || request.url!.path.contains("triptrail_patch_record")) { uploads += 1; return (200, uploadedResponse) }
+            return (200, response)
+        }
+        await cloud.uploadPending(context: target.mainContext)
+        XCTAssertEqual(uploads, 1, "云端未变时本地编辑在主动保存时应上传")
+        XCTAssertFalse(cloud.conflicts.contains(saved.key))
+        XCTAssertEqual(cloud.bindings[saved.key]?.revision, 23)
+        await cloud.uploadPending(context: target.mainContext)
+        XCTAssertEqual(uploads, 1, "成功上传后不应重复上传")
+
+    }
+
     func testSharedMediaPathAllowsOriginalRecordAndRejectsUnsafePaths() {
         let path = UUID().uuidString.lowercased() + "/" + String(repeating: "a", count: 64) + ".jpg"
         XCTAssertTrue(CloudJSON.isValidMediaPath(path))
@@ -218,7 +499,7 @@ final class CloudSyncTests: XCTestCase {
                 if path.contains("trash_record") { deleted.insert(id) } else { deleted.remove(id) }
                 return (200, Data("null".utf8))
             }
-            if path.contains("triptrail_save_record") { writes += 1; return (410, Data("{}".utf8)) }
+            if (path.contains("triptrail_save_record") || path.contains("triptrail_patch_record")) { writes += 1; return (410, Data("{}".utf8)) }
             if path.contains("triptrail_deleted_records") {
                 let rows: [[String: Any]] = records.filter { deleted.contains($0.id.uuidString.lowercased()) }.map {
                     ["id": $0.id.uuidString, "kind": $0.kind, "title": $0.title, "expires_at_ms": Date().addingTimeInterval(86400).timeIntervalSince1970 * 1000]

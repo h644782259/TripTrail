@@ -195,7 +195,14 @@ struct ScreenshotItineraryImportView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    Picker("地点类型", selection: item.locationMode) {
+                    Picker("地点类型", selection: Binding(get: { item.wrappedValue.locationMode }, set: { selected in
+                        guard selected != item.wrappedValue.locationMode else { return }
+                        item.wrappedValue.locationMode = selected
+                        item.wrappedValue.placeName = ""; item.wrappedValue.placeAddress = ""
+                        item.wrappedValue.originName = ""; item.wrappedValue.originAddress = ""
+                        item.wrappedValue.destinationName = ""; item.wrappedValue.destinationAddress = ""
+                        item.wrappedValue.address = ""
+                    })) {
                         ForEach(ArrangementLocationMode.allCases) { mode in
                             Text(mode.rawValue).tag(mode)
                         }
@@ -206,11 +213,7 @@ struct ScreenshotItineraryImportView: View {
                             editorFieldLabel("地点名称")
                             TextField("例如：上海世纪公园", text: item.placeName).clearableText(item.placeName)
                         }
-                        VStack(alignment: .leading, spacing: 6) {
-                            editorFieldLabel("详细地址（选填）")
-                            TextField("用于提高地图匹配准确度", text: item.placeAddress, axis: .vertical).clearableText(item.placeAddress)
-                                .lineLimit(1...3)
-                        }
+
                     } else {
                         locationFields(title: "出发地", name: item.originName, address: item.originAddress)
                         locationFields(title: "目的地", name: item.destinationName, address: item.destinationAddress)
@@ -360,8 +363,6 @@ struct ScreenshotItineraryImportView: View {
         VStack(alignment: .leading, spacing: 8) {
             editorFieldLabel(title)
             TextField("地点名称", text: name).clearableText(name)
-            TextField("详细地址（选填）", text: address, axis: .vertical).clearableText(address)
-                .lineLimit(1...3)
         }
     }
 }

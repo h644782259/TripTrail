@@ -3,6 +3,42 @@ import XCTest
 
 @MainActor
 final class AmapServiceTests: XCTestCase {
+    func testSavedLocationKeepsOnlyTheSelectedMode() {
+        let item = ItineraryItem(title: "安排", category: .transport, startTime: Date(), endTime: Date(), sortOrder: 0)
+        item.placeName = "旧地点"; item.placeAddress = "旧地址"
+        item.originName = "出发地"; item.destinationName = "目的地"; item.destinationAddress = "目的地地址"
+        item.locationMode = .route
+        item.retainSelectedLocation()
+        XCTAssertEqual(item.placeName, "")
+        XCTAssertEqual(item.placeAddress, "")
+        XCTAssertEqual(item.address, "目的地地址")
+        XCTAssertEqual(item.locationTargets.map(\.name), ["出发地", "目的地"])
+        item.locationMode = .single; item.placeName = "新地点"
+        item.retainSelectedLocation()
+        XCTAssertEqual(item.originName, "")
+        XCTAssertEqual(item.destinationName, "")
+        XCTAssertEqual(item.destinationAddress, "")
+        XCTAssertEqual(item.locationTargets.map(\.name), ["新地点"])
+    }
+
+    func testUntitledLocationIsNotInferredFromArrangementTitle() {
+        let now = Date()
+        let missing = ItineraryItem(title: "游览沙湖", category: .attraction, startTime: now, endTime: now, sortOrder: 0)
+        missing.placeName = "  \n"
+        XCTAssertTrue(missing.locationTargets.isEmpty)
+        XCTAssertNil(missing.primaryNavigationTarget)
+        XCTAssertEqual(missing.locationSummary, "")
+        let located = ItineraryItem(title: "吃午饭", category: .restaurant, startTime: now, endTime: now, sortOrder: 1)
+        located.placeName = "餐厅"
+        let day = TripDay(date: now, title: "", sortOrder: 0)
+        day.items = [missing, located]
+        XCTAssertEqual(ItineraryRoutePlanning.points(in: [day]).map(\.itemID), [located.id])
+        let entry = StoryEntry(title: "游览沙湖", category: .attraction, sortOrder: 0)
+        XCTAssertTrue(entry.locationTargets.isEmpty)
+        missing.placeAddress = "宁夏银川市某街1号"
+        XCTAssertEqual(missing.locationTargets.first?.displayName, missing.placeAddress)
+    }
+
     func testAdjacentStopsCollapseButReturnVisitRemains() throws {
         let a = AmapStop(name: "A", address: "", latitude: 30, longitude: 120)
         let b = AmapStop(name: "B", address: "", latitude: 31, longitude: 121)
@@ -37,7 +73,7 @@ final class AmapServiceTests: XCTestCase {
         XCTAssertEqual(query["dname"], "杭州东站")
         XCTAssertEqual(query["dlat"], "30.292003")
         XCTAssertEqual(query["dlon"], "120.21212")
-        XCTAssertEqual(query["dev"], "1")
+        XCTAssertEqual(query["dev"], "0")
         XCTAssertEqual(query["t"], "2")
         XCTAssertNil(query["poiname"])
         XCTAssertNil(query["style"])
@@ -114,7 +150,7 @@ final class AmapServiceTests: XCTestCase {
         XCTAssertEqual(query["vianames"], "武康大楼|外滩")
         XCTAssertEqual(query["vialons"], "121.4372|121.4908")
         XCTAssertEqual(query["vialats"], "31.2014|31.2401")
-        XCTAssertEqual(query["dev"], "1")
+        XCTAssertEqual(query["dev"], "0")
         XCTAssertEqual(query["t"], "0")
     }
 

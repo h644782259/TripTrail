@@ -5,9 +5,12 @@ import UniformTypeIdentifiers
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @AppStorage(EnhancedRecognitionSettings.enabledDefaultsKey)
-    private var enhancedRecognitionEnabled = ZhipuAPIKeyStore.hasAPIKey
+    private var enhancedRecognitionEnabled = EnhancedRecognitionSettings.isEnabled
     @State private var storageUsage = CloudSyncService.shared.cachedStorageUsage()
     @State private var storageUsageUnavailable = false
+    @State private var cleaningCloud = false
+    @State private var cleanupFiles: [[String: String]] = []
+    @State private var confirmsCloudCleanup = false
     @State private var message: String?
     @State private var pendingBackupAction: Int?
     @State private var choosingBackupDestination = false
@@ -19,6 +22,7 @@ struct SettingsView: View {
     @State private var temporaryFiles = TemporaryFileOwner()
     @State private var backupTemporaryURL: URL?
     @State private var backupExportResult: BackupExportResult?
+    @State private var backupProgressText = "正在准备备份…"
     @State private var isPreparingBackup = false
     @State private var preparedBackupMediaCount = 0
     @State private var skippedBackupMedia: [String] = []
@@ -31,18 +35,10 @@ struct SettingsView: View {
     @State private var pendingSharedJourneySummary: SharedJourneySummary?
     @State private var isConfirmingSharedJourney = false
     @State private var showsCreatorReward = false
-    @State private var zhipuAPIKeyInput = ZhipuAPIKeyStore.load() ?? ""
-    @State private var deepSeekAPIKeyInput = DeepSeekAPIKeyStore.load() ?? ""
     @AppStorage(EnhancedRecognitionSettings.providerDefaultsKey) private var recognitionProvider = EnhancedRecognitionSettings.Provider.zhipu.rawValue
-    @State private var isZhipuAPIKeyVisible = false
-    @State private var hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
-    @State private var isZhipuAPIKeyDirty = false
-    @State private var apiKeySaveTask: Task<Void, Never>?
-    @FocusState private var isZhipuAPIKeyFocused: Bool
 
     var body: some View {
         List {
-            Section { NavigationLink("☁️ 云端数据") { CloudDataView() } }
             Section("旅行概览") {
                 NavigationLink {
                     TripStatisticsView()
@@ -63,47 +59,42 @@ struct SettingsView: View {
                             Text(provider.displayName).tag(provider.rawValue)
                         }
                     }
-                    .onChange(of: recognitionProvider) { _, _ in
-                        finishEditingAPIKeys()
-                        hasZhipuAPIKey = !activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    }
-                    HStack(spacing: 10) {
-                        Group {
-                            if isZhipuAPIKeyVisible {
-                                TextField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding).clearableText(activeAPIKeyBinding, minimumHeight: 0)
-                            } else {
-                                SecureField(activeProvider.apiKeyLabel, text: activeAPIKeyBinding).clearableText(activeAPIKeyBinding, minimumHeight: 0)
-                            }
-                        }
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .textContentType(.oneTimeCode)
-                        .privacySensitive()
-                        .focused($isZhipuAPIKeyFocused)
 
-                        Button {
-                            isZhipuAPIKeyVisible.toggle()
-                        } label: {
-                            Image(systemName: isZhipuAPIKeyVisible ? "eye.slash" : "eye")
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel(isZhipuAPIKeyVisible ? "隐藏 API Key" : "显示 API Key")
-                    }
-                    .onChange(of: zhipuAPIKeyInput) { _, newValue in
-                        handleAPIKeyInputChange(newValue)
-                    }
                 }
             } header: {
                 Text("智能识别")
             }
 
             Section {
-                NavigationLink { RecycleBinView() } label: { Label("回收站", systemImage: "trash") }
+                NavigationLink { CloudDataView() } label: { Label("云端数据", systemImage: "cloud") }
+                LabeledContent("云端数据库", value: storageUsage.map { CloudStorageUsage.formatted($0.database_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
+                LabeledContent("云端对象存储", value: storageUsage.map { CloudStorageUsage.formatted($0.object_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
+                if let usage = storageUsage {
+                    Text("统计于 \(usage.measuredAt.formatted(date: .abbreviated, time: .shortened)) · 每日更新")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Button { showsBackupManager = true } label: { Label("备份管理", systemImage: "clock.arrow.circlepath") }.disabled(isPreparingBackup)
                 Button { importRequest = DocumentImportRequest(kind: .sharedJourney) } label: {
                     Label("导入分享文件", systemImage: "square.and.arrow.down.on.square")
                 }
+                Button {
+                    cleaningCloud = true
+                    Task {
+                        defer { cleaningCloud = false }
+                        do {
+                            cleanupFiles = try await CloudSyncService.shared.previewUnusedCloudFiles()
+                            if cleanupFiles.isEmpty { message = "暂无可清理文件。文件需闲置超过 7 天，并经过至少 24 小时的两次检查。" }
+                            else { confirmsCloudCleanup = true }
+
+                        } catch { message = "检查失败，请确认云端清理功能已启用后重试。" }
+                    }
+                } label: {
+                    HStack {
+                        Label(cleaningCloud ? "正在清理云端…" : "清理云端闲置文件", systemImage: "sparkles")
+                        if cleaningCloud { Spacer(); ProgressView() }
+                    }
+                }.disabled(cleaningCloud)
+                NavigationLink { RecycleBinView() } label: { Label("回收站", systemImage: "trash") }
             } header: {
                 Text("数据管理")
             }
@@ -132,45 +123,41 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
                 LabeledContent("版本", value: "0.1.0")
                 LabeledContent("系统要求", value: "iOS 17+")
-                LabeledContent("云端数据库", value: storageUsage.map { CloudStorageUsage.formatted($0.database_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
-                LabeledContent("云端对象存储", value: storageUsage.map { CloudStorageUsage.formatted($0.object_bytes) } ?? (storageUsageUnavailable ? "暂不可用" : "加载中"))
-                if let usage = storageUsage {
-                    Text("统计于 \(usage.measuredAt.formatted(date: .abbreviated, time: .shortened)) · 每日更新")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
+
             }
         }
         .task {
             do { storageUsage = try await CloudSyncService.shared.storageUsage(); storageUsageUnavailable = false }
             catch { storageUsageUnavailable = true }
         }
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear {
-            hasZhipuAPIKey = !activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            if !hasZhipuAPIKey {
-                enhancedRecognitionEnabled = false
-            }
-        }
-        .onChange(of: enhancedRecognitionEnabled) { _, isEnabled in
-            if isEnabled, !hasZhipuAPIKey {
-                Task { @MainActor in
-                    await Task.yield()
-                    isZhipuAPIKeyFocused = true
+        .safeAreaInset(edge: .bottom) {
+            if isPreparingBackup {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(backupProgressText).font(.subheadline)
+                    ProgressView().progressViewStyle(.linear)
+                    Text("请稍候，完成后会提示结果").font(.caption).foregroundStyle(.secondary)
                 }
-            } else if !isEnabled {
-                isZhipuAPIKeyFocused = false
-                flushPendingZhipuAPIKeyChange()
+                .padding().background(.regularMaterial)
             }
         }
-        .onChange(of: isZhipuAPIKeyFocused) { wasFocused, isFocused in
-            guard wasFocused, !isFocused else { return }
-            finishEditingZhipuAPIKey()
-        }
-        .onDisappear {
-            finishEditingZhipuAPIKey()
-        }
+        .navigationBarTitleDisplayMode(.inline)
         .safeAreaInset(edge: .bottom) {
             Color.clear.frame(height: 72)
+        }
+        .confirmationDialog("清理云端闲置文件？", isPresented: $confirmsCloudCleanup, titleVisibility: .visible) {
+            Button("确认清理", role: .destructive) {
+                cleaningCloud = true
+                Task {
+                    defer { cleaningCloud = false; cleanupFiles = [] }
+                    do {
+                        let count = try await CloudSyncService.shared.cleanUnusedCloudFiles(cleanupFiles)
+                        message = "已清理 \(count) 个文件。重新被引用的文件会自动跳过。"
+                    } catch { message = "清理未完成，可重新检查后重试。" }
+                }
+            }
+            Button("取消", role: .cancel) { cleanupFiles = [] }
+        } message: {
+            Text("待清理：\(cleanupFiles.filter { $0["bucket"] == "triptrail-media" }.count) 个未引用图片/视频文件，\(cleanupFiles.filter { $0["bucket"] == "triptrail-backups" }.count) 个无备份记录的残留文件。有效内容、备份和回收站资源不会删除。清理不可撤销。")
         }
         .alert("提示", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好", role: .cancel) { message = nil }
@@ -248,76 +235,8 @@ struct SettingsView: View {
         }
     }
 
-    private func handleAPIKeyInputChange(_ value: String) {
-        apiKeySaveTask?.cancel()
-        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        hasZhipuAPIKey = !candidate.isEmpty
-        isZhipuAPIKeyDirty = true
-
-        apiKeySaveTask = Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(600))
-            guard !Task.isCancelled else { return }
-            guard candidate == activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines) else { return }
-            if persistAPIKey(candidate) {
-                isZhipuAPIKeyDirty = false
-                apiKeySaveTask = nil
-            }
-        }
-    }
-
-    @discardableResult
-    private func persistZhipuAPIKey(_ key: String) -> Bool {
-        do {
-            if key.isEmpty {
-                try ZhipuAPIKeyStore.delete()
-            } else {
-                try ZhipuAPIKeyStore.save(key)
-            }
-            return true
-        } catch {
-            hasZhipuAPIKey = ZhipuAPIKeyStore.hasAPIKey
-            message = error.localizedDescription
-            return false
-        }
-    }
-
-    private var activeProvider: EnhancedRecognitionSettings.Provider { EnhancedRecognitionSettings.Provider(rawValue: recognitionProvider) ?? .zhipu }
-    private var activeAPIKeyInput: String { activeProvider == .zhipu ? zhipuAPIKeyInput : deepSeekAPIKeyInput }
-    private var activeAPIKeyBinding: Binding<String> {
-        Binding(get: { activeAPIKeyInput }, set: { value in
-            if activeProvider == .zhipu { zhipuAPIKeyInput = value } else { deepSeekAPIKeyInput = value }
-            handleAPIKeyInputChange(value)
-        })
-    }
-    private func persistAPIKey(_ key: String) -> Bool {
-        do {
-            if activeProvider == .zhipu { try key.isEmpty ? ZhipuAPIKeyStore.delete() : ZhipuAPIKeyStore.save(key) }
-            else { try key.isEmpty ? DeepSeekAPIKeyStore.delete() : DeepSeekAPIKeyStore.save(key) }
-            return true
-        } catch { message = error.localizedDescription; return false }
-    }
-    private func finishEditingAPIKeys() { flushPendingZhipuAPIKeyChange() }
-
-    private func finishEditingZhipuAPIKey() {
-        let candidate = flushPendingZhipuAPIKeyChange()
-        if candidate.isEmpty {
-            enhancedRecognitionEnabled = false
-        }
-    }
-
-    @discardableResult
-    private func flushPendingZhipuAPIKeyChange() -> String {
-        apiKeySaveTask?.cancel()
-        apiKeySaveTask = nil
-        let candidate = activeAPIKeyInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        hasZhipuAPIKey = !candidate.isEmpty
-        if isZhipuAPIKeyDirty, persistAPIKey(candidate) {
-            isZhipuAPIKeyDirty = false
-        }
-        return candidate
-    }
-
     private func exportBackup() {
+        backupProgressText = "正在整理数据和媒体…"
         isPreparingBackup = true
         Task {
             do {
@@ -356,6 +275,7 @@ struct SettingsView: View {
 
     private func completePreparedBackup(_ url: URL) {
         guard uploadingBackup else { backupExportRequest = BackupExportRequest(url: url); return }
+        backupProgressText = "正在上传云端备份…"
         isPreparingBackup = true
         Task {
             defer { isPreparingBackup = false; temporaryFiles.remove(url); backupTemporaryURL = nil }
@@ -406,6 +326,7 @@ struct SettingsView: View {
 
     private func restorePendingBackup() {
         guard let url = pendingRestoreURL, !isPreparingBackup else { return }
+        backupProgressText = "正在恢复备份…"
         isPreparingBackup = true
         Task {
             defer { temporaryFiles.remove(url); isPreparingBackup = false }
@@ -606,25 +527,24 @@ private struct CloudBackupManagerView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var versions: [CloudBackupVersion] = []
     @State private var busy = false
+    @State private var progressText = "正在加载备份列表…"
     @State private var message: String?
     @State private var deleting: CloudBackupVersion?
     var body: some View {
         NavigationStack {
-            ScrollViewReader { proxy in
             List {
-                Section {
-                    Menu {
-                        Button("导出本地") { onExport(false) }
-                        Button("上传云端") { onExport(true) }.disabled(!CloudSyncService.shared.configured)
-                    } label: { Label("导出备份", systemImage: "square.and.arrow.up") }
-                    Menu {
-                        Button("从本地文件导入", action: onImport)
-                        Button("从云端恢复") { withAnimation { proxy.scrollTo("backupVersions", anchor: .top) } }
-                            .disabled(!CloudSyncService.shared.configured)
-                    } label: { Label("恢复备份", systemImage: "square.and.arrow.down") }
+                Section("本地备份") {
+                    Button { onExport(false) } label: {
+                        Label("导出到本地", systemImage: "square.and.arrow.up")
+                    }
+                    Button(action: onImport) {
+                        Label("从本地恢复", systemImage: "square.and.arrow.down")
+                    }
                 }.disabled(busy)
-                Section("备份版本") {
-                    Color.clear.frame(height: 0).id("backupVersions")
+                Section("云端备份") {
+                    Button { onExport(true) } label: {
+                        Label("上传云端", systemImage: "icloud.and.arrow.up")
+                    }.disabled(busy || !CloudSyncService.shared.configured)
                     ForEach(versions) { version in
                         VStack(alignment: .leading, spacing: 8) {
                             Text(version.title).font(.headline)
@@ -642,7 +562,14 @@ private struct CloudBackupManagerView: View {
                     if versions.isEmpty { Text(busy ? "正在加载…" : "暂无云端备份").foregroundStyle(.secondary) }
                 }
             }
-            .overlay { if busy { ProgressView().allowsHitTesting(false) } }
+            .safeAreaInset(edge: .bottom) {
+                if busy {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(progressText).font(.subheadline)
+                        ProgressView().progressViewStyle(.linear)
+                    }.padding().frame(maxWidth: .infinity, alignment: .leading).background(.regularMaterial)
+                }
+            }
             .navigationTitle("备份管理")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("完成") { dismiss() }.disabled(busy) } }
             .interactiveDismissDisabled(busy)
@@ -653,7 +580,7 @@ private struct CloudBackupManagerView: View {
             .confirmationDialog("删除这个云端备份版本？删除后无法恢复，不影响本机数据。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }), titleVisibility: .visible) {
                 if let version = deleting {
                     Button("删除备份", role: .destructive) {
-                        deleting = nil; busy = true
+                        deleting = nil; progressText = "正在删除备份…"; busy = true
                         Task {
                             do { try await CloudBackupService.delete(version) }
                             catch { message = error.localizedDescription }
@@ -663,15 +590,16 @@ private struct CloudBackupManagerView: View {
                 }
             }
         }
-        }
     }
     private func refresh() async {
+        progressText = "正在加载备份列表…"
         busy = true
         defer { busy = false }
         do { versions = try await CloudBackupService.list() }
         catch { message = "读取备份失败：\(error.localizedDescription)" }
     }
     private func download(_ version: CloudBackupVersion, restoring: Bool) {
+        progressText = restoring ? "正在下载备份以恢复…" : "正在下载备份，完成后选择保存位置…"
         busy = true
         Task {
             defer { busy = false }

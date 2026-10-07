@@ -8,6 +8,17 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
         super.tearDown()
     }
 
+    func testSmartImportPreservesArrangementSubtypes() throws {
+        let content = #"{"days":[{"items":[{"title":"飞往杭州","category":"transport","transportMode":"flight"},{"title":"参观展览","category":"attraction","attractionType":"museum"}]}]}"#
+        let journey = try ZhipuVisionItineraryService.decodeJourneyContent(content, referenceDate: Date())
+        let items = try XCTUnwrap(journey.days.first?.items)
+        XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(items[0].transport, .flight)
+        XCTAssertEqual(items[1].attractionTypeRaw, "museum")
+        let single = try XCTUnwrap(ZhipuVisionItineraryService.singleItemDraft(from: journey))
+        XCTAssertEqual(single.transport, .flight)
+    }
+
     func testRetiredRouteFieldsAreIgnoredEvenWithUnexpectedTypes() throws {
         let content = #"{"schemaVersion":2,"kind":"itinerary_journey","title":"杭州周末","destination":"杭州","days":[{"items":[{"title":"游览西湖","category":"attraction","placeName":"西湖","transport":{"unexpected":true},"distanceText":["旧路程"],"routeInfo":42,"cost":80}]}]}"#
         let journey = try ZhipuVisionItineraryService.decodeJourneyContent(content, referenceDate: Date())

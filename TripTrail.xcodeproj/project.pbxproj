@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		2E628A35890C4CF2A0BF7338 /* UnifiedJourneyService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2433C3D7625D4C1E98F25467 /* UnifiedJourneyService.swift */; };
 		0008D241B4C86174D34C328C /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 880839EB0CCEF7D46FA31F7C /* Security.framework */; };
 		03D6499BA24BECFC5DA9BF81 /* triptrail-demo-lake.png in Resources */ = {isa = PBXBuildFile; fileRef = C628644B7C152C95A04262DC /* triptrail-demo-lake.png */; };
 		07CEE1462D3673EA05937681 /* JourneyDomain.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34CF97F064A3CA45C61954FE /* JourneyDomain.swift */; };
@@ -74,6 +75,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		2433C3D7625D4C1E98F25467 /* UnifiedJourneyService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnifiedJourneyService.swift; sourceTree = "<group>"; };
 		04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenshotItineraryImportService.swift; sourceTree = "<group>"; };
 		179AB45A745D3007F05360CE /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		19D9C6694875B0587674D68C /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
@@ -220,6 +222,7 @@
 				04313E748161EE1A356EDB46 /* ScreenshotItineraryImportService.swift */,
 				5593766E035479FC9AD9B62B /* StoryArchiveService.swift */,
 				AC1FDAFD4CA8F32A0EC3DB1D /* StorySyncService.swift */,
+				2433C3D7625D4C1E98F25467 /* UnifiedJourneyService.swift */,
 				FB6C5D760416740189097691 /* ZhipuVisionItineraryService.swift */,
 			);
 			path = Services;
@@ -483,6 +486,7 @@
 				AA42792EAB868370BBD5E14D /* StoryDetailView.swift in Sources */,
 				60BF127EF9A9503B25EE9600 /* StoryMediaCarousel.swift in Sources */,
 				F50045B01C57421A01183F33 /* StorySyncService.swift in Sources */,
+				2E628A35890C4CF2A0BF7338 /* UnifiedJourneyService.swift in Sources */,
 				4F127EF7F408B2AAA86963C1 /* TextItineraryImportView.swift in Sources */,
 				4405CD6E363C028B92E68F9F /* TravelModels.swift in Sources */,
 				ABD819B34864FAEEAFC8C1EF /* TripDetailView.swift in Sources */,
@@ -699,7 +703,7 @@
 				PRODUCT_NAME = TripTrail;
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Debug;
 		};
@@ -722,7 +726,7 @@
 				PRODUCT_NAME = TripTrail;
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
-				TARGETED_DEVICE_FAMILY = 1;
+				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
 		};

@@ -104,7 +104,7 @@ struct TripStatisticsView: View {
             }
 
             Text(summary.totalAmount, format: .currency(code: "CNY"))
-                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .font(.tripSystem(size: 36, weight: .bold, design: .rounded))
                 .monospacedDigit()
                 .minimumScaleFactor(0.72)
                 .lineLimit(1)

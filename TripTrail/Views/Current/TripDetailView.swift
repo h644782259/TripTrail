@@ -8,6 +8,7 @@ import UIKit
 struct TripDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var trip: Trip
     @State private var showsTripInfo = false
     @State private var tripInfoScrollOrigin: CGFloat?
@@ -59,7 +60,13 @@ struct TripDetailView: View {
     private var mainContent: some View {
         ScrollView {
             LazyVStack(spacing: 18) {
+                CloudSaveNotice(id: trip.id, kind: "trip")
                 selectedDayHeader
+                if let selection = selectedDaySelection,
+                   selection.day.date >= Calendar.current.startOfDay(for: Date()) {
+                    JourneyWeatherView(dayID: selection.day.id, date: selection.day.date,
+                        suggestedCity: selection.day.city)
+                }
                 itineraryDays
             }
             .padding()
@@ -86,13 +93,13 @@ struct TripDetailView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color.tripCanvas.contentShape(Rectangle()).onTapGesture { activeInfoField = nil })
-        .onDisappear { CloudSyncService.shared.uploadAfterEdit(context: modelContext) }
         .task(id: trip.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "trip", recordID: trip.id, automatic: true) }
         .navigationTitle(trip.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbarBackground(Color.tripCanvas, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
+        .toolbarColorScheme(colorScheme, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .principal) {
                 Button { toggleTripInfo() } label: {
@@ -100,7 +107,7 @@ struct TripDetailView: View {
                         Text(trip.title).font(.headline).lineLimit(1)
                         Image(systemName: showsTripInfo ? "chevron.up" : "chevron.down").font(.caption2)
                     }
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(Color.tripInk)
                     .frame(maxWidth: .infinity, minHeight: 44)
                     .contentShape(Rectangle())
                 }
@@ -114,40 +121,39 @@ struct TripDetailView: View {
             }
             if #available(iOS 26.0, *) {
                 ToolbarItem(placement: .topBarTrailing) {
-                    CloudBadge(id: trip.id, kind: "trip").font(.system(size: 20))
+                    CloudBadge(id: trip.id, kind: "trip").font(.tripSystem(size: 20))
                 }
                 .sharedBackgroundVisibility(.hidden)
             } else {
                 ToolbarItem(placement: .topBarTrailing) {
-                    CloudBadge(id: trip.id, kind: "trip").font(.system(size: 20))
+                    CloudBadge(id: trip.id, kind: "trip").font(.tripSystem(size: 20))
                 }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Menu {
                     if let selection = selectedDaySelection {
                         let day = selection.day
+                        Button("新建安排", systemImage: "plus") { dayForNewItem = day }
+                        .disabled(isReadingScreenshot)
                         Button("编辑当天", systemImage: "pencil") {
                             dayToEdit = day
                         }
-                        Button("新建安排", systemImage: "plus") { dayForNewItem = day }
-                        .disabled(isReadingScreenshot)
                         Button("分享当天", systemImage: "square.and.arrow.up") {
                             shareRequest = TripShareRequest(scopeID: day.id)
                         }
-                        Button("规划当天路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
+                        Button("规划路线", systemImage: "point.topleft.down.to.point.bottomright.curvepath") {
                             requestRoutePlanning(
                                 for: [day],
                                 title: "\(displayTitle(for: day))路线"
                             )
                         }
-                    CloudModeAction(id: trip.id, kind: "trip")
                     Divider()
                         Button("删除当天", systemImage: "trash", role: .destructive) {
                             dayToDelete = day
                         }
                     }
                 } label: { Image(systemName: "ellipsis") }
-                .font(.system(size: 20))
+                .font(.tripSystem(size: 20))
                 .accessibilityLabel("当天更多操作")
             }
         }
@@ -217,7 +223,7 @@ struct TripDetailView: View {
     }()
 
     private func saveTripInfo() -> String? {
-        do { try modelContext.save(); CloudSyncService.shared.uploadAfterEdit(context: modelContext); return nil }
+        do { try modelContext.save(); Task { await CloudSyncService.shared.uploadPending(context: modelContext, key: "trip:\(trip.id.uuidString.lowercased())", entityID: trip.id) }; return nil }
         catch { return "保存失败，请重试" }
     }
 
@@ -267,7 +273,7 @@ struct TripDetailView: View {
         .cloudEditSheet(item: $routePlanningRequest) { request in
             AmapRoutePlanningView(request: request)
         }
-        .cloudEditSheet(item: $navigationRequest) { request in
+        .tripBottomSheet(item: $navigationRequest) { request in
             NavigationOptionsSheet(
                 onAmap: { open(request) },
                 onXiaohongshu: { openDiscovery(.xiaohongshu, for: request) },
@@ -352,7 +358,10 @@ struct TripDetailView: View {
             presenting: itemToDelete
         ) { item in
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
+                let id = item.id
                 modelContext.delete(item)
+                Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(trip.id.uuidString.lowercased())", entityID: id) }
                 itemToDelete = nil
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) { itemToDelete = nil }
@@ -419,11 +428,16 @@ struct TripDetailView: View {
     @ViewBuilder
     private var selectedDayHeader: some View {
         if let selection = selectedDaySelection {
+            Button { dayToEdit = selection.day } label: {
             Text(selection.day.title.isEmpty ? "第 \(selection.index + 1) 天" : selection.day.title)
                 .font(.title2.bold())
                 .foregroundStyle(Color.tripInk)
                 .lineLimit(2)
             .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("编辑当天：" + (selection.day.title.isEmpty ? "第 \(selection.index + 1) 天" : selection.day.title))
         }
     }
 
@@ -1006,6 +1020,7 @@ struct TripDetailView: View {
     }
 
     private func deleteDay(_ day: TripDay) {
+        let dayID = day.id
         let days = trip.sortedDays
         if selectedDayID == day.id, let index = days.firstIndex(where: { $0.id == day.id }) {
             let nextDay = days.dropFirst(index + 1).first ?? days.prefix(index).last
@@ -1014,6 +1029,13 @@ struct TripDetailView: View {
         trip.days.removeAll { $0.id == day.id }
         modelContext.delete(day)
         JourneyHierarchyService.normalizeTripDaySchedule(trip)
+        do {
+            try UnifiedJourneyService.reconcile(context: modelContext)
+            try modelContext.save()
+            let tripID = trip.id
+            Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                key: "trip:\(tripID.uuidString.lowercased())", entityID: dayID) }
+        } catch { placeMessage = "删除未保存：\(error.localizedDescription)" }
     }
 }
 
@@ -1158,6 +1180,7 @@ func hasOverlappingItineraryTimeRanges(_ ranges: [(start: Date, end: Date)]) -> 
 
 private struct ItineraryTimeReviewView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     let request: ItineraryTimeReviewRequest
     @State private var drafts: [TimeDraft]
 
@@ -1236,6 +1259,16 @@ private struct ItineraryTimeReviewView: View {
         for draft in drafts {
             draft.item.startTime = draft.startTime
             draft.item.endTime = draft.endTime
+        }
+        let targets = drafts.compactMap { draft -> (UUID, UUID)? in
+            guard let trip = draft.item.day?.trip else { return nil }
+            return (trip.id, draft.item.id)
+        }
+        Task {
+            for (tripID, itemID) in targets {
+                await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(tripID.uuidString.lowercased())", entityID: itemID)
+            }
         }
         dismiss()
     }
@@ -1368,7 +1401,7 @@ private struct ItineraryCard: View {
     @ViewBuilder
     private var itineraryTitle: some View {
         HStack(spacing: 7) {
-            Image(systemName: item.category.symbol)
+            Image(systemName: item.arrangementSymbol)
                 .accessibilityHidden(true)
             MarqueeTitleText(
                 text: item.title.isEmpty ? "未命名安排" : item.title,
@@ -1606,7 +1639,10 @@ struct AmapRoutePlanningView: View {
     init(request: ItineraryRoutePlanningRequest) {
         let points = ItineraryRoutePlanning.removingAdjacentDuplicates(request.points)
         self.request = ItineraryRoutePlanningRequest(title: request.title, points: points, missingLocationCount: request.missingLocationCount)
-        _selectedPointIDs = State(initialValue: Set(points.map(\.id)))
+        let pending = points.filter { !$0.isCompleted }
+        let firstPending = points.firstIndex { !$0.isCompleted }
+        let previous = firstPending.flatMap { $0 > 0 ? points[$0 - 1] : nil }
+        _selectedPointIDs = State(initialValue: Set((pending + [previous].compactMap { $0 }).map(\.id)))
     }
 
     var body: some View {
@@ -1858,7 +1894,7 @@ private struct InlineItineraryMediaGallery: View {
     private let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 3)
 
     private var sortedMedia: [MediaReference] {
-        item.media.sorted { $0.sortOrder < $1.sortOrder }
+        item.media.sorted(by: MediaReference.precedes)
     }
 
     @ViewBuilder
@@ -1893,18 +1929,25 @@ private struct InlineItineraryMediaGallery: View {
 
 private struct DayEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Bindable var day: TripDay
 
     var body: some View {
         TripNavigationStack {
             Form {
                 TextField("当天标题", text: $day.title).clearableText($day.title)
+                TextField("城市", text: $day.city).clearableText($day.city)
                 LabeledContent("日期", value: day.date.chineseDateText)
                 TextField("当天备注", text: $day.note, axis: .vertical).clearableText($day.note).lineLimit(3...8)
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("编辑当天")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("保存") {
+                try? modelContext.save()
+                if let trip = day.trip { Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(trip.id.uuidString.lowercased())", entityID: day.id) } }
+                dismiss()
+            } } }
         }
     }
 }
@@ -2092,5 +2135,232 @@ private struct ScrollLongPressBridge: UIViewRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
             otherGestureRecognizer === scrollView?.panGestureRecognizer
         }
+    }
+}
+
+// Weather is supplementary information; a failed request never blocks the itinerary.
+private struct JourneyWeatherDay: Codable {
+    let fxDate: String
+    let tempMax: String
+    let tempMin: String
+    let textDay: String
+    let iconDay: String?
+    let textNight: String
+    let windDirDay: String
+    let windScaleDay: String
+    let humidity: String
+    let precip: String
+}
+
+private extension JourneyWeatherDay {
+    var symbol: String {
+        switch Int(iconDay ?? "") ?? -1 {
+        case 100: return "sun.max"
+        case 150: return "moon.stars"
+        case 101, 102, 103: return "cloud.sun"
+        case 151, 152, 153: return "cloud.moon"
+        case 104: return "cloud"
+        case 302...304: return "cloud.bolt.rain"
+        case 404...406, 456: return "cloud.sleet"
+        case 300...399: return "cloud.rain"
+        case 400...499: return "cloud.snow"
+        case 503, 504, 507, 508: return "sun.dust"
+        case 500...515: return "cloud.fog"
+        case 900: return "sun.max"
+        case 901: return "snowflake"
+        default: return "questionmark.circle"
+        }
+    }
+}
+
+private actor JourneyWeatherService {
+    static let shared = JourneyWeatherService()
+    struct Forecast: Codable {
+        let city: String
+        let updated: String
+        let daily: [JourneyWeatherDay]
+        let fetched: Date
+    }
+    private var cache: [String: Forecast] = {
+        guard let data = UserDefaults.standard.data(forKey: "journey.weather.cache"),
+              let saved = try? JSONDecoder().decode([String: Forecast].self, from: data) else { return [:] }
+        return saved
+    }()
+
+    private func request(_ path: String, _ items: [URLQueryItem]) async throws -> Data {
+        let host = Bundle.main.object(forInfoDictionaryKey: "HeFengWeatherHost") as? String ?? ""
+        let key = Bundle.main.object(forInfoDictionaryKey: "HeFengWeatherKey") as? String ?? ""
+        guard !key.isEmpty, !key.hasPrefix("$("), !host.isEmpty else { throw URLError(.userAuthenticationRequired) }
+        var components = URLComponents()
+        components.scheme = "https"; components.host = host; components.path = path; components.queryItems = items
+        guard let url = components.url else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        request.setValue(key, forHTTPHeaderField: "X-QW-Api-Key")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return data
+    }
+
+    func forecast(city: String) async throws -> Forecast {
+        if let saved = cache[city], Date().timeIntervalSince(saved.fetched) < 3600 { return saved }
+        struct Lookup: Decodable {
+            struct Location: Decodable { let id: String; let name: String; let adm1: String; let adm2: String }
+            let code: String
+            let location: [Location]?
+        }
+        let lookup = try JSONDecoder().decode(Lookup.self, from: await request("/geo/v2/city/lookup", [.init(name: "location", value: city), .init(name: "number", value: "1")]))
+        guard lookup.code == "200", let place = lookup.location?.first else { throw URLError(.cannotFindHost) }
+        struct Response: Decodable { let code: String; let updateTime: String?; let daily: [JourneyWeatherDay]? }
+        let response = try JSONDecoder().decode(Response.self, from: await request("/v7/weather/7d", [.init(name: "location", value: place.id)]))
+        guard response.code == "200", let daily = response.daily else { throw URLError(.badServerResponse) }
+        let result = Forecast(city: [place.adm1, place.adm2, place.name].reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }.joined(separator: " · "), updated: response.updateTime ?? "", daily: daily, fetched: Date())
+        cache[city] = result
+        cache = cache.filter { Date().timeIntervalSince($0.value.fetched) < 86400 }
+        if let data = try? JSONEncoder().encode(cache) { UserDefaults.standard.set(data, forKey: "journey.weather.cache") }
+        return result
+    }
+}
+
+private struct JourneyWeatherView: View {
+    let dayID: UUID
+    let date: Date
+    let suggestedCity: String
+    @State private var city = ""
+    @State private var draft = ""
+    @State private var forecast: JourneyWeatherService.Forecast?
+    @State private var message = "查看天气"
+    @State private var loading = false
+    @State private var details = false
+    @State private var retry = 0
+    private var dateKey: String { let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"; formatter.locale = Locale(identifier: "en_US_POSIX"); return formatter.string(from: date) }
+    private var weather: JourneyWeatherDay? { forecast?.daily.first { $0.fxDate == dateKey } }
+    private var eligible: Bool { let days = Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: Date()), to: Calendar.current.startOfDay(for: date)).day ?? -1; return (0...6).contains(days) }
+    var body: some View {
+        Button { draft = city; details = true } label: {
+            HStack(spacing: 8) {
+                Image(systemName: weather?.symbol ?? "questionmark.circle")
+                    .frame(width: 24, height: 24)
+                if loading { ProgressView() }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(weather.map { "\($0.textDay) · \($0.tempMin)–\($0.tempMax)℃" } ?? message)
+                    if let forecast { Text(forecast.city).font(.caption).foregroundStyle(.secondary) }
+                }
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption)
+            }
+            .font(.subheadline)
+            .padding(12)
+            .background(Color.tripLake.opacity(0.09), in: RoundedRectangle(cornerRadius: 14))
+        }
+        .buttonStyle(.plain)
+        .task(id: dayID.uuidString + suggestedCity) {
+            city = suggestedCity
+        }
+        .task(id: city + dateKey + String(retry)) {
+            forecast = nil
+            guard eligible else { message = date < Calendar.current.startOfDay(for: Date()) ? "不提供历史天气" : "暂未进入预报范围"; return }
+            guard !city.isEmpty else { message = "选择城市查看天气"; return }
+            loading = true; message = "正在获取天气…"
+            defer { loading = false }
+            do {
+                let result = try await JourneyWeatherService.shared.forecast(city: city)
+                try Task.checkCancellation()
+                forecast = result
+                message = result.daily.contains { $0.fxDate == dateKey } ? "" : "暂无当天预报"
+            } catch is CancellationError { } catch { message = "天气暂不可用，点击重试或更换城市" }
+        }
+        .sheet(isPresented: $details) {
+            NavigationStack {
+                Form {
+                    Section("查询城市") {
+                        HStack(spacing: 12) {
+                            Image(systemName: "mappin.and.ellipse")
+                                .foregroundStyle(.secondary)
+                            TextField("输入城市，例如杭州", text: $draft)
+                                .submitLabel(.search)
+                                .onSubmit { queryWeather() }
+                            Button(action: queryWeather) {
+                                Text("查询")
+                                    .font(.subheadline.weight(.semibold))
+                                    .padding(.horizontal, 14)
+                                    .padding(.vertical, 10)
+                                    .background(Color.tripLake.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Color.tripLake)
+                            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loading)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    Section {
+                        if loading {
+                            ProgressView("正在获取天气…")
+                                .padding(.vertical, 20)
+                        } else if let weather {
+                            HStack(spacing: 16) {
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text(forecast?.city ?? city)
+                                        .font(.subheadline).foregroundStyle(.secondary)
+                                    Text("\(weather.tempMin)–\(weather.tempMax)℃")
+                                        .font(.largeTitle.weight(.semibold))
+                                    Text(weather.textDay)
+                                        .font(.headline).foregroundStyle(Color.tripLake)
+                                }
+                                Spacer(minLength: 0)
+                                Image(systemName: weather.symbol)
+                                    .font(.system(size: 36)).foregroundStyle(Color.tripLake)
+                                    .accessibilityHidden(true)
+                            }
+                            .padding(.vertical, 12)
+                            LabeledContent("白天 / 夜间", value: "\(weather.textDay) / \(weather.textNight)")
+                            LabeledContent("风", value: "\(weather.windDirDay) \(weather.windScaleDay)级")
+                            LabeledContent("湿度", value: "\(weather.humidity)%")
+                            LabeledContent("降水量", value: "\(weather.precip) mm")
+                        } else {
+                            VStack(spacing: 12) {
+                                Image(systemName: "cloud").font(.largeTitle)
+                                Text(message).font(.subheadline).multilineTextAlignment(.center)
+                            }
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 24)
+                        }
+                    } header: {
+                        Text(date.formatted(.dateTime.month().day().weekday(.wide)))
+                    } footer: {
+                        if !loading, weather != nil, let updated = forecast?.updated, !updated.isEmpty {
+                            Text("更新于 \(formattedUpdateTime(updated))")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .padding(.top, 8)
+                        }
+                    }
+                }
+                .scrollDismissesKeyboard(.interactively)
+                .navigationTitle("天气")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { details = false } } }
+            }
+        }
+
+    }
+
+    private func queryWeather() {
+        let value = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !loading else { return }
+        city = value
+        retry += 1
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+    }
+
+    private func formattedUpdateTime(_ value: String) -> String {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let parsed = parser.date(from: value) ?? ISO8601DateFormatter().date(from: value)
+        guard let parsed else { return value }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.dateFormat = "M月d日 HH:mm"
+        return formatter.string(from: parsed)
     }
 }

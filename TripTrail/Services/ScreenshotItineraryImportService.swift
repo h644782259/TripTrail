@@ -8,6 +8,8 @@ struct ItineraryScreenshotDraft: Identifiable {
     var favoriteCity: String = ""
     var title: String
     var category: PlaceCategory
+    var transport: TransportMode = .car
+    var attractionTypeRaw: String = "unknown"
     var startTime: Date
     var endTime: Date
     var address: String
@@ -65,6 +67,8 @@ struct ItineraryJourneyItemDraft: Identifiable {
     var isTimePending = false
     var title: String
     var category: PlaceCategory
+    var transport: TransportMode = .car
+    var attractionTypeRaw: String = "unknown"
     var startTime: Date
     var endTime: Date
     var address: String
@@ -988,6 +992,8 @@ enum ScreenshotItineraryImportService {
         ItineraryJourneyItemDraft(
             title: draft.title,
             category: draft.category,
+            transport: draft.transport,
+            attractionTypeRaw: draft.attractionTypeRaw,
             startTime: draft.startTime,
             endTime: draft.endTime,
             address: draft.address,
@@ -1679,10 +1685,13 @@ enum JourneyImportApplyService {
                         )
                         item.placeAddress = itemDraft.address.trimmingCharacters(in: .whitespacesAndNewlines)
                     }
+                    item.retainSelectedLocation()
                     item.address = item.locationMode == .single ? item.placeAddress : item.destinationAddress
                     item.reservationInfo = itemDraft.reservationInfo.trimmingCharacters(in: .whitespacesAndNewlines)
                     item.cost = itemDraft.cost
-                    item.note = itemDraft.note.trimmingCharacters(in: .whitespacesAndNewlines)
+                    item.transport = itemDraft.transport
+                    item.attractionTypeRaw = itemDraft.attractionTypeRaw
+                item.note = itemDraft.note.trimmingCharacters(in: .whitespacesAndNewlines)
                     item.playDurationMinutes = max(0, Int(times.end.timeIntervalSince(times.start) / 60))
                     item.day = day
                     day.items.append(item)

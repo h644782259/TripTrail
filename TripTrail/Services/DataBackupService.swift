@@ -37,9 +37,10 @@ enum DataBackupService {
     private static let currentFormatVersion = 1
 
     static func makeBackupData(from modelContext: ModelContext, exportedAt: Date = Date()) throws -> Data {
+        try UnifiedJourneyService.reconcile(context: modelContext)
         let trips = try modelContext.fetch(FetchDescriptor<Trip>())
             .sorted { $0.createdAt < $1.createdAt }
-        let stories = try modelContext.fetch(FetchDescriptor<TravelStory>())
+        let stories = try modelContext.fetch(FetchDescriptor<TravelStory>()).filter { !$0.usesUnifiedJourney }
             .sorted { $0.createdAt < $1.createdAt }
         let favorites = try modelContext.fetch(FetchDescriptor<ItineraryItem>())
             .filter(\.isFavorite)
@@ -62,6 +63,7 @@ enum DataBackupService {
         let trips = try modelContext.fetch(FetchDescriptor<Trip>())
             .sorted { $0.createdAt < $1.createdAt }
         let stories = try modelContext.fetch(FetchDescriptor<TravelStory>())
+            .filter { !$0.usesUnifiedJourney }
             .sorted { $0.createdAt < $1.createdAt }
         let favorites = try modelContext.fetch(FetchDescriptor<ItineraryItem>())
             .filter(\.isFavorite)
@@ -72,6 +74,7 @@ enum DataBackupService {
             .flatMap(\.media)
             + stories.flatMap(\.sortedEntries).flatMap(\.sortedMedia)
             + stories.compactMap(\.coverMedia)
+            + trips.compactMap(\.coverMedia)
             + favorites.flatMap(\.media)
         return try await PortablePackageService.makePackage(
             kind: .backup,
@@ -278,6 +281,7 @@ enum SharedJourneyService {
     static func makeShareData(
         trip: Trip,
         selectedDay: TripDay? = nil,
+        selectedItemIDs: Set<UUID>? = nil,
         sharedAt: Date = Date(),
         includeMedia: Bool = false
     ) throws -> Data {
@@ -290,6 +294,7 @@ enum SharedJourneyService {
                 trip: TripRecord(
                     trip,
                     selectedDay: selectedDay,
+                    selectedItemIDs: selectedItemIDs,
                     includeMedia: includeMedia,
                     includeLocalMediaIdentifiers: false
                 ),
@@ -301,6 +306,7 @@ enum SharedJourneyService {
     static func makeShareData(
         story: TravelStory,
         selectedDay: StoryDay? = nil,
+        selectedItemIDs: Set<UUID>? = nil,
         sharedAt: Date = Date(),
         includeMedia: Bool = false
     ) throws -> Data {
@@ -314,6 +320,7 @@ enum SharedJourneyService {
                 story: StoryRecord(
                     story,
                     selectedDay: selectedDay,
+                    selectedItemIDs: selectedItemIDs,
                     includeMedia: includeMedia,
                     includeSourceLinks: false,
                     includeLocalMediaIdentifiers: false
@@ -324,7 +331,7 @@ enum SharedJourneyService {
 
     static func makeSharePackage(trip: Trip, selectedDay: TripDay? = nil) async throws -> PortablePackageExportResult {
         let days = selectedDay.map { [$0] } ?? trip.sortedDays
-        let media = days.flatMap(\.sortedItems).flatMap(\.media)
+        let media = days.flatMap(\.sortedItems).flatMap(\.media) + [trip.coverMedia].compactMap { $0 }
         return try await PortablePackageService.makePackage(
             kind: .sharedJourney,
             contentData: try makeShareData(trip: trip, selectedDay: selectedDay, includeMedia: true),
@@ -342,6 +349,56 @@ enum SharedJourneyService {
             mediaReferences: media,
             fileExtension: "triptrail"
         )
+    }
+
+    static func filterShareFields(_ fields: Set<ShareField>, from data: Data) throws -> Data {
+        func filtered(_ value: Any) -> Any {
+            if let array = value as? [Any] { return array.map(filtered) }
+            guard var object = value as? [String: Any] else { return value }
+            let isItem = object["categoryRaw"] != nil
+            let isStoryItem = object["storyDayID"] != nil
+            if isItem {
+                if !fields.contains(.title) { object["title"] = "" }
+                if !fields.contains(.time) {
+                    object["timeLabel"] = ""; object["isTimePending"] = true
+                    if isStoryItem { object.removeValue(forKey: "startTime"); object.removeValue(forKey: "endTime") }
+                    else { object["startTime"] = "1970-01-01T00:00:00Z"; object["endTime"] = "1970-01-01T00:00:00Z" }
+                }
+                if !fields.contains(.location) {
+                    for key in ["address", "placeName", "placeAddress", "originName", "originAddress", "destinationName", "destinationAddress"] { object[key] = "" }
+                }
+                if !fields.contains(.category) { object["categoryRaw"] = PlaceCategory.other.rawValue; object["attractionTypeRaw"] = ""; object["transportRaw"] = TransportMode.car.rawValue }
+                if !fields.contains(.cost) { object["cost"] = 0 }
+                if !fields.contains(.memory) { object["journalNote"] = ""; object.removeValue(forKey: "sourceMemoryPrefill"); if isStoryItem { object["note"] = "" } }
+                if !fields.contains(.supplement) {
+                    for key in ["arrangementNote", "supplementalInfo", "reservationInfo", "routeInfo", "journalSupplement"] { object[key] = "" }
+                    if object["vouchers"] != nil { object["vouchers"] = [Any]() }
+                    if !isStoryItem { object["note"] = "" }
+                }
+            } else if object["days"] != nil || object["date"] != nil {
+                if !fields.contains(.memory) { for key in ["summary", "journalSummary", "journalNote"] { if object[key] != nil { object[key] = "" } } }
+                if !fields.contains(.supplement) { for key in ["note", "details", "journalDetails"] { if object[key] != nil { object[key] = "" } } }
+            }
+            if !fields.contains(.media) { object.removeValue(forKey: "coverMedia"); if object["media"] != nil { object["media"] = [Any]() } }
+            return object.mapValues(filtered)
+        }
+        return try JSONSerialization.data(withJSONObject: filtered(JSONSerialization.jsonObject(with: data)), options: [.sortedKeys])
+    }
+
+    static func excludingMedia(_ ids: Set<UUID>, from data: Data) throws -> Data {
+        let excluded = Set(ids.map { $0.uuidString.lowercased() })
+        func filtered(_ value: Any) -> Any {
+            if let array = value as? [Any] { return array.map(filtered) }
+            guard var object = value as? [String: Any] else { return value }
+            if let media = object["media"] as? [[String: Any]] {
+                object["media"] = media.filter { !excluded.contains(($0["id"] as? String ?? "").lowercased()) }
+            }
+            if let cover = object["coverMedia"] as? [String: Any], excluded.contains((cover["id"] as? String ?? "").lowercased()) {
+                object.removeValue(forKey: "coverMedia")
+            }
+            return object.mapValues(filtered)
+        }
+        return try JSONSerialization.data(withJSONObject: filtered(JSONSerialization.jsonObject(with: data)), options: [.sortedKeys])
     }
 
     static func inspect(_ data: Data) throws -> SharedJourneySummary {
@@ -615,14 +672,23 @@ private struct TripRecord: Codable {
     let endDate: Date
     let note: String
     let createdAt: Date
+    let journalSummary: String?
+    let coverMedia: MediaRecord?
+    let coverZoom: Double?
+    let coverOffsetX: Double?
+    let coverOffsetY: Double?
     let days: [TripDayRecord]
 
     init(
         _ trip: Trip,
         selectedDay: TripDay? = nil,
+        selectedItemIDs: Set<UUID>? = nil,
         includeMedia: Bool = true,
         includeLocalMediaIdentifiers: Bool = true
     ) {
+        journalSummary = trip.journalSummary
+        coverMedia = includeMedia ? trip.coverMedia.map { MediaRecord($0, includeLocalIdentifier: includeLocalMediaIdentifiers) } : nil
+        coverZoom = trip.coverZoom; coverOffsetX = trip.coverOffsetX; coverOffsetY = trip.coverOffsetY
         id = trip.id
         title = selectedDay.map { day in
             day.title.isEmpty ? trip.title : "\(trip.title) · \(day.title)"
@@ -633,9 +699,10 @@ private struct TripRecord: Codable {
         endDate = selectedDay?.date ?? trip.endDate
         note = selectedDay?.note ?? trip.note
         createdAt = trip.createdAt
-        days = (selectedDay.map { [$0] } ?? trip.sortedDays).map {
+        days = (selectedDay.map { [$0] } ?? trip.sortedDays).filter { day in selectedItemIDs == nil || day.sortedItems.contains { selectedItemIDs!.contains($0.id) } }.map {
             TripDayRecord(
                 $0,
+                selectedItemIDs: selectedItemIDs,
                 includeMedia: includeMedia,
                 includeLocalMediaIdentifiers: includeLocalMediaIdentifiers
             )
@@ -644,6 +711,9 @@ private struct TripRecord: Codable {
 
     func makeModel() -> Trip {
         let trip = Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
+        trip.journalSummary = journalSummary ?? ""
+        trip.coverMedia = coverMedia?.makeModel(); trip.coverMedia?.tripCover = trip
+        trip.coverZoom = coverZoom ?? 1; trip.coverOffsetX = coverOffsetX ?? 0; trip.coverOffsetY = coverOffsetY ?? 0
         trip.id = id
         trip.licensePlate = licensePlate ?? ""
         trip.createdAt = createdAt
@@ -660,17 +730,22 @@ private struct TripDayRecord: Codable {
     let id: UUID
     let date: Date
     let title: String
+    let city: String?
     let note: String
+    let journalNote: String?
+    let journalDetails: String?
     let sortOrder: Int
     let items: [ItineraryItemRecord]
 
-    init(_ day: TripDay, includeMedia: Bool = true, includeLocalMediaIdentifiers: Bool = true) {
+    init(_ day: TripDay, selectedItemIDs: Set<UUID>? = nil, includeMedia: Bool = true, includeLocalMediaIdentifiers: Bool = true) {
         id = day.id
         date = day.date
         title = day.title
+        city = day.city
         note = day.note
+        journalNote = day.journalNote; journalDetails = day.journalDetails
         sortOrder = day.sortOrder
-        items = day.sortedItems.map {
+        items = day.sortedItems.filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }.map {
             ItineraryItemRecord(
                 $0,
                 includeMedia: includeMedia,
@@ -682,7 +757,9 @@ private struct TripDayRecord: Codable {
     func makeModel(trip: Trip) -> TripDay {
         let day = TripDay(date: date, title: title, sortOrder: sortOrder, trip: trip)
         day.id = id
+        day.city = city ?? ""
         day.note = note
+        day.journalNote = journalNote ?? ""; day.journalDetails = journalDetails ?? ""
         for itemRecord in items {
             let item = itemRecord.makeModel(day: day)
             day.items.append(item)
@@ -699,6 +776,8 @@ private struct ItineraryItemRecord: Codable {
     let endTime: Date
     let address: String
     let note: String
+    let journalNote: String?
+    let journalSupplement: String?
     let locationModeRaw: String?
     let placeName: String?
     let placeAddress: String?
@@ -706,6 +785,7 @@ private struct ItineraryItemRecord: Codable {
     let originAddress: String?
     let destinationName: String?
     let destinationAddress: String?
+    let attractionTypeRaw: String?
     let transportRaw: String?
     let distanceText: String?
     let playDurationMinutes: Int
@@ -760,6 +840,7 @@ private struct ItineraryItemRecord: Codable {
         endTime = item.endTime
         address = item.address
         note = item.note
+        journalNote = item.journalNote; journalSupplement = item.journalSupplement
         locationModeRaw = item.locationModeRaw
         placeName = item.placeName
         placeAddress = item.placeAddress
@@ -767,7 +848,8 @@ private struct ItineraryItemRecord: Codable {
         originAddress = item.originAddress
         destinationName = item.destinationName
         destinationAddress = item.destinationAddress
-        transportRaw = nil
+        attractionTypeRaw = item.attractionTypeRaw
+        transportRaw = item.transportRaw
         distanceText = nil
         playDurationMinutes = item.playDurationMinutes
         reservationInfo = item.reservationInfo
@@ -784,7 +866,7 @@ private struct ItineraryItemRecord: Codable {
         sourceFavoriteID = item.sourceFavoriteID
         sortOrder = item.sortOrder
         media = includeMedia
-            ? item.media.sorted { $0.sortOrder < $1.sortOrder }.map {
+            ? item.media.sorted(by: MediaReference.precedes).map {
                 MediaRecord($0, includeLocalIdentifier: includeLocalMediaIdentifiers)
             }
             : []
@@ -805,6 +887,7 @@ private struct ItineraryItemRecord: Codable {
         item.categoryRaw = category.rawValue
         item.address = address
         item.note = note
+        item.journalNote = journalNote ?? ""; item.journalSupplement = journalSupplement ?? ""
         item.locationModeRaw = locationModeRaw ?? ""
         item.placeName = placeName ?? ""
         item.placeAddress = placeAddress ?? ""
@@ -812,6 +895,7 @@ private struct ItineraryItemRecord: Codable {
         item.originAddress = originAddress ?? ""
         item.destinationName = destinationName ?? ""
         item.destinationAddress = destinationAddress ?? ""
+        item.attractionTypeRaw = attractionTypeRaw ?? "unknown"
         item.transportRaw = transportRaw ?? TransportMode.car.rawValue
         item.distanceText = distanceText ?? ""
         item.playDurationMinutes = playDurationMinutes
@@ -825,7 +909,7 @@ private struct ItineraryItemRecord: Codable {
         item.vouchers = vouchers ?? []
         item.isFavorite = forceFavorite || (isFavorite ?? false)
         item.favoriteCity = favoriteCity ?? ""
-        item.favoriteCreatedAt = favoriteCreatedAt ?? Date()
+        item.favoriteCreatedAt = favoriteCreatedAt ?? startTime
         item.sourceFavoriteID = sourceFavoriteID
         item.day = day
         for mediaRecord in media {
@@ -858,6 +942,7 @@ private struct StoryRecord: Codable {
     init(
         _ story: TravelStory,
         selectedDay: StoryDay? = nil,
+        selectedItemIDs: Set<UUID>? = nil,
         includeMedia: Bool = true,
         includeSourceLinks: Bool = true,
         includeLocalMediaIdentifiers: Bool = true
@@ -880,7 +965,7 @@ private struct StoryRecord: Codable {
         coverZoom = story.coverZoom
         coverOffsetX = story.coverOffsetX
         coverOffsetY = story.coverOffsetY
-        let relevantDays = selectedDay.map { [$0] } ?? story.sortedDays
+        let relevantDays = (selectedDay.map { [$0] } ?? story.sortedDays).filter { day in selectedItemIDs == nil || day.sortedEntries.contains { selectedItemIDs!.contains($0.id) } }
         days = relevantDays.map { StoryDayRecord($0, includeSourceLinks: includeSourceLinks) }
 
         var allEntries = story.entries.filter { entry in
@@ -888,7 +973,7 @@ private struct StoryRecord: Codable {
         }
         let knownIDs = Set(allEntries.map(\.id))
         allEntries.append(contentsOf: relevantDays.flatMap(\.entries).filter { !knownIDs.contains($0.id) })
-        entries = allEntries.sorted { lhs, rhs in
+        entries = allEntries.filter { selectedItemIDs == nil || selectedItemIDs!.contains($0.id) }.sorted { lhs, rhs in
             if lhs.storyDay?.sortOrder == rhs.storyDay?.sortOrder { return lhs.sortOrder < rhs.sortOrder }
             return (lhs.storyDay?.sortOrder ?? .max) < (rhs.storyDay?.sortOrder ?? .max)
         }.map {
@@ -986,6 +1071,7 @@ private struct StoryEntryRecord: Codable {
     let endTime: Date?
     let timeLabel: String
     let address: String
+    let arrangementNote: String?
     let supplementalInfo: String?
     let note: String
     let locationModeRaw: String?
@@ -995,6 +1081,7 @@ private struct StoryEntryRecord: Codable {
     let originAddress: String?
     let destinationName: String?
     let destinationAddress: String?
+    let attractionTypeRaw: String?
     let transportRaw: String?
     let routeInfo: String?
     let cost: Double?
@@ -1046,6 +1133,7 @@ private struct StoryEntryRecord: Codable {
         endTime = entry.endTime
         timeLabel = entry.timeLabel
         address = entry.address
+        arrangementNote = entry.arrangementNote
         supplementalInfo = entry.supplementalInfo
         note = entry.note
         locationModeRaw = entry.locationModeRaw
@@ -1055,7 +1143,8 @@ private struct StoryEntryRecord: Codable {
         originAddress = entry.originAddress
         destinationName = entry.destinationName
         destinationAddress = entry.destinationAddress
-        transportRaw = nil
+        attractionTypeRaw = entry.attractionTypeRaw
+        transportRaw = entry.transportRaw
         routeInfo = nil
         cost = entry.cost
         didPrefillSourceMemory = entry.didPrefillSourceMemory
@@ -1077,6 +1166,7 @@ private struct StoryEntryRecord: Codable {
         entry.endTime = endTime
         entry.timeLabel = timeLabel
         entry.address = address
+        entry.arrangementNote = arrangementNote ?? ""
         entry.supplementalInfo = supplementalInfo ?? ""
         entry.note = note
         entry.locationModeRaw = locationModeRaw ?? ""
@@ -1086,6 +1176,7 @@ private struct StoryEntryRecord: Codable {
         entry.originAddress = originAddress ?? ""
         entry.destinationName = destinationName ?? ""
         entry.destinationAddress = destinationAddress ?? ""
+        entry.attractionTypeRaw = attractionTypeRaw ?? "unknown"
         entry.transportRaw = transportRaw ?? TransportMode.car.rawValue
         entry.routeInfo = routeInfo ?? ""
         entry.cost = cost ?? 0
@@ -1169,7 +1260,7 @@ private enum PortableLocationRecordText {
 
         switch mode {
         case .single:
-            let rawName = trimmed(placeName).isEmpty ? title : trimmed(placeName)
+            let rawName = trimmed(placeName)
             let name = JourneyLocationText.entityName(from: rawName, arrangementTitle: title)
             let address = trimmed(placeAddress).isEmpty ? trimmed(legacyAddress) : trimmed(placeAddress)
             let display = point(name: name, address: address)
@@ -1236,16 +1327,45 @@ enum CloudRecordAdapter {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .millisecondsSince1970
         encoder.outputFormatting = [.sortedKeys]
+        try UnifiedJourneyService.reconcile(context: context)
         let trips = try context.fetch(FetchDescriptor<Trip>()).map {
-            CloudLocalRecord(id: $0.id, kind: "trip", title: $0.title, data: try encoder.encode(TripRecord($0)), media: $0.allItems.flatMap(\.media))
+            CloudLocalRecord(id: $0.id, kind: "trip", title: $0.title, data: try encoder.encode(TripRecord($0)), media: $0.allItems.flatMap(\.media) + [$0.coverMedia].compactMap { $0 })
         }
-        let stories = try context.fetch(FetchDescriptor<TravelStory>()).map {
+        let stories = try context.fetch(FetchDescriptor<TravelStory>()).filter { !$0.usesUnifiedJourney }.map {
             CloudLocalRecord(id: $0.id, kind: "story", title: $0.title, data: try encoder.encode(StoryRecord($0)), media: $0.allMedia + [$0.coverMedia].compactMap { $0 })
         }
         let favorites = try context.fetch(FetchDescriptor<ItineraryItem>()).filter(\.isFavorite).map {
             CloudLocalRecord(id: $0.id, kind: "favorite", title: $0.title, data: try encoder.encode(ItineraryItemRecord($0)), media: $0.media)
         }
         return trips + stories + favorites
+    }
+
+    static func normalized(_ data: Data, kind: String) throws -> Data {
+        let decoder = JSONDecoder(); decoder.dateDecodingStrategy = .millisecondsSince1970
+        let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .millisecondsSince1970
+        encoder.outputFormatting = [.sortedKeys]
+        let encoded: Data
+        switch kind {
+        case "trip":
+            let model = try decoder.decode(TripRecord.self, from: data).makeModel()
+            encoded = try withExtendedLifetime(model) { try encoder.encode(TripRecord(model)) }
+        case "story":
+            let model = try decoder.decode(StoryRecord.self, from: data).makeModel()
+            encoded = try withExtendedLifetime(model) { try encoder.encode(StoryRecord(model)) }
+        case "favorite":
+            let model = try decoder.decode(ItineraryItemRecord.self, from: data).makeFavoriteModel()
+            encoded = try withExtendedLifetime(model) { try encoder.encode(ItineraryItemRecord(model)) }
+        default: throw CloudSyncError.message("不支持的云端类型")
+        }
+        var paths: [String: Any] = [:]
+        _ = CloudJSON.transform(try JSONSerialization.jsonObject(with: data)) { media in
+            if let id = media["id"] as? String { paths[id.lowercased()] = media["cloudPath"] }; return media
+        }
+        let value = CloudJSON.transform(try JSONSerialization.jsonObject(with: encoded)) { media in
+            var result = media
+            if let id = media["id"] as? String { result["cloudPath"] = paths[id.lowercased()] }; return result
+        }
+        return try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
     }
 
     static func apply(_ data: Data, kind: String, context: ModelContext) throws {
@@ -1259,6 +1379,10 @@ enum CloudRecordAdapter {
             if let old = try context.fetch(FetchDescriptor<Trip>()).first(where: { $0.id == fresh.id }) {
                 old.title = fresh.title; old.destination = fresh.destination; old.licensePlate = fresh.licensePlate
                 old.startDate = fresh.startDate; old.endDate = fresh.endDate; old.note = fresh.note; old.createdAt = fresh.createdAt
+                old.journalSummary = fresh.journalSummary
+                old.coverZoom = fresh.coverZoom; old.coverOffsetX = fresh.coverOffsetX; old.coverOffsetY = fresh.coverOffsetY
+                if let oldCover = old.coverMedia { context.delete(oldCover) }
+                old.coverMedia = fresh.coverMedia; fresh.coverMedia = nil; old.coverMedia?.tripCover = old
                 old.days.forEach(context.delete)
                 let days = fresh.days; fresh.days = []
                 old.days = days
@@ -1299,6 +1423,7 @@ enum CloudRecordAdapter {
         default: throw CloudSyncError.message("不支持的云端内容类型")
         }
         try context.save()
+        try UnifiedJourneyService.reconcile(context: context)
         } catch {
             context.rollback()
             throw error

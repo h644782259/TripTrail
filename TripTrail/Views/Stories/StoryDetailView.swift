@@ -18,6 +18,7 @@ struct StoryDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Query(sort: \Trip.startDate, order: .forward) private var trips: [Trip]
     @Bindable var story: TravelStory
     @State private var editingStory = false
@@ -33,7 +34,8 @@ struct StoryDetailView: View {
     @State private var selectedDayID: UUID?
     @State private var expandedDayID: UUID?
     @State private var coverPickerItems: [PhotosPickerItem] = []
-    @State private var showsCoverActions = false
+    @State private var showsCoverPreview = false
+    @State private var pendingCoverAction: String?
     @State private var showsCoverPicker = false
     @State private var coverCropRequest: StoryCoverCropRequest?
     @State private var coverMessage: String?
@@ -52,8 +54,7 @@ struct StoryDetailView: View {
 
     var body: some View {
         deletionAlertContent
-            .onDisappear { CloudSyncService.shared.uploadAfterEdit(context: modelContext) }
-        .task(id: story.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "story", recordID: story.id, automatic: true) }
+            .task(id: story.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "trip", recordID: story.id, automatic: true) }
         .task {
                 StorySyncService.ensureHierarchy(for: story)
                 _ = StorySyncService.migrateLegacyLocations(for: story, from: sourceTrip)
@@ -68,6 +69,7 @@ struct StoryDetailView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
+                    CloudSaveNotice(id: story.id, kind: "trip")
                     cover
                     storyDaySections
                 }
@@ -88,7 +90,7 @@ struct StoryDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .principal) { CloudTitle(id: story.id, kind: "story", title: story.title).font(.headline).lineLimit(1) }
+            ToolbarItem(placement: .principal) { CloudTitle(id: story.id, kind: "trip", title: story.title).font(.headline).lineLimit(1) }
             if #available(iOS 26.0, *) {
                 ToolbarItem(placement: .topBarTrailing) {
                     storyActionsMenu
@@ -120,7 +122,7 @@ struct StoryDetailView: View {
                 coverCropRequest = nil
             }
         }
-        .cloudEditSheet(item: $entryNavigationRequest) { request in
+        .tripBottomSheet(item: $entryNavigationRequest) { request in
             NavigationOptionsSheet(
                 onAmap: { openNavigation(for: request) },
                 onXiaohongshu: { openDiscovery(.xiaohongshu, for: request) },
@@ -132,21 +134,37 @@ struct StoryDetailView: View {
     private var coverPresentationContent: some View {
         sheetContent
         .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
-        .confirmationDialog(
-            "",
-            isPresented: $showsCoverActions,
-            titleVisibility: .hidden
-        ) {
-            Button("选择照片", systemImage: "photo.on.rectangle") {
-                DispatchQueue.main.async { requestCoverPicker() }
-            }
-            if story.coverMedia != nil {
-                Button("调整裁剪", systemImage: "crop") {
-                    DispatchQueue.main.async { editCurrentCoverCrop() }
+        .fullScreenCover(isPresented: $showsCoverPreview, onDismiss: {
+            let action = pendingCoverAction
+            pendingCoverAction = nil
+            if action == "choose" { requestCoverPicker() }
+            if action == "crop" { editCurrentCoverCrop() }
+            if action == "reset" { resetCover() }
+        }) {
+            ZStack(alignment: .bottom) {
+                if let media = story.coverMedia {
+                    AssetMediaViewer(request: AssetMediaPreviewRequest(
+                        items: [AssetMediaPreviewItem(identifier: media.localIdentifier, kind: media.kind)],
+                        initialIdentifier: media.localIdentifier
+                    ))
+                } else {
+                    Color.black.ignoresSafeArea()
+                    VStack {
+                        HStack { Spacer(); Button("关闭") { showsCoverPreview = false } }.padding()
+                        Spacer()
+                        StoryCoverArtwork(story: story).frame(height: 240)
+                        Spacer()
+                    }
                 }
-                Button("恢复默认", systemImage: "arrow.counterclockwise") {
-                    resetCover()
+                HStack(spacing: 24) {
+                    Button("选择照片") { pendingCoverAction = "choose"; showsCoverPreview = false }
+                    if story.coverMedia != nil {
+                        Button("调整裁剪") { pendingCoverAction = "crop"; showsCoverPreview = false }
+                        Button("恢复默认") { pendingCoverAction = "reset"; showsCoverPreview = false }
+                    }
                 }
+                .font(.subheadline).foregroundStyle(.white).padding()
+                .background(.black.opacity(0.75), in: Capsule()).padding(.bottom, 24)
             }
         }
         .photosPicker(
@@ -201,7 +219,7 @@ struct StoryDetailView: View {
         informationalAlertContent
         .alert(HierarchyDeletionCopy.storyTitle, isPresented: $isConfirmingStoryDeletion) {
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
-                guard CloudSyncService.shared.trash(id: story.id, kind: "story", context: modelContext) else { return }
+                guard CloudSyncService.shared.trash(id: story.id, kind: "trip", context: modelContext) else { return }
                 dismiss()
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) {}
@@ -233,7 +251,11 @@ struct StoryDetailView: View {
             presenting: entryToDelete
         ) { entry in
             Button(HierarchyDeletionCopy.confirmationButtonTitle, role: .destructive) {
+                let id = entry.journeyItem?.id ?? entry.id
+                if let item = entry.journeyItem { modelContext.delete(item) }
                 modelContext.delete(entry)
+                Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(story.id.uuidString.lowercased())", entityID: id) }
                 entryToDelete = nil
             }
             Button(HierarchyDeletionCopy.cancelButtonTitle, role: .cancel) { entryToDelete = nil }
@@ -248,7 +270,7 @@ struct StoryDetailView: View {
             Button("分享足迹", systemImage: "square.and.arrow.up") {
                 shareRequest = StoryShareRequest(scopeID: story.id)
             }
-            CloudModeAction(id: story.id, kind: "story")
+            CloudModeAction(id: story.id, kind: "trip")
             Divider()
             Button("删除足迹", systemImage: "trash", role: .destructive) {
                 isConfirmingStoryDeletion = true
@@ -306,10 +328,10 @@ struct StoryDetailView: View {
                 .accessibilityValue(isExpanded ? "已展开" : "已收起")
 
                 Menu {
+                    Button("添加记录", systemImage: "plus") { addEntry(to: day) }
                     Button("编辑当天", systemImage: "pencil") {
                         dayEditRequest = StoryDayEditRequest(day: day, isNew: false, previousDayID: nil)
                     }
-                    Button("添加记录", systemImage: "plus") { addEntry(to: day) }
                     Button("分享当天", systemImage: "square.and.arrow.up") {
                         shareRequest = StoryShareRequest(scopeID: day.id)
                     }
@@ -456,35 +478,46 @@ struct StoryDetailView: View {
     }
 
     private var cover: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            if !story.destination.isEmpty {
-                Text(story.destination.uppercased())
-                    .font(.caption.bold()).tracking(2).foregroundStyle(Color.tripSand)
+        let hasCover = story.coverMedia != nil
+        let dayCount = max(1, (Calendar.current.dateComponents([.day], from: Calendar.current.startOfDay(for: story.startDate), to: Calendar.current.startOfDay(for: story.endDate)).day ?? 0) + 1)
+        return VStack(alignment: .leading, spacing: hasCover ? 14 : 10) {
+            if hasCover {
+                if !story.destination.isEmpty {
+                    Text(story.destination.uppercased())
+                        .font(.caption.bold()).tracking(2).foregroundStyle(Color.tripSand)
+                }
+            } else {
+                Text(story.destination.isEmpty ? story.title : story.destination)
+                    .font(.title2.bold())
+                    .foregroundStyle(.white)
             }
             if !story.summary.isEmpty {
                 Text(story.summary).font(.body).foregroundStyle(.white.opacity(0.88))
             }
             Text("\(story.startDate.chineseDateText) — \(story.endDate.chineseDateText)")
-                .font(.caption).foregroundStyle(.white.opacity(0.7))
+                .font(.caption).foregroundStyle(.white.opacity(hasCover ? 0.7 : 0.85))
+            if !hasCover {
+                Label("\(dayCount) 天行程", systemImage: "calendar")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.tripSand)
+            }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(24)
-        .frame(minHeight: 200, alignment: .bottomLeading)
+        .frame(
+            minHeight: hasCover ? (UIDevice.current.userInterfaceIdiom == .pad && horizontalSizeClass == .regular ? 360 : 200) : 120,
+            alignment: hasCover ? .bottomLeading : .topLeading
+        )
         .background {
             StoryCoverArtwork(story: story)
-                .overlay(Color.black.opacity(story.coverMedia == nil ? 0 : 0.34))
+                .overlay(Color.black.opacity(hasCover ? 0.34 : 0))
                 .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         }
         .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
         .contentShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-        .onLongPressGesture(minimumDuration: 0.45) {
-            showsCoverActions = true
-        }
-        .accessibilityHint("长按可以更换封面")
-        .accessibilityAction(named: "更换封面") {
-            showsCoverActions = true
-        }
+        .onTapGesture { showsCoverPreview = true }
+        .accessibilityHint("轻点查看大图并管理封面")
     }
 
     private func requestCoverPicker() {
@@ -552,6 +585,9 @@ struct StoryDetailView: View {
         story.coverZoom = result.zoom
         story.coverOffsetX = result.offsetX
         story.coverOffsetY = result.offsetY
+        try? modelContext.save()
+        Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+            key: "trip:\(story.id.uuidString.lowercased())", entityID: story.id) }
     }
 
     private func resetCover() {
@@ -562,6 +598,9 @@ struct StoryDetailView: View {
         story.coverZoom = 1
         story.coverOffsetX = 0
         story.coverOffsetY = 0
+        try? modelContext.save()
+        Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+            key: "trip:\(story.id.uuidString.lowercased())", entityID: story.id) }
     }
 
     private func entryCard(_ entry: StoryEntry) -> some View {
@@ -621,28 +660,13 @@ struct StoryDetailView: View {
                 }
             }
 
-            if !presentation.sourceDetailsText.isEmpty {
-                DisclosureGroup {
-                    Text(presentation.sourceDetailsText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .multilineTextAlignment(.leading)
-                        .padding(.top, 6)
-                } label: {
-                    Label("来自原旅程", systemImage: "link")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                }
-                .tint(Color.tripLake)
-            }
+
         }
         .storyEntrySurface()
     }
 
     private func storyEntryTitle(_ entry: StoryEntry) -> some View {
-        Label(entry.title, systemImage: entry.category.symbol).font(.headline)
+        Label(entry.title, systemImage: entry.arrangementSymbol).font(.headline)
         .foregroundStyle(.primary)
     }
 
@@ -683,13 +707,32 @@ struct StoryDetailView: View {
     }
 
     private func delete(day: StoryDay) {
+        let dayID = day.journeyDay?.id ?? day.id
+        let trip = story.journey
         let remainingDays = story.sortedDays.filter { $0.id != day.id }
-        for entry in day.entries { modelContext.delete(entry) }
+        if let canonicalDay = day.journeyDay {
+            trip?.days.removeAll { $0.id == canonicalDay.id }
+            modelContext.delete(canonicalDay)
+        }
+        let entries = day.entries
+        story.entries.removeAll { entry in entries.contains { $0.id == entry.id } }
+        story.days.removeAll { $0.id == day.id }
+        for entry in entries { modelContext.delete(entry) }
         modelContext.delete(day)
         if selectedDayID == day.id || expandedDayID == day.id {
             selectedDayID = remainingDays.first?.id
             expandedDayID = remainingDays.first?.id
         }
+        do {
+            if let trip { JourneyHierarchyService.normalizeTripDaySchedule(trip) }
+            try UnifiedJourneyService.reconcile(context: modelContext)
+            try modelContext.save()
+            if let trip {
+                let tripID = trip.id
+                Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(tripID.uuidString.lowercased())", entityID: dayID) }
+            }
+        } catch { placeMessage = "删除未保存：\(error.localizedDescription)" }
     }
 
     private func openNavigation(for request: StoryNavigationRequest) {
@@ -1119,6 +1162,7 @@ private struct StoryDayEditRequest: Identifiable {
 
 struct StoryEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Bindable var story: TravelStory
 
     var body: some View {
@@ -1137,13 +1181,19 @@ struct StoryEditorView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("编辑足迹")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("保存") {
+                try? modelContext.save()
+                Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                    key: "trip:\(story.id.uuidString.lowercased())", entityID: story.id) }
+                dismiss()
+            } } }
         }
     }
 }
 
 private struct StoryDayEditorView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Bindable var day: StoryDay
     let isNew: Bool
     let onCancel: () -> Void
@@ -1181,6 +1231,9 @@ private struct StoryDayEditorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("保存") {
                         didFinish = true
+                        try? modelContext.save()
+                        if let story = day.story { Task { await CloudSyncService.shared.uploadPending(context: modelContext,
+                            key: "trip:\(story.id.uuidString.lowercased())", entityID: day.id) } }
                         dismiss()
                     }
                 }
@@ -1195,387 +1248,34 @@ private struct StoryDayEditorView: View {
 }
 
 private struct StoryEntryEditorView: View {
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
     let entry: StoryEntry
     let isNew: Bool
-
-    @State private var title: String
-    @State private var locationMode: ArrangementLocationMode
-    @State private var placeName: String
-    @State private var placeAddress: String
-    @State private var originName: String
-    @State private var originAddress: String
-    @State private var destinationName: String
-    @State private var destinationAddress: String
-    @State private var hasTime: Bool
-    @State private var startTime: Date
-    @State private var endTime: Date
-    @State private var note: String
-    @State private var pickerItems: [PhotosPickerItem] = []
-    @State private var pickedAssets: [PickedAsset] = []
-    @State private var removedMediaIDs: Set<UUID> = []
-    @State private var mediaWarning: String?
-    @State private var mediaPreview: AssetMediaPreviewRequest?
-
-    init(entry: StoryEntry, isNew: Bool = false) {
-        self.entry = entry
-        self.isNew = isNew
-        let initialTimeRange = Self.initialTimeRange(for: entry)
-        _title = State(initialValue: entry.title)
-        let isLegacyEntry = entry.locationModeRaw.isEmpty
-        _locationMode = State(initialValue: entry.locationMode)
-        _placeName = State(initialValue: entry.placeName.isEmpty && isLegacyEntry ? entry.title : entry.placeName)
-        _placeAddress = State(initialValue: entry.placeAddress.isEmpty && isLegacyEntry ? entry.address : entry.placeAddress)
-        _originName = State(initialValue: entry.originName)
-        _originAddress = State(initialValue: entry.originAddress)
-        _destinationName = State(initialValue: entry.destinationName)
-        _destinationAddress = State(initialValue: entry.destinationAddress)
-        _hasTime = State(initialValue: entry.startTime != nil || !entry.timeLabel.isEmpty)
-        _startTime = State(initialValue: initialTimeRange.start)
-        _endTime = State(initialValue: initialTimeRange.end)
-        _note = State(initialValue: entry.note)
-    }
+    @State private var ready = false
+    @State private var didSave = false
+    @State private var error: String?
 
     var body: some View {
-        TripNavigationStack {
-            Form {
-                Section("地点") {
-                    Picker("地点类型", selection: $locationMode) {
-                        ForEach(ArrangementLocationMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    if locationMode == .single {
-                        TextField("地点名称", text: $placeName).clearableText($placeName)
-                        TextField("地点详细地址（选填）", text: $placeAddress).clearableText($placeAddress)
-                    } else {
-                        TextField("出发地", text: $originName).clearableText($originName)
-                        TextField("出发地详细地址（选填）", text: $originAddress).clearableText($originAddress)
-                        TextField("目的地", text: $destinationName).clearableText($destinationName)
-                        TextField("目的地详细地址（选填）", text: $destinationAddress).clearableText($destinationAddress)
-                    }
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        editorFieldLabel("记录标题（选填）")
-                        TextField("不填则使用地点名称", text: $title).clearableText($title)
-                            .accessibilityLabel("记录标题，选填")
-                    }
-                }
-
-                Section("时间（选填）") {
-                    optionalTimeRow
-                }
-
-                Section("回忆") {
-                    TextField("记录这段足迹的见闻和感受", text: $note, axis: .vertical).clearableText($note)
-                        .lineLimit(5...12)
-                        .accessibilityLabel("回忆")
-                }
-
-                Section("照片与视频") {
-                    mediaGrid(existing: visibleExistingMedia, picked: pickedAssets)
-                }
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("编辑记录")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") {
-                        if isNew { modelContext.delete(entry) }
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("保存") { save() }
-                        .disabled(!hasRequiredLocation)
-                }
-            }
-            .onChange(of: pickerItems) { _, newValue in
-                consumePickerItems(newValue)
-            }
-            .alert("相簿提示", isPresented: Binding(
-                get: { mediaWarning != nil },
-                set: { if !$0 { mediaWarning = nil } }
-            )) {
-                Button("知道了", role: .cancel) { mediaWarning = nil }
-            } message: {
-                Text(mediaWarning ?? "")
-            }
-            .fullScreenCover(item: $mediaPreview) { AssetMediaViewer(request: $0) }
-        }
-    }
-
-    private func editorFieldLabel(_ title: String) -> some View {
-        Text(title)
-            .font(.caption)
-            .foregroundStyle(.secondary)
-    }
-
-    private var hasRequiredLocation: Bool {
-        switch locationMode {
-        case .single:
-            !placeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .route:
-            !originName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && !destinationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }
-    }
-
-    @ViewBuilder
-    private var optionalTimeRow: some View {
-        if hasTime {
-            HStack(spacing: 8) {
-                UnifiedTimeRangePicker(
-                    title: "起止时间",
-                    startTitle: "开始",
-                    endTitle: "结束",
-                    startTime: $startTime,
-                    endTime: $endTime,
-                    separator: "～"
-                )
-                Button {
-                    hasTime = false
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("清除时间")
-            }
-        } else {
-            Button {
-                hasTime = true
-            } label: {
-                HStack {
-                    Text("起止时间").foregroundStyle(.primary)
-                    Spacer()
-                    Text("添加").foregroundStyle(.secondary)
-                    Image(systemName: "plus.circle").foregroundStyle(Color.tripLake)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityHint("添加起止时间")
-        }
-    }
-
-    private static func initialTimeRange(for entry: StoryEntry) -> (start: Date, end: Date) {
-        let calendar = Calendar.current
-        if let start = entry.startTime {
-            let fallbackEnd = calendar.date(byAdding: .hour, value: 1, to: start) ?? start
-            return (start, max(start, entry.endTime ?? fallbackEnd))
-        }
-
-        let baseDate = entry.storyDay?.date ?? entry.story?.startDate ?? Date()
-        let timeParts = entry.timeLabel.split { "–—-~～至".contains($0) }
-
-        func date(from part: Substring) -> Date? {
-            let components = part
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .split(separator: ":")
-            guard components.count == 2,
-                  let hour = Int(components[0]),
-                  let minute = Int(components[1]),
-                  (0...23).contains(hour),
-                  (0...59).contains(minute)
-            else { return nil }
-            return calendar.date(bySettingHour: hour, minute: minute, second: 0, of: baseDate)
-        }
-
-        let defaultStart = calendar.date(bySettingHour: 9, minute: 0, second: 0, of: baseDate) ?? baseDate
-        let start = timeParts.first.flatMap(date(from:)) ?? defaultStart
-        let fallbackEnd = calendar.date(byAdding: .hour, value: 1, to: start) ?? start
-        let end = timeParts.dropFirst().first.flatMap(date(from:)) ?? fallbackEnd
-        return (start, max(start, end))
-    }
-
-    private var visibleExistingMedia: [MediaReference] {
-        entry.sortedMedia.filter { !removedMediaIDs.contains($0.id) }
-    }
-
-    private var remainingMediaSlots: Int {
-        FootprintMediaPolicy.remainingSlots(
-            existingCount: visibleExistingMedia.count,
-            pendingCount: pickedAssets.count
-        )
-    }
-
-    private var previewMediaItems: [AssetMediaPreviewItem] {
-        visibleExistingMedia
-            .map { AssetMediaPreviewItem(identifier: $0.localIdentifier, kind: $0.kind) }
-        + pickedAssets
-            .map { AssetMediaPreviewItem(identifier: $0.id, kind: $0.kind) }
-    }
-
-    @ViewBuilder
-    private func mediaGrid(existing: [MediaReference], picked: [PickedAsset]) -> some View {
-        LazyVGrid(
-            columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3),
-            spacing: 8
-        ) {
-            ForEach(existing) { reference in
-                removableThumbnail(
-                    identifier: reference.localIdentifier,
-                    kind: reference.kind
-                ) {
-                    removedMediaIDs.insert(reference.id)
-                }
-            }
-
-            ForEach(picked) { asset in
-                removableThumbnail(identifier: asset.id, kind: asset.kind) {
-                    pickedAssets.removeAll { $0.id == asset.id }
-                }
-            }
-
-            if remainingMediaSlots > 0 {
-                PermissionAwarePhotosPicker(
-                    selection: $pickerItems,
-                    maxSelectionCount: remainingMediaSlots,
-                    matching: .any(of: [.images, .videos])
-                ) {
-                    addMediaTile
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("从系统相簿添加照片或视频，还可添加 \(remainingMediaSlots) 个")
+        Group {
+            if ready, let item = entry.journeyItem {
+                ItemEditorView(day: item.day, item: item, isFootprint: true, onSaved: { didSave = true })
+            } else if let error {
+                Text(error)
+            } else {
+                ProgressView()
             }
         }
-    }
-
-    private var addMediaTile: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(Color.tripLake.opacity(0.045))
-            .aspectRatio(1, contentMode: .fit)
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(
-                        Color.tripLake.opacity(0.52),
-                        style: StrokeStyle(lineWidth: 1.5, dash: [6, 5])
-                    )
+        .onAppear {
+            do {
+                try UnifiedJourneyService.reconcile(context: modelContext)
+                ready = true
+            } catch { self.error = error.localizedDescription }
+        }
+        .onDisappear {
+            if isNew && !didSave {
+                if let item = entry.journeyItem { modelContext.delete(item) }
+                modelContext.delete(entry)
             }
-            .overlay {
-                Image(systemName: "plus")
-                    .font(.title2.weight(.medium))
-                    .foregroundStyle(Color.tripLake)
-            }
-            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-    }
-
-    private func removableThumbnail(
-        identifier: String,
-        kind: MediaKind,
-        onRemove: @escaping () -> Void
-    ) -> some View {
-        ZStack(alignment: .topTrailing) {
-            Color.clear
-                .aspectRatio(1, contentMode: .fit)
-                .overlay {
-                    AssetThumbnail(identifier: identifier, showsVideoBadge: kind == .video)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .onTapGesture {
-                    mediaPreview = AssetMediaPreviewRequest(
-                        items: previewMediaItems,
-                        initialIdentifier: identifier
-                    )
-                }
-
-            Button(action: onRemove) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.title3)
-                    .symbolRenderingMode(.palette)
-                    .foregroundStyle(.white, .black.opacity(0.58))
-                    .frame(width: 30, height: 30)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .padding(3)
-            .accessibilityLabel("移除这项素材")
         }
-        .buttonStyle(.plain)
-    }
-
-    private func consumePickerItems(_ items: [PhotosPickerItem]) {
-        guard !items.isEmpty else { return }
-        let converted = PhotoLibraryService.pickedAssets(from: items)
-        var warnings: [String] = []
-        if converted.count != items.count {
-            warnings.append("有 \(items.count - converted.count) 项无法读取相簿标识，请从系统“照片”中重选。当前权限：\(PhotoLibraryService.readableStatusText)。")
-        }
-
-        let activeExistingIDs = Set(entry.media
-            .filter { !removedMediaIDs.contains($0.id) }
-            .map(\.localIdentifier))
-        let alreadyPickedIDs = Set(pickedAssets.map(\.id))
-        let newAssets = converted.filter {
-            !activeExistingIDs.contains($0.id) && !alreadyPickedIDs.contains($0.id)
-        }
-        let acceptedAssets = Array(newAssets.prefix(remainingMediaSlots))
-        pickedAssets.append(contentsOf: acceptedAssets)
-        if newAssets.count > acceptedAssets.count {
-            warnings.append("每条足迹记录最多可以添加 \(FootprintMediaPolicy.maximumCount) 个照片或视频，超出的素材未添加。")
-        }
-        mediaWarning = warnings.isEmpty ? nil : warnings.joined(separator: "\n")
-        pickerItems = []
-    }
-
-    private func save() {
-        let customTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedPlaceName = JourneyLocationText.entityName(from: placeName)
-        let normalizedOriginName = JourneyLocationText.entityName(from: originName, role: .origin)
-        let normalizedDestinationName = JourneyLocationText.entityName(from: destinationName, role: .destination)
-
-        entry.locationMode = locationMode
-        entry.placeName = normalizedPlaceName
-        entry.placeAddress = placeAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.originName = normalizedOriginName
-        entry.originAddress = originAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        entry.destinationName = normalizedDestinationName
-        entry.destinationAddress = destinationAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        let automaticTitle: String
-        switch locationMode {
-        case .single:
-            automaticTitle = normalizedPlaceName
-        case .route:
-            automaticTitle = [normalizedOriginName, normalizedDestinationName]
-                .filter { !$0.isEmpty }
-                .joined(separator: " → ")
-        }
-        entry.title = customTitle.isEmpty ? automaticTitle : customTitle
-        entry.address = locationMode == .single ? entry.placeAddress : entry.destinationAddress
-        if hasTime {
-            entry.startTime = startTime
-            entry.endTime = endTime
-            entry.timeLabel = "\(startTime.timeText)～\(endTime.timeText)"
-        } else {
-            entry.startTime = nil
-            entry.endTime = nil
-            entry.timeLabel = ""
-        }
-        entry.note = note
-
-        for reference in entry.media where removedMediaIDs.contains(reference.id) {
-            modelContext.delete(reference)
-        }
-
-        let activeMedia = entry.sortedMedia.filter { !removedMediaIDs.contains($0.id) }
-        let acceptedPendingAssets = pickedAssets.prefix(
-            FootprintMediaPolicy.remainingSlots(existingCount: activeMedia.count)
-        )
-        for (index, picked) in acceptedPendingAssets.enumerated() {
-            let reference = MediaReference(
-                localIdentifier: picked.id,
-                kind: picked.kind,
-                sortOrder: activeMedia.count + index
-            )
-            reference.storyEntry = entry
-            entry.media.append(reference)
-        }
-
-        dismiss()
     }
 }

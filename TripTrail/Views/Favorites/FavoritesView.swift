@@ -15,7 +15,17 @@ struct FavoritesView: View {
     @State private var placeMessage: String?
 
     @ScaledMetric(relativeTo: .body) private var minimumCardHeight: CGFloat = 240
-    private let columns = [GridItem(.flexible(), spacing: 4), GridItem(.flexible(), spacing: 4)]
+    private func columns(for width: CGFloat) -> [GridItem] {
+        Array(repeating: GridItem(.flexible(), spacing: 4), count: 2)
+    }
+
+    private func cardHeight(in size: CGSize) -> CGFloat {
+        if UIDevice.current.userInterfaceIdiom == .pad && size.width >= 600 {
+            let cardWidth = (size.width - 24 - 4) / 2
+            return cardWidth * 4 / 3
+        }
+        return max(minimumCardHeight, (size.height - 12) / 2)
+    }
 
     private var favorites: [ItineraryItem] {
         FavoriteArrangementService.filtered(
@@ -51,11 +61,11 @@ struct FavoritesView: View {
                             ContentUnavailableView.search(text: searchText)
                                 .frame(minHeight: 320)
                         } else {
-                            LazyVGrid(columns: columns, spacing: 4) {
+                            LazyVGrid(columns: columns(for: geometry.size.width), spacing: 4) {
                                 ForEach(favorites) { favorite in
                                     FavoriteArrangementCard(
                                         favorite: favorite,
-                                        cardHeight: max(minimumCardHeight, (geometry.size.height - 12) / 2),
+                                        cardHeight: cardHeight(in: geometry.size),
                                         onEdit: { favoriteToEdit = favorite },
                                         onDelete: { favoriteToDelete = favorite },
                                         onNavigate: { favoriteToOpen = favorite }
@@ -89,7 +99,7 @@ struct FavoritesView: View {
             ItemEditorView(day: nil, item: $0, mode: .favorite)
                 .task(id: $0.id) { await CloudSyncService.shared.sync(context: modelContext, kind: "favorite", recordID: favoriteToEdit?.id, automatic: true) }
         }
-        .cloudEditSheet(item: $favoriteToOpen) { favorite in
+        .tripBottomSheet(item: $favoriteToOpen) { favorite in
             NavigationOptionsSheet(
                 onAmap: {
                     guard let target = favorite.locationTargets.last else {
@@ -137,33 +147,24 @@ struct FavoritesView: View {
     }
 
     private var filterMenu: some View {
-            Menu {
-                Button {
-                    selectedCategory = nil
-                } label: {
-                    if selectedCategory == nil {
-                        Label("全部类型", systemImage: "checkmark")
-                    } else {
-                        Text("全部类型")
-                    }
-                }
+        Menu {
+            Picker("类型", selection: $selectedCategory) {
+                Label("全部类型", systemImage: "square.grid.2x2").tag(nil as PlaceCategory?)
                 ForEach(PlaceCategory.allCases) { category in
-                    Button {
-                        selectedCategory = category
-                    } label: {
-                        if selectedCategory == category {
-                            Label(category.rawValue, systemImage: "checkmark")
-                        } else {
-                            Label(category.rawValue, systemImage: category.symbol)
-                        }
-                    }
+                    Label(category.rawValue, systemImage: category.symbol).tag(Optional(category))
                 }
-            } label: {
-                Label(selectedCategory?.rawValue ?? "全部类型", systemImage: "chevron.down")
-                    .font(.subheadline)
-                    .fixedSize()
-                    .frame(minHeight: 44)
             }
+        } label: {
+            HStack(spacing: 4) {
+                Text(selectedCategory?.rawValue ?? "全部类型")
+                Image(systemName: "chevron.down").font(.caption2)
+            }
+            .font(.subheadline)
+            .foregroundStyle(Color.tripLakeText)
+            .fixedSize()
+            .frame(minHeight: 44)
+        }
+        .accessibilityLabel(selectedCategory == nil ? "按类型筛选收藏" : "按类型筛选收藏，已有条件")
     }
 
 }
@@ -174,6 +175,11 @@ private struct FavoriteArrangementCard: View {
     let onEdit: () -> Void
     let onDelete: () -> Void
     let onNavigate: () -> Void
+
+    private var footerCity: String {
+        let value = FavoriteArrangementService.city(for: favorite)
+        return value == "未设置城市" ? "" : value
+    }
 
     var body: some View {
         ZStack(alignment: .topTrailing) {
@@ -191,7 +197,7 @@ private struct FavoriteArrangementCard: View {
 
                 }
 
-                if let media = favorite.media.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                if let media = favorite.media.sorted(by: MediaReference.precedes).first {
                     Color.clear.frame(maxHeight: .infinity)
                         .overlay {
                             AssetThumbnail(identifier: media.localIdentifier, showsVideoBadge: media.kind == .video)
@@ -207,29 +213,36 @@ private struct FavoriteArrangementCard: View {
                         .font(.caption).foregroundStyle(.secondary)
                         .lineLimit(2).truncationMode(.tail)
                 }
-                HStack(spacing: 6) {
-                    Label(favorite.category.rawValue, systemImage: favorite.category.symbol)
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                GeometryReader { proxy in
+                    let baseFont = UIFont.preferredFont(forTextStyle: .caption1)
+                    let price = favorite.cost > 0 ? String(format: "¥%.0f", favorite.cost) : ""
+                    let textWidth = [favorite.category.rawValue, footerCity].reduce(CGFloat.zero) {
+                        $0 + ($1 as NSString).size(withAttributes: [.font: baseFont]).width
+                    }
+                    let fittingScale = min(1, max(0.5, (proxy.size.width - 42) / max(1, textWidth)))
+                    let scale = footerCity.count > 4 ? max(0.85, fittingScale) : fittingScale
+                    let priceWidth = (price as NSString).size(withAttributes: [.font: baseFont]).width
+                    let showsPrice = !price.isEmpty && (textWidth + priceWidth) * scale + 42 <= proxy.size.width
+                    HStack(spacing: 4) {
+                        HStack(spacing: 4) {
+                            Image(systemName: favorite.arrangementSymbol).font(.tripSystem(size: 14))
+                            Text(favorite.category.rawValue).fixedSize()
+                        }
                         .foregroundStyle(Color.tripLakeText)
-                        .padding(.horizontal, 8).padding(.vertical, 5)
+                        .padding(.horizontal, 6).padding(.vertical, 5)
                         .background(Color.tripLake.opacity(0.11), in: Capsule())
-                    let city = FavoriteArrangementService.city(for: favorite)
-                    if !city.isEmpty, city != "未设置城市" {
-                        Text(city)
-                            .font(.caption).foregroundStyle(.secondary)
-                            .lineLimit(1).truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    } else {
                         Spacer(minLength: 0)
+                        if !footerCity.isEmpty {
+                            Text(footerCity).lineLimit(1).truncationMode(.tail)
+                                .fixedSize(horizontal: footerCity.count <= 4, vertical: false)
+                        }
+                        if showsPrice { Text(price).fixedSize() }
                     }
-                    if favorite.cost > 0 {
-                        Text("¥\(favorite.cost, specifier: "%.0f")")
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1).minimumScaleFactor(0.8)
-                    }
+                    .font(.tripSystem(size: baseFont.pointSize * scale))
+                    .frame(width: proxy.size.width, alignment: .leading)
                 }
+                .frame(height: 30)
+
             }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -364,6 +377,14 @@ struct FavoriteImportSelectionView: View {
             modelContext.insert(item)
             item.media.forEach(modelContext.insert)
         }
+        if let trip = day.trip {
+            Task {
+                for item in created {
+                    await CloudSyncService.shared.uploadPending(context: modelContext,
+                        key: "trip:\(trip.id.uuidString.lowercased())", entityID: item.id)
+                }
+            }
+        }
         dismiss()
     }
 }
@@ -378,7 +399,7 @@ private struct FavoriteSelectionRow: View {
                 .font(.title3)
                 .foregroundStyle(isSelected ? Color.tripLake : .secondary)
 
-            Image(systemName: favorite.category.symbol)
+            Image(systemName: favorite.arrangementSymbol)
                             .foregroundStyle(Color.tripLakeText)
                 .frame(width: 34, height: 34)
                 .background(Color.tripLake.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))

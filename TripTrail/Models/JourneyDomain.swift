@@ -819,9 +819,7 @@ extension ItineraryItem {
             endTime: endTime,
             address: address,
             locationMode: locationMode,
-            placeName: placeName.isEmpty && locationModeRaw.isEmpty
-                ? JourneyLocationText.entityName(from: title, arrangementTitle: title)
-                : placeName,
+            placeName: placeName,
             placeAddress: placeAddress,
             originName: originName,
             originAddress: originAddress,
@@ -861,7 +859,6 @@ extension StoryEntry {
         destinationName = skeleton.destinationName
         destinationAddress = skeleton.destinationAddress
         supplementalInfo = ""
-        transport = .car
         distanceText = ""
         cost = 0
         sortOrder = skeleton.sortOrder

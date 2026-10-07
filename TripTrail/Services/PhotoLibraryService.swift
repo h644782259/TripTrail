@@ -3,6 +3,7 @@ import Photos
 import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
+import ImageIO
 
 private enum PhotoLibraryImageCache {
     static let shared: NSCache<NSString, UIImage> = {
@@ -101,8 +102,36 @@ enum PhotoLibraryService {
         return PHAsset.fetchAssets(withLocalIdentifiers: [identifier], options: nil).firstObject != nil
     }
 
-    static func localImage(_ url: URL) -> UIImage? {
-        if let image = UIImage(contentsOfFile: url.path) { return image }
+    static func localImage(_ url: URL, maxPixelSize: Int = 2400) -> UIImage? {
+        #if targetEnvironment(simulator)
+        // Host-generated previews support HEIC variants unavailable in Simulator codecs.
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            let preview = caches.appendingPathComponent("CompatibleMedia").appendingPathComponent(url.lastPathComponent + ".jpg")
+            if FileManager.default.fileExists(atPath: preview.path), let image = UIImage(contentsOfFile: preview.path) { return image }
+        }
+        #endif
+        let cacheKey = "local:\(url.path):\(maxPixelSize)" as NSString
+        if let cached = PhotoLibraryImageCache.shared.object(forKey: cacheKey) { return cached }
+        let type = UTType(filenameExtension: url.pathExtension)
+        let isVideo = type?.conforms(to: .movie) == true || type?.conforms(to: .video) == true
+        if !isVideo {
+            if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+                let options: [CFString: Any] = [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+                    kCGImageSourceShouldCacheImmediately: true
+                ]
+                if let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
+                    let image = UIImage(cgImage: decoded)
+                    PhotoLibraryImageCache.shared.setObject(image, forKey: cacheKey, cost: decoded.bytesPerRow * decoded.height)
+                    return image
+                }
+                return nil
+            }
+            // A failed still-image decode must not be retried through the video decoder.
+            if type?.conforms(to: .image) == true { return nil }
+        }
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
         return (try? generator.copyCGImage(at: .zero, actualTime: nil)).map { UIImage(cgImage: $0) }
@@ -409,7 +438,7 @@ struct AssetThumbnail: View {
 
     private func load() {
         if let url = PhotoLibraryService.localFile(identifier) {
-            image = PhotoLibraryService.localImage(url); isMissing = image == nil; return
+            image = PhotoLibraryService.localImage(url, maxPixelSize: 480); isMissing = image == nil; return
         }
         let targetSize = CGSize(width: 480, height: 480)
         let cacheKey = PhotoLibraryImageCache.key(
@@ -454,6 +483,7 @@ struct AssetMediaViewer: View {
     @Environment(\.dismiss) private var dismiss
     let request: AssetMediaPreviewRequest
 
+    @State private var imageIsZoomed = false
     @State private var currentIndex: Int
     @GestureState private var dragTranslation: CGFloat = 0
 
@@ -479,7 +509,7 @@ struct AssetMediaViewer: View {
                                     isActive: currentIndex == index
                                 )
                             } else {
-                                FullSizeAssetImage(identifier: item.identifier)
+                                FullSizeAssetImage(identifier: item.identifier, onZoom: { if currentIndex == index { imageIsZoomed = $0 } })
                             }
                         }
                         .frame(width: pageWidth, height: proxy.size.height)
@@ -570,7 +600,7 @@ struct AssetMediaViewer: View {
     }
 
     private func shouldHandlePaging(_ value: DragGesture.Value, in size: CGSize) -> Bool {
-        guard abs(value.translation.width) > abs(value.translation.height) else { return false }
+        guard !imageIsZoomed, abs(value.translation.width) > abs(value.translation.height) else { return false }
         if currentItem?.kind == .video, value.startLocation.y > size.height * 0.72 {
             return false
         }
@@ -580,15 +610,14 @@ struct AssetMediaViewer: View {
 
 private struct FullSizeAssetImage: View {
     let identifier: String
+    var onZoom: (Bool) -> Void
     @State private var image: UIImage?
     @State private var isMissing = false
 
     var body: some View {
         Group {
             if let image {
-                Image(uiImage: image)
-                    .resizable()
-                    .scaledToFit()
+                ZoomablePreviewImage(image: image, onZoom: onZoom)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if isMissing {
                 ContentUnavailableView(
@@ -671,7 +700,7 @@ private struct FullSizeAssetVideo: View {
     var body: some View {
         Group {
             if let player {
-                VideoPlayer(player: player)
+                MediaVideoPlayer(player: player)
             } else if failed {
                 ContentUnavailableView(
                     "视频不可用",
@@ -745,7 +774,7 @@ struct AssetVideoPlayer: View {
         TripNavigationStack {
             Group {
                 if let player {
-                    VideoPlayer(player: player)
+                    MediaVideoPlayer(player: player)
                         .onAppear { player.play() }
                 } else if failed {
                     ContentUnavailableView("视频不可用", systemImage: "video.slash", description: Text("原视频可能已从相簿删除，或尚未从 iCloud 下载。"))
@@ -795,5 +824,75 @@ struct AssetVideoPlayer: View {
                 else { failed = true }
             }
         }
+    }
+}
+
+private struct ZoomablePreviewImage: UIViewRepresentable {
+    let image: UIImage
+    let onZoom: (Bool) -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(onZoom: onZoom) }
+    func makeUIView(context: Context) -> UIScrollView {
+        let scroll = PreviewZoomScrollView()
+        scroll.minimumZoomScale = 1; scroll.maximumZoomScale = 5
+        scroll.showsHorizontalScrollIndicator = false; scroll.showsVerticalScrollIndicator = false
+        scroll.delegate = context.coordinator
+        let imageView = context.coordinator.imageView
+        imageView.contentMode = .scaleAspectFit; imageView.image = image
+        scroll.addSubview(imageView)
+        scroll.zoomImageView = imageView
+        let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.doubleTap(_:)))
+        tap.numberOfTapsRequired = 2; scroll.addGestureRecognizer(tap)
+        return scroll
+    }
+    func updateUIView(_ scroll: UIScrollView, context: Context) {
+        context.coordinator.onZoom = onZoom
+        if scroll.zoomScale == 1 {
+            context.coordinator.imageView.frame = scroll.bounds
+            scroll.contentSize = scroll.bounds.size
+        }
+    }
+    final class Coordinator: NSObject, UIScrollViewDelegate {
+        let imageView = UIImageView()
+        var onZoom: (Bool) -> Void
+        init(onZoom: @escaping (Bool) -> Void) { self.onZoom = onZoom }
+        func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+        func scrollViewDidZoom(_ scrollView: UIScrollView) { onZoom(scrollView.zoomScale > 1.01) }
+        @objc func doubleTap(_ tap: UITapGestureRecognizer) {
+            guard let scroll = tap.view as? UIScrollView else { return }
+            if scroll.zoomScale > 1.01 { scroll.setZoomScale(1, animated: true) }
+            else {
+                let point = tap.location(in: imageView)
+                let size = CGSize(width: scroll.bounds.width / 2.5, height: scroll.bounds.height / 2.5)
+                scroll.zoom(to: CGRect(x: point.x - size.width / 2, y: point.y - size.height / 2, width: size.width, height: size.height), animated: true)
+            }
+        }
+    }
+}
+
+private final class PreviewZoomScrollView: UIScrollView {
+    weak var zoomImageView: UIImageView?
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if zoomScale == 1, let zoomImageView {
+            zoomImageView.frame = CGRect(origin: .zero, size: bounds.size)
+            contentSize = bounds.size
+        }
+    }
+}
+
+private struct MediaVideoPlayer: UIViewControllerRepresentable {
+    let player: AVPlayer?
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.allowsVideoFrameAnalysis = false
+        return controller
+    }
+    func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {
+        if controller.player !== player { controller.player = player }
+    }
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) {
+        controller.player?.pause()
+        controller.player = nil
     }
 }

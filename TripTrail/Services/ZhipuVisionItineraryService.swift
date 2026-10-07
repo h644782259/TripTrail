@@ -520,7 +520,8 @@ enum ZhipuVisionItineraryService {
                         ?? payloadDay.routeTitle?.trimmed
                         ?? "",
                     note: payloadDay.note?.trimmed ?? "",
-                    items: items
+                    items: items,
+                    city: payloadDay.city?.trimmed ?? ""
                 )
             )
         }
@@ -552,6 +553,7 @@ enum ZhipuVisionItineraryService {
                let date = day.date,
                calendar.isDate(lastDate, inSameDayAs: date) {
                 groupedDays[lastIndex].items.append(contentsOf: day.items)
+                if groupedDays[lastIndex].city.isEmpty { groupedDays[lastIndex].city = day.city }
                 if groupedDays[lastIndex].routeTitle.isEmpty {
                     groupedDays[lastIndex].routeTitle = day.routeTitle
                 }
@@ -883,6 +885,7 @@ enum ZhipuVisionItineraryService {
         7. 图片未出现的字段用空字符串或 null，不要虚构。没有年份时使用参考日期所在年份。
         8. date、startAt、endAt 必须尽量输出完整格式：date 为 yyyy-MM-dd，时间为 yyyy-MM-dd HH:mm。
         9. 每个 day 的 items 必须至少有一项；没有时间也不能丢弃地点或安排，时间字段可为 null。
+        每天必须返回 city：根据当天标题、明确地址或明确地名识别主要游览城市；跨城市日优先当天住宿城市，其次主要游览城市，无法确定为空，不把整段目的地复制到每一天。category 是安排大类；transportMode 只描述交通安排本身：航班/机场接送、车次、自驾、出租、公交、地铁、轮渡、骑行、步行应分别填写匹配的枚举。attractionType 根据景点明确性质细分山岳、水域、公园、博物馆、古迹、寺庙、主题乐园、观景点；不确定为 unknown。航班与车次放 reservationInfo，说明放 note，未知时间为 null，地点为空时不得以安排标题代替地点。单地点与起终点字段互斥，非当前模式的地点字段为空。不得生成虚构价格、坐标、回忆或媒体。
         10. 只输出 itinerary_journey_v2 协议 JSON，不要 Markdown，不要解释：
         {
           "schemaVersion": 2,
@@ -893,6 +896,7 @@ enum ZhipuVisionItineraryService {
             "dayNumber": 1,
             "date": "yyyy-MM-dd 或 null",
             "title": "当天摘要",
+            "city": "当天主要游览或住宿城市，未知为空",
             "note": "",
             "items": [{
               "title": "地点、酒店名称或安排名称",
@@ -944,6 +948,7 @@ enum ZhipuVisionItineraryService {
         8. locationMode 为 single 时填写 placeName/placeAddress；为 route 时填写 origin/originAddress 和 destination/destinationAddress。地点必须是可被地图检索的实体名称，并去掉“游览、夜景、集合、入住、用餐”等动作前后缀。
         9. 住宿安排默认只预留 1 小时办理入住，不使用次日退房时间作为结束时间。门票、区间车、证件、路况、建议和注意事项放入最相关 item 的 note；金额放 cost；不返回前往方式、路程或通勤时长字段，也不要推测上一地点，不要因为信息不完整而返回空 items。
         10. 未出现的字段用空字符串或 null，不要虚构。每个 day 的 items 必须至少有一项。
+        每天必须返回 city：根据当天标题、明确地址或明确地名识别主要游览城市；跨城市日优先当天住宿城市，其次主要游览城市，无法确定为空，不把整段目的地复制到每一天。category 是安排大类；transportMode 只描述交通安排本身：航班/机场接送、车次、自驾、出租、公交、地铁、轮渡、骑行、步行应分别填写匹配的枚举。attractionType 根据景点明确性质细分山岳、水域、公园、博物馆、古迹、寺庙、主题乐园、观景点；不确定为 unknown。航班与车次放 reservationInfo，说明放 note，未知时间为 null，地点为空时不得以安排标题代替地点。单地点与起终点字段互斥，非当前模式的地点字段为空。不得生成虚构价格、坐标、回忆或媒体。
         11. 只输出下面结构的 JSON，不要 Markdown，不要解释，不要输出 reasoning_content。字段值不能确定时使用 null、空字符串或 0；startAt 和 endAt 也允许为 null：
         {
           "schemaVersion": 2,
@@ -954,6 +959,7 @@ enum ZhipuVisionItineraryService {
             "dayNumber": 1,
             "date": "yyyy-MM-dd 或 null",
             "title": "当天摘要",
+            "city": "当天主要游览或住宿城市，未知为空",
             "note": "",
             "items": [{
               "title": "地点、酒店名称或安排名称",
@@ -1185,6 +1191,7 @@ private struct JourneyDayPayload: Decodable {
     let date: String?
     let title: String?
     let routeTitle: String?
+    let city: String?
     let note: String?
     let items: [JourneyItemPayload]
 }

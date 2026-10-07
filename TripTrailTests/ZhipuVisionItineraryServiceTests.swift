@@ -9,10 +9,11 @@ final class ZhipuVisionItineraryServiceTests: XCTestCase {
     }
 
     func testSmartImportPreservesArrangementSubtypes() throws {
-        let content = #"{"days":[{"items":[{"title":"飞往杭州","category":"transport","transportMode":"flight"},{"title":"参观展览","category":"attraction","attractionType":"museum"}]}]}"#
+        let content = #"{"days":[{"city":"杭州","items":[{"title":"飞往杭州","category":"transport","transportMode":"flight"},{"title":"参观展览","category":"attraction","attractionType":"museum"}]}]}"#
         let journey = try ZhipuVisionItineraryService.decodeJourneyContent(content, referenceDate: Date())
         let items = try XCTUnwrap(journey.days.first?.items)
         XCTAssertEqual(items.count, 2)
+        XCTAssertEqual(journey.days.first?.city, "杭州")
         XCTAssertEqual(items[0].transport, .flight)
         XCTAssertEqual(items[1].attractionTypeRaw, "museum")
         let single = try XCTUnwrap(ZhipuVisionItineraryService.singleItemDraft(from: journey))

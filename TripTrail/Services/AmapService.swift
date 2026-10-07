@@ -123,7 +123,7 @@ enum AmapService {
                previous.latitude == stop.latitude, previous.longitude == stop.longitude { continue }
             stops.append(stop)
         }
-        guard stops.count >= 2, stops.allSatisfy(\.hasValidCoordinate) else { return nil }
+        guard (2...18).contains(stops.count), stops.allSatisfy(\.hasValidCoordinate) else { return nil }
         let start = stops[0]
         let end = stops[stops.count - 1]
         guard

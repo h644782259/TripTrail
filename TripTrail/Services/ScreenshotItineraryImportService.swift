@@ -58,6 +58,7 @@ struct ItineraryJourneyDayDraft: Identifiable {
     var routeTitle: String
     var note: String
     var items: [ItineraryJourneyItemDraft]
+    var city: String = ""
 }
 
 struct ItineraryJourneyItemDraft: Identifiable {
@@ -1636,6 +1637,7 @@ enum JourneyImportApplyService {
             }
             var nextItemSortOrder = (day.items.map(\.sortOrder).max() ?? -1) + 1
             for dayDraft in plannedDay.drafts {
+                if !dayDraft.city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { day.city = dayDraft.city.trimmingCharacters(in: .whitespacesAndNewlines) }
                 day.note = mergedDayNote(
                     existing: day.note,
                     additions: [dayDraft.routeTitle == day.title ? "" : dayDraft.routeTitle, dayDraft.note]

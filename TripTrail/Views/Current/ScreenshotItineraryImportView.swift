@@ -111,6 +111,7 @@ struct ScreenshotItineraryImportView: View {
 
                 ForEach(Array(days.indices), id: \.self) { dayIndex in
                     Section {
+                        TextField("当天城市", text: $days[dayIndex].city).clearableText($days[dayIndex].city)
                         ForEach(Array(days[dayIndex].items.indices), id: \.self) { itemIndex in
                             importItemEditor(
                                 item: $days[dayIndex].items[itemIndex],
@@ -157,7 +158,7 @@ struct ScreenshotItineraryImportView: View {
         VStack(alignment: .leading, spacing: 12) {
             Label(
                 item.wrappedValue.title.isEmpty ? "安排 \(number)" : item.wrappedValue.title,
-                systemImage: item.wrappedValue.category.symbol
+                systemImage: item.wrappedValue.category == .transport ? item.wrappedValue.transport.symbol : item.wrappedValue.category == .attraction ? (AttractionType(rawValue: item.wrappedValue.attractionTypeRaw) ?? .automatic).symbol : item.wrappedValue.category.symbol
             )
                 .font(.headline)
             VStack(alignment: .leading, spacing: 12) {
@@ -173,6 +174,16 @@ struct ScreenshotItineraryImportView: View {
                     Picker("类型", selection: item.category) {
                         ForEach(PlaceCategory.allCases) { category in
                             Label(category.rawValue, systemImage: category.symbol).tag(category)
+                        }
+                    }
+                    if item.wrappedValue.category == .transport {
+                        Picker("交通方式", selection: item.transport) {
+                            ForEach(TransportMode.allCases) { Text($0.displayName).tag($0) }
+                        }
+                    }
+                    if item.wrappedValue.category == .attraction {
+                        Picker("景点类型", selection: item.attractionTypeRaw) {
+                            ForEach(AttractionType.allCases) { Text($0.label).tag($0.rawValue) }
                         }
                     }
                     Toggle("时间待定", isOn: item.isTimePending)
@@ -285,7 +296,8 @@ struct ScreenshotItineraryImportView: View {
                 date: targetDay.date,
                 routeTitle: "",
                 note: notes,
-                items: sourceDays.flatMap(\.items)
+                items: sourceDays.flatMap(\.items),
+                city: sourceDays.count == 1 ? sourceDays[0].city : targetDay.city
             )
         ]
     }

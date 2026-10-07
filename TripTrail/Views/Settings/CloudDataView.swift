@@ -281,16 +281,16 @@ struct CloudVersionNotice: View {
     var body: some View {
         Color.clear.frame(height: 0)
             .alert("内容冲突", isPresented: Binding(
-                get: { record != nil && record?.key != dismissedKey && detailsKey == nil && error == nil },
-                set: { if !$0 { dismissedKey = record?.key } }
+                get: { record != nil && record?.key != dismissedKey && !cloud.presentedConflictKeys.contains(record?.key ?? "") && detailsKey == nil && error == nil },
+                set: { if !$0 { dismissedKey = record?.key; if let record { cloud.presentedConflictKeys.insert(record.key) } } }
             )) {
                 if let record {
-                    Button("查看详情") { detailsKey = record.key }
+                    Button("查看详情") { cloud.presentedConflictKeys.insert(record.key); dismissedKey = record.key; detailsKey = record.key }
                     Button("使用云端") { resolve(record.key, useCloud: true) }
                     Button("使用本地") { resolve(record.key, useCloud: false) }
                 }
             } message: {
-                Text("检测到内容冲突，请选择使用“云端”/“本地”版本")
+                Text("“\(record?.title ?? "内容")”存在冲突，请选择使用“云端”或“本地”版本。")
             }
             .sheet(isPresented: Binding(get: { detailsKey != nil }, set: { if !$0 { detailsKey = nil } })) {
                 if let detailsKey { CloudConflictDetailsView(key: detailsKey) }
@@ -299,10 +299,12 @@ struct CloudVersionNotice: View {
                 Button("确定") { error = nil; dismissedKey = nil }
             } message: { Text(error ?? "") }
             .onChange(of: cloud.conflicts) { _, conflicts in
-                if let dismissedKey, !conflicts.contains(dismissedKey) { self.dismissedKey = nil }
+                if let dismissedKey, !conflicts.contains(dismissedKey) { self.dismissedKey = nil; cloud.presentedConflictKeys.remove(dismissedKey) }
             }
     }
     private func resolve(_ key: String, useCloud: Bool) {
+        cloud.presentedConflictKeys.insert(key)
+        dismissedKey = key
         Task {
             do { try await cloud.resolve(key, useCloud: useCloud, context: context) }
             catch { self.error = error.localizedDescription }
@@ -344,14 +346,14 @@ struct CloudConflictDetailsView: View {
                                 }.font(.subheadline).textSelection(.enabled)
                             }
                         }
-                        if !loading && rows.isEmpty { Text("当前未发现可展示的内容差异").foregroundStyle(.secondary) }
+                        if !loading && error == nil && revision != nil && rows.isEmpty { Text("内容已一致，无需选择版本").foregroundStyle(.secondary) }
                         if let error { Text(error).font(.caption).foregroundStyle(.red) }
                     }.padding()
                 }
                 HStack {
                     Button("使用云端") { choose(true) }.frame(maxWidth: .infinity)
                     Button("使用本地") { choose(false) }.frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent).disabled(loading || resolving || cloud.busy || revision == nil).padding()
+                }.buttonStyle(.borderedProminent).disabled(loading || resolving || cloud.busy || revision == nil || rows.isEmpty).padding()
             }
             .navigationTitle("内容差异").navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -369,7 +371,12 @@ struct CloudConflictDetailsView: View {
             guard parts.count == 2, let id = UUID(uuidString: String(parts[1])) else { return }
             let remote = try await cloud.previewCloudVersion(id: id, kind: String(parts[0]))
             guard let local = try CloudRecordAdapter.records(context).first(where: { $0.key == key }) else { return }
-            rows = try CloudContentDifference.compare(cloud: CloudRecordAdapter.normalized(remote.payload, kind: remote.kind), local: local.data)
+            let remoteData = try CloudRecordAdapter.normalized(remote.payload, kind: remote.kind)
+            rows = try CloudContentDifference.compare(cloud: remoteData, local: local.data)
+            let equivalent = try cloud.clearEquivalentConflict(key, cloud: remoteData, local: local.data)
+            if rows.isEmpty && !equivalent {
+                rows = [CloudContentDifference(id: "baseline", label: "同步状态", cloud: "云端版本已更新", local: "同步基准或内部记录不同，请重新加载云端版本")]
+            }
             revision = remote.revision
         } catch { self.error = error.localizedDescription }
     }

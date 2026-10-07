@@ -15,6 +15,16 @@ final class CloudSyncTests: XCTestCase {
         XCTAssertEqual(rows[0].local, "本地说明")
     }
 
+    func testConflictDetailsIncludesCoordinatesAndCoverWithoutStoragePaths() throws {
+        let remote: [String: Any] = ["id": "trip", "latitude": 38.4, "coverMedia": ["id": "cover-a", "cloudPath": "secret"]]
+        let local: [String: Any] = ["id": "trip", "latitude": 39.4, "coverMedia": ["id": "cover-b", "localIdentifier": "device"]]
+        let rows = try CloudContentDifference.compare(cloud: JSONSerialization.data(withJSONObject: remote), local: JSONSerialization.data(withJSONObject: local))
+        XCTAssertEqual(rows.count, 2)
+        XCTAssertTrue(rows.contains { $0.label.contains("纬度") })
+        XCTAssertTrue(rows.contains { $0.label.contains("封面") && $0.cloud == "云端封面" })
+        XCTAssertFalse(rows.contains { $0.cloud.contains("secret") || $0.local.contains("cover-b") })
+    }
+
     func testCloudLibraryRenderingDoesNotSaveOrCreateJourneyAdapters() throws {
         let container = try ModelContainer(for: Trip.self, TripDay.self, ItineraryItem.self, MediaReference.self, TravelStory.self, StoryDay.self, StoryEntry.self, configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         let context = container.mainContext

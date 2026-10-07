@@ -37,7 +37,8 @@ struct TripDetailView: View {
     @State private var itineraryDrag: ItineraryDragState?
     @State private var itineraryDragRevision = 0
     @State private var itemDragOrder: [UUID] = []
-    @State private var itemDragFrames: [UUID: CGRect] = [:]
+    @State private var itemDragFrameStore = ItemDragFrameStore()
+    private var itemDragFrames: [UUID: CGRect] { itemDragFrameStore.frames }
     @State private var itemDragLocation: CGPoint?
     @State private var itemDragGrabOffset: CGSize = .zero
     @State private var itemDragSize: CGSize = .zero
@@ -744,7 +745,9 @@ struct TripDetailView: View {
             Button { dayForNewItem = day } label: { Label("添加安排", systemImage: "plus") }
                 .font(.subheadline.bold())
         }
-        .onPreferenceChange(ItemDragFramesKey.self) { itemDragFrames = $0 }
+        .onPreferenceChange(ItemDragFramesKey.self) { frames in
+            if itemDragFrameStore.frames != frames { itemDragFrameStore.frames = frames }
+        }
         .contentShape(Rectangle())
         .background(ScrollLongPressBridge { phase, point in
             switch phase {
@@ -1639,10 +1642,7 @@ struct AmapRoutePlanningView: View {
     init(request: ItineraryRoutePlanningRequest) {
         let points = ItineraryRoutePlanning.removingAdjacentDuplicates(request.points)
         self.request = ItineraryRoutePlanningRequest(title: request.title, points: points, missingLocationCount: request.missingLocationCount)
-        let pending = points.filter { !$0.isCompleted }
-        let firstPending = points.firstIndex { !$0.isCompleted }
-        let previous = firstPending.flatMap { $0 > 0 ? points[$0 - 1] : nil }
-        _selectedPointIDs = State(initialValue: Set((pending + [previous].compactMap { $0 }).map(\.id)))
+        _selectedPointIDs = State(initialValue: points.count <= 18 ? Set(points.map(\.id)) : [])
     }
 
     var body: some View {
@@ -1656,13 +1656,14 @@ struct AmapRoutePlanningView: View {
                     }
                     .pickerStyle(.segmented)
                 } footer: {
-                    Text("高德地图会按下方顺序设置起点、途经点和终点。")
+                    Text(request.points.count > 18 ? "地点超过18个，默认未选中，请选择部分地点分段规划。" : "最多18个地点（含起点、终点），高德地图按下方顺序规划。")
                 }
 
                 Section {
                     HStack {
                         Button("全选") {
-                            selectedPointIDs = Set(request.points.map(\.id))
+                            if request.points.count <= 18 { selectedPointIDs = Set(request.points.map(\.id)) }
+                            else { errorMessage = "最多选择18个地点（16个途经点），请分段规划。" }
                         }
                         Spacer()
                         Button("取消全选") {
@@ -1766,8 +1767,10 @@ struct AmapRoutePlanningView: View {
     private func toggle(_ point: ItineraryRoutePoint) {
         if selectedPointIDs.contains(point.id) {
             selectedPointIDs.remove(point.id)
-        } else {
+        } else if selectedPointIDs.count < 18 {
             selectedPointIDs.insert(point.id)
+        } else {
+            errorMessage = "最多选择18个地点（16个途经点），请分段规划。"
         }
     }
 
@@ -1780,7 +1783,7 @@ struct AmapRoutePlanningView: View {
 
     private func openRoute() {
         let selected = selectedPoints
-        guard selected.count >= 2 else { return }
+        guard (2...18).contains(selected.count) else { return }
         isOpening = true
         Task {
             let result = await AmapService.openRoute(
@@ -2027,6 +2030,11 @@ private struct DayTabViewportKey: PreferenceKey {
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
+private final class ItemDragFrameStore {
+    // Geometry measurements are input for gestures, not state that changes layout.
+    var frames: [UUID: CGRect] = [:]
+}
+
 private struct ItemDragFramesKey: PreferenceKey {
     static var defaultValue: [UUID: CGRect] = [:]
     static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
@@ -2259,7 +2267,7 @@ private struct JourneyWeatherView: View {
         }
         .task(id: city + dateKey + String(retry)) {
             forecast = nil
-            guard eligible else { message = date < Calendar.current.startOfDay(for: Date()) ? "不提供历史天气" : "暂未进入预报范围"; return }
+            guard eligible else { message = date < Calendar.current.startOfDay(for: Date()) ? "不支持查询历史天气" : "仅支持查询今天起7天内的天气（含今天）"; return }
             guard !city.isEmpty else { message = "选择城市查看天气"; return }
             loading = true; message = "正在获取天气…"
             defer { loading = false }

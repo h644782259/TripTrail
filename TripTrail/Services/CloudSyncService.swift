@@ -262,6 +262,17 @@ final class CloudSyncService: ObservableObject {
     @Published var message = ""
     @Published private(set) var conflicts: Set<String> = []
     private var pendingSaves: [String: CloudLocalRecord] = [:]
+    var presentedConflictKeys: Set<String> = []
+    func clearEquivalentConflict(_ key: String, cloud: Data, local: Data) throws -> Bool {
+        guard try CloudJSON.businessFingerprint(cloud) == CloudJSON.businessFingerprint(local) else { return false }
+        if var binding = bindings[key], let server = remote.first(where: { $0.key == key }) {
+            binding.revision = server.revision; binding.payload = server.payload
+            binding.localPayload = local; binding.baseline = try CloudJSON.fingerprint(local)
+            bindings[key] = binding; persist()
+        }
+        conflicts.remove(key); pendingSaves.removeValue(forKey: key)
+        return true
+    }
     var projectURL: String { Bundle.main.object(forInfoDictionaryKey: "SupabaseURL") as? String ?? "" }
     var publicKey: String {
         if let publicKeyOverride { return publicKeyOverride }
@@ -639,6 +650,7 @@ final class CloudSyncService: ObservableObject {
     private func syncOne(_ local: CloudLocalRecord, context: ModelContext, allowUpload: Bool = false) async throws {
         guard var binding = bindings[local.key] else { return }
         let server = remote.first { $0.key == local.key }
+        if let server, try clearEquivalentConflict(local.key, cloud: CloudRecordAdapter.normalized(server.payload, kind: server.kind), local: local.data) { return }
         let dirty = try isDirty(local, binding)
         var comparisonRevision = server?.revision
         if let server, let base = binding.localPayload {
@@ -1025,7 +1037,7 @@ struct CloudContentDifference: Identifiable {
     let cloud: String
     let local: String
     static func compare(cloud: Data, local: Data) throws -> [CloudContentDifference] {
-        let labels = ["title": "标题", "destination": "目的地", "licensePlate": "车牌", "note": "补充说明", "journalNote": "回忆", "journalSummary": "旅程回忆", "summary": "回忆", "journalDetails": "当天说明", "details": "当天说明", "arrangementNote": "补充说明", "supplementalInfo": "补充说明", "journalSupplement": "补充记录", "city": "城市", "startDate": "开始日期", "endDate": "结束日期", "date": "日期", "startTime": "开始时间", "endTime": "结束时间", "timeLabel": "时间", "isTimePending": "时间待定", "isFixedTime": "固定时间", "executionStatusRaw": "完成状态", "categoryRaw": "类型", "attractionTypeRaw": "景点类型", "transportRaw": "交通方式", "locationModeRaw": "地点形式", "placeName": "地点", "placeAddress": "地点地址", "originName": "出发地", "originAddress": "出发地地址", "destinationName": "目的地", "destinationAddress": "目的地地址", "address": "地址", "cost": "花费", "reservationInfo": "预约信息", "sortOrder": "顺序"]
+        let labels = ["title": "标题", "destination": "目的地", "licensePlate": "车牌", "note": "补充说明", "journalNote": "回忆", "journalSummary": "旅程回忆", "summary": "回忆", "journalDetails": "当天说明", "details": "当天说明", "arrangementNote": "补充说明", "supplementalInfo": "补充说明", "journalSupplement": "补充记录", "city": "城市", "startDate": "开始日期", "endDate": "结束日期", "date": "日期", "startTime": "开始时间", "endTime": "结束时间", "timeLabel": "时间", "isTimePending": "时间待定", "isFixedTime": "固定时间", "executionStatusRaw": "完成状态", "categoryRaw": "类型", "attractionTypeRaw": "景点类型", "transportRaw": "交通方式", "locationModeRaw": "地点形式", "placeName": "地点", "placeAddress": "地点地址", "originName": "出发地", "originAddress": "出发地地址", "destinationName": "目的地", "destinationAddress": "目的地地址", "address": "地址", "cost": "花费", "reservationInfo": "预约信息", "sortOrder": "顺序", "latitude": "纬度", "longitude": "经度", "originLatitude": "出发地纬度", "originLongitude": "出发地经度", "destinationLatitude": "目的地纬度", "destinationLongitude": "目的地经度", "coverZoom": "封面缩放", "coverOffsetX": "封面水平位置", "coverOffsetY": "封面垂直位置", "isFavorite": "收藏状态", "isCompleted": "完成状态", "isAutomaticCompletionOverridden": "手动完成状态"]
         func flatten(_ value: Any, key: String = "", parent: String = "") -> [String: (String, String)] {
             var result: [String: (String, String)] = [:]
             guard let object = value as? [String: Any] else { return result }
@@ -1057,6 +1069,16 @@ struct CloudContentDifference: Identifiable {
                     result[key + "/media/" + id] = (heading + " · 照片与视频", "第 \(order) 项 · \(kind == "视频" || kind == "video" ? "视频" : "照片")" + (caption.isEmpty ? "" : " · " + caption))
                 }
             }
+            if let cover = object["coverMedia"] as? [String: Any] {
+                let identity = (cover["id"] as? String ?? "").lowercased()
+                result[key + "/cover"] = (heading + " · 封面", identity)
+            }
+            for field in object.keys where labels[field] == nil && !["id", "days", "items", "entries", "media", "coverMedia", "localIdentifier", "cloudPath"].contains(field) && !field.lowercased().hasSuffix("id") && !field.lowercased().hasSuffix("ids") {
+                let raw = object[field]!
+                if !(raw is [Any]) && !(raw is [String: Any]) {
+                    result[key + "/" + field] = (heading + " · " + field, raw is NSNull ? "" : String(describing: raw))
+                }
+            }
             return result
         }
         let remote = flatten(CloudJSON.businessValue(try JSONSerialization.jsonObject(with: cloud)))
@@ -1064,7 +1086,7 @@ struct CloudContentDifference: Identifiable {
         return Set(remote.keys).union(device.keys).sorted().compactMap { key in
             let left = remote[key]; let right = device[key]
             guard left?.1 != right?.1 else { return nil }
-            return CloudContentDifference(id: key, label: right?.0 ?? left?.0 ?? "内容", cloud: left?.1 ?? "—", local: right?.1 ?? "—")
+            return CloudContentDifference(id: key, label: right?.0 ?? left?.0 ?? "内容", cloud: key.hasSuffix("/cover") ? (left == nil ? "未设置" : "云端封面") : left?.1 ?? "—", local: key.hasSuffix("/cover") ? (right == nil ? "未设置" : "本地封面") : right?.1 ?? "—")
         }
     }
 }

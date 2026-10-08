@@ -178,10 +178,29 @@ enum CloudJSON {
         let value: Any?
         let conflicts: [String]
     }
+    static func conflictText(_ value: Any, path: String) -> String {
+        var node: Any? = businessValue(value)
+        for part in path.split(separator: "/").map(String.init) {
+            if let object = node as? [String: Any] { node = object[part] }
+            else if let list = node as? [[String: Any]] { node = list.first { ($0["id"] as? String)?.lowercased() == part.lowercased() } }
+            else { node = nil }
+        }
+        guard let node, !(node is NSNull) else { return "未填写" }
+        if let text = node as? String { return text.isEmpty ? "未填写" : text }
+        let clean = transform(node) { item in
+            var item = item; item.removeValue(forKey: "localIdentifier"); item.removeValue(forKey: "cloudPath"); return item
+        }
+        if let data = try? JSONSerialization.data(withJSONObject: clean, options: [.sortedKeys, .fragmentsAllowed]), let text = String(data: data, encoding: .utf8) { return text }
+        return String(describing: node)
+    }
     // Compare against the shared ancestor, matching collections by stable entity ID.
     // Device-local media paths and automatically derived status are not user edits.
     static func merge(base: Any?, local: Any?, remote: Any?, preferLocal: Bool = true, path: String = "", remoteChoices: Set<String> = []) -> MergeResult {
+        func empty(_ value: Any?) -> Bool {
+            value == nil || value is NSNull || (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) == ""
+        }
         func equal(_ a: Any?, _ b: Any?) -> Bool {
+            if empty(a) && empty(b) { return true }
             guard let a, let b else { return a == nil && b == nil }
             func normalized(_ value: Any) -> Any {
                 transform(businessValue(value)) { media in
@@ -191,6 +210,7 @@ enum CloudJSON {
             }
             return NSDictionary(dictionary: ["v": normalized(a)]).isEqual(to: ["v": normalized(b)])
         }
+        if path.hasSuffix("/sortOrder") { return MergeResult(value: remote ?? local, conflicts: []) }
         if equal(local, remote) { return MergeResult(value: local, conflicts: []) }
         if equal(local, base) { return MergeResult(value: remote, conflicts: []) }
         if equal(remote, base) { return MergeResult(value: local, conflicts: []) }
@@ -224,11 +244,52 @@ enum CloudJSON {
                     let child = merge(base: bm[id], local: lm[id], remote: rm[id], preferLocal: preferLocal, path: path + "/" + id, remoteChoices: remoteChoices)
                     if let value = child.value { values.append(value) }; conflicts += child.conflicts
                 }
+                if values.allSatisfy({ ($0 as? [String: Any])?["sortOrder"] != nil }) {
+                    let order = mergeOrder(base: b, local: l, remote: r, surviving: values)
+                    let byID = Dictionary(uniqueKeysWithValues: values.map { (($0 as! [String: Any])["id"] as! String).lowercased() }.enumerated().map { ($0.element, values[$0.offset]) })
+                    values = order.enumerated().map { index, id in
+                        var item = byID[id] as! [String: Any]; item["sortOrder"] = index; return item
+                    }
+                }
                 return MergeResult(value: values, conflicts: conflicts)
             }
         }
         return MergeResult(value: preferLocal && !remoteChoices.contains(path) ? local : remote, conflicts: [path])
     }
+    // Merge relative positions, so an insertion does not count as edits to every later index.
+    static func mergeOrder(base: [Any], local: [Any], remote: [Any], surviving: [Any]) -> [String] {
+        func ordered(_ items: [Any]) -> [String] {
+            items.compactMap { $0 as? [String: Any] }.sorted {
+                let a = $0["sortOrder"] as? Int ?? 0, b = $1["sortOrder"] as? Int ?? 0
+                return a == b ? ($0["id"] as! String).lowercased() < ($1["id"] as! String).lowercased() : a < b
+            }.map { ($0["id"] as! String).lowercased() }
+        }
+        let b = ordered(base), l = ordered(local), r = ordered(remote)
+        let nodes = ordered(surviving).sorted()
+        func relation(_ list: [String], _ a: String, _ b: String) -> Bool? {
+            guard let x = list.firstIndex(of: a), let y = list.firstIndex(of: b) else { return nil }; return x < y
+        }
+        var edges: [String: Set<String>] = [:]
+        for (i, a) in nodes.enumerated() {
+            for c in nodes.dropFirst(i + 1) {
+                let before = relation(b, a, c), left = relation(l, a, c), right = relation(r, a, c)
+                let choice: Bool?
+                if let before, let left, left != before { choice = left }
+                else { choice = right ?? left ?? before }
+                if let choice { edges[choice ? a : c, default: []].insert(choice ? c : a) }
+            }
+        }
+        let priority = r + l.filter { !r.contains($0) } + nodes.filter { !r.contains($0) && !l.contains($0) }
+        var remaining = Set(nodes), result: [String] = []
+        while !remaining.isEmpty {
+            let available = remaining.filter { node in !remaining.contains { edges[$0]?.contains(node) == true } }
+            // Concurrent moves can form a cycle; choose deterministically without exposing indices.
+            let next = priority.first { (available.isEmpty ? remaining : available).contains($0) }!
+            result.append(next); remaining.remove(next)
+        }
+        return result
+    }
+
     static func retainingAncestor(_ value: Any?, ancestor: Any?, paths: Set<String>, path: String = "") -> Any? {
         if paths.contains(path) { return ancestor }
         guard paths.contains(where: { $0.hasPrefix(path + "/") }) else { return value }
@@ -739,29 +800,46 @@ final class CloudSyncService: ObservableObject {
         try await receive(server, replacing: local, context: context)
     }
 
-    func resolve(_ key: String, useCloud: Bool, context: ModelContext, expectedRevision: Int? = nil) async throws {
+    func conflictRows(_ key: String, server: CloudRemoteRecord, local: CloudLocalRecord) throws -> [CloudContentDifference] {
+        let remoteData = try CloudRecordAdapter.normalized(server.payload, kind: server.kind)
+        guard let baseline = bindings[key]?.localPayload else {
+            return [CloudContentDifference(id: "baseline", label: "缺少同步基准", cloud: "重新加载云端内容", local: "本地内容已保留")]
+        }
+        let localData = pendingSaves[key]?.data ?? local.data
+        let localValue = try JSONSerialization.jsonObject(with: localData), remoteValue = try JSONSerialization.jsonObject(with: remoteData)
+        let merged = CloudJSON.merge(base: try JSONSerialization.jsonObject(with: baseline), local: localValue, remote: remoteValue)
+        let differences = try CloudContentDifference.compare(cloud: remoteData, local: localData)
+        return merged.conflicts.map { path in
+            let matching = differences.filter { $0.id == path || $0.id.hasPrefix(path + "/") || path.hasPrefix($0.id + "/") }
+            return CloudContentDifference(id: path, label: matching.first?.label ?? "其他内容", cloud: matching.isEmpty ? CloudJSON.conflictText(remoteValue, path: path) : matching.map(\.cloud).joined(separator: " · "), local: matching.isEmpty ? CloudJSON.conflictText(localValue, path: path) : matching.map(\.local).joined(separator: " · "))
+        }
+    }
+
+    func resolve(_ key: String, useCloud: Bool, context: ModelContext, expectedRevision: Int? = nil, choices: Set<String>? = nil, selectedPaths: Set<String>? = nil, expectedLocalFingerprint: String? = nil) async throws {
         guard !busy else { return }; busy = true; defer { endSync() }
         try await loadRemote(ids: [String(key.split(separator: ":").last ?? "")])
         guard let local = try CloudRecordAdapter.records(context).first(where: { $0.key == key }), let server = remote.first(where: { $0.key == key }) else { return }
         if let expectedRevision, server.revision != expectedRevision { throw CloudSyncError.message("云端内容已更新，请刷新详情后再选择") }
+        if let expectedLocalFingerprint, try local.fingerprint != expectedLocalFingerprint { throw CloudSyncError.message("本地内容已更新，请刷新详情后再选择") }
         guard let baseline = bindings[key]?.localPayload else {
-            guard useCloud else { throw CloudSyncError.message("缺少同步基准，请先重新加载") }
+            guard useCloud || choices?.contains("baseline") == true else { throw CloudSyncError.message("缺少同步基准，请先重新加载") }
             try await receive(server, replacing: local, context: context); return
         }
-        conflicts.remove(key)
         let base = try JSONSerialization.jsonObject(with: baseline)
         let remoteValue = try JSONSerialization.jsonObject(with: CloudRecordAdapter.normalized(server.payload, kind: server.kind))
         if let pending = pendingSaves[key] {
-            let merged = CloudJSON.merge(base: base, local: try JSONSerialization.jsonObject(with: pending.data), remote: remoteValue, preferLocal: !useCloud)
+            let merged = CloudJSON.merge(base: base, local: try JSONSerialization.jsonObject(with: pending.data), remote: remoteValue, preferLocal: choices != nil || !useCloud, remoteChoices: choices ?? [])
+            if let selectedPaths, Set(merged.conflicts) != selectedPaths { throw CloudSyncError.message("冲突内容已变化，请刷新详情后再选择") }
             let selected = CloudLocalRecord(id: local.id, kind: local.kind, title: (merged.value as? [String: Any])?["title"] as? String ?? local.title, data: try JSONSerialization.data(withJSONObject: merged.value!), media: local.media)
-            try await send(selected, revision: server.revision, context: context, remoteChoices: useCloud ? Set(merged.conflicts) : [])
+            try await send(selected, revision: server.revision, context: context, remoteChoices: choices ?? (useCloud ? Set(merged.conflicts) : []), resolvedPaths: selectedPaths ?? Set(merged.conflicts))
         } else {
-            let merged = CloudJSON.merge(base: base, local: try JSONSerialization.jsonObject(with: local.data), remote: remoteValue, preferLocal: !useCloud)
+            let merged = CloudJSON.merge(base: base, local: try JSONSerialization.jsonObject(with: local.data), remote: remoteValue, preferLocal: choices != nil || !useCloud, remoteChoices: choices ?? [])
+            if let selectedPaths, Set(merged.conflicts) != selectedPaths { throw CloudSyncError.message("冲突内容已变化，请刷新详情后再选择") }
             try await receive(server, replacing: local, context: context, preserving: merged.value)
         }
         pendingSaves.removeValue(forKey: key)
     }
-    private func send(_ local: CloudLocalRecord, revision: Int, context: ModelContext, remoteChoices: Set<String> = []) async throws {
+    private func send(_ local: CloudLocalRecord, revision: Int, context: ModelContext, remoteChoices: Set<String> = [], resolvedPaths: Set<String> = []) async throws {
         if local.kind == "trip" { try await requireUnifiedSchema() }
         guard !isDeleted(local.key) else { return }
         let hash = try local.fingerprint
@@ -814,8 +892,8 @@ final class CloudSyncService: ObservableObject {
             if let current = try CloudRecordAdapter.records(context).first(where: { $0.key == local.key }) {
                 let initial = CloudJSON.merge(base: try JSONSerialization.jsonObject(with: ancestor ?? local.data), local: try JSONSerialization.jsonObject(with: beforeSend?.data ?? current.data), remote: try JSONSerialization.jsonObject(with: CloudRecordAdapter.normalized(server.payload, kind: server.kind)), remoteChoices: remoteChoices)
                 let merged = CloudJSON.merge(base: try JSONSerialization.jsonObject(with: beforeSend?.data ?? current.data), local: try JSONSerialization.jsonObject(with: current.data), remote: initial.value)
-                try await receive(server, replacing: current, context: context, preserving: merged.value, ancestor: ancestor, unresolvedPaths: Set(initial.conflicts).subtracting(remoteChoices))
-                if !merged.conflicts.isEmpty || initial.conflicts.contains(where: { !remoteChoices.contains($0) }) { conflicts.insert(local.key) }
+                try await receive(server, replacing: current, context: context, preserving: merged.value, ancestor: ancestor, unresolvedPaths: Set(initial.conflicts).subtracting(remoteChoices.union(resolvedPaths)))
+                if !merged.conflicts.isEmpty || initial.conflicts.contains(where: { !remoteChoices.union(resolvedPaths).contains($0) }) { conflicts.insert(local.key) }
             } else {
                 bindings[local.key] = CloudBinding(revision: server.revision, baseline: hash, origin: projectURL, payload: server.payload, localPayload: local.data)
             }

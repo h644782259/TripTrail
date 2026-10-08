@@ -5,6 +5,38 @@ import SwiftUI
 
 @MainActor
 final class CloudSyncTests: XCTestCase {
+    func testConcurrentInsertionsMergeRelativeOrderWithoutIndexConflicts() {
+        func items(_ ids: [String]) -> [[String: Any]] { ids.enumerated().map { ["id": $0.element, "sortOrder": $0.offset, "note": ""] } }
+        let merged = CloudJSON.merge(base: items(["a", "b", "c"]), local: items(["a", "x", "b", "c"]), remote: items(["a", "b", "y", "c"]))
+        XCTAssertTrue(merged.conflicts.isEmpty)
+        let values = merged.value as! [[String: Any]]
+        XCTAssertEqual(values.map { $0["id"] as! String }, ["a", "x", "b", "y", "c"])
+        XCTAssertEqual(values.map { $0["sortOrder"] as! Int }, [0, 1, 2, 3, 4])
+    }
+    func testReorderAndRemoteContentEditBothSurvive() {
+        let base: [[String: Any]] = [["id": "a", "sortOrder": 0, "note": "旧"], ["id": "b", "sortOrder": 1, "note": "旧"]]
+        let local: [[String: Any]] = [["id": "b", "sortOrder": 0, "note": "旧"], ["id": "a", "sortOrder": 1, "note": "旧"]]
+        let remote: [[String: Any]] = [["id": "a", "sortOrder": 0, "note": "新"], ["id": "b", "sortOrder": 1, "note": "旧"]]
+        let merged = CloudJSON.merge(base: base, local: local, remote: remote)
+        XCTAssertTrue(merged.conflicts.isEmpty)
+        let values = merged.value as! [[String: Any]]
+        XCTAssertEqual(values.map { $0["id"] as! String }, ["b", "a"])
+        XCTAssertEqual(values[1]["note"] as? String, "新")
+    }
+    func testEmptyUneditedValuesMergeButExplicitClearConflicts() {
+        XCTAssertTrue(CloudJSON.merge(base: nil, local: "", remote: "信息").conflicts.isEmpty)
+        XCTAssertEqual(CloudJSON.merge(base: NSNull(), local: "信息", remote: " ").value as? String, "信息")
+        XCTAssertEqual(CloudJSON.merge(base: "原内容", local: "", remote: "原内容").value as? String, "")
+        XCTAssertFalse(CloudJSON.merge(base: "原内容", local: "", remote: "新内容").conflicts.isEmpty)
+    }
+    func testIndividualConflictChoicesPreserveIndependentChanges() {
+        let merged = CloudJSON.merge(base: ["note": "旧", "title": "旧", "city": ""], local: ["note": "本地", "title": "本地", "city": "上海"], remote: ["note": "云端", "title": "云端", "city": ""], remoteChoices: ["/note"])
+        let value = merged.value as? [String: String]
+        XCTAssertEqual(value?["note"], "云端")
+        XCTAssertEqual(value?["title"], "本地")
+        XCTAssertEqual(value?["city"], "上海")
+    }
+
     func testConflictDiffMatchesStableIDsAndOmitsStorageMetadata() throws {
         let remote: [String: Any] = ["id": "trip", "title": "旅程", "days": [["id": "DAY", "title": "当天", "items": [["id": "A", "title": "安排A", "note": "云端说明"], ["id": "B", "title": "安排B", "note": "相同"]]]], "media": [["id": "M", "kindRaw": "image", "sortOrder": 0, "localIdentifier": "remote", "cloudPath": "path"]]]
         let local: [String: Any] = ["id": "trip", "title": "旅程", "days": [["id": "day", "title": "当天", "items": [["id": "b", "title": "安排B", "note": "相同"], ["id": "a", "title": "安排A", "note": "本地说明"]]]], "media": [["id": "m", "kindRaw": "image", "sortOrder": 0, "localIdentifier": "device"]]]

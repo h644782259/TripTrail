@@ -325,6 +325,8 @@ struct CloudConflictDetailsView: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var cloud = CloudSyncService.shared
     @State private var rows: [CloudContentDifference] = []
+    @State private var selections: [String: Bool] = [:]
+    @State private var localFingerprint: String?
     @State private var revision: Int?
     @State private var loading = true
     @State private var resolving = false
@@ -344,6 +346,12 @@ struct CloudConflictDetailsView: View {
                                     Text(row.cloud.isEmpty ? "未填写" : row.cloud).frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color.tripLake.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                                     Text(row.local.isEmpty ? "未填写" : row.local).frame(maxWidth: .infinity, alignment: .leading).padding(10).background(Color.orange.opacity(0.07), in: RoundedRectangle(cornerRadius: 10))
                                 }.font(.subheadline).textSelection(.enabled)
+                                Picker("使用版本", selection: Binding(get: { selections[row.id] }, set: { selections[row.id] = $0 })) {
+                                    Text("请选择").tag(Optional<Bool>.none)
+                                    Text("云端").tag(Optional(true))
+                                    Text("本地").tag(Optional(false))
+                                }.pickerStyle(.segmented).disabled(resolving)
+
                             }
                         }
                         if !loading && error == nil && revision != nil && rows.isEmpty { Text("内容已一致，无需选择版本").foregroundStyle(.secondary) }
@@ -351,9 +359,12 @@ struct CloudConflictDetailsView: View {
                     }.padding()
                 }
                 HStack {
-                    Button("使用云端") { choose(true) }.frame(maxWidth: .infinity)
-                    Button("使用本地") { choose(false) }.frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent).disabled(loading || resolving || cloud.busy || revision == nil || rows.isEmpty).padding()
+                    Button("全部选云端") { selections = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, true) }) }.frame(maxWidth: .infinity)
+                    Button("全部选本地") { selections = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, false) }) }.frame(maxWidth: .infinity)
+                }.buttonStyle(.bordered).disabled(loading || resolving || cloud.busy || revision == nil || rows.isEmpty).padding(.horizontal)
+                Button("确认提交") { choose(false) }.buttonStyle(.borderedProminent)
+                    .disabled(loading || resolving || cloud.busy || revision == nil || rows.isEmpty || selections.count != rows.count).padding()
+
             }
             .navigationTitle("内容差异").navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -364,7 +375,7 @@ struct CloudConflictDetailsView: View {
         }.interactiveDismissDisabled(resolving)
     }
     @MainActor private func load() async {
-        loading = true; error = nil; revision = nil
+        loading = true; error = nil; revision = nil; selections = [:]
         defer { loading = false }
         do {
             let parts = key.split(separator: ":")
@@ -372,9 +383,13 @@ struct CloudConflictDetailsView: View {
             let remote = try await cloud.previewCloudVersion(id: id, kind: String(parts[0]))
             guard let local = try CloudRecordAdapter.records(context).first(where: { $0.key == key }) else { return }
             let remoteData = try CloudRecordAdapter.normalized(remote.payload, kind: remote.kind)
-            rows = try CloudContentDifference.compare(cloud: remoteData, local: local.data)
-            let equivalent = try cloud.clearEquivalentConflict(key, cloud: remoteData, local: local.data)
+            localFingerprint = try local.fingerprint
+            rows = try cloud.conflictRows(key, server: remote, local: local)
+            let equivalent = try rows.isEmpty && cloud.clearEquivalentConflict(key, cloud: remoteData, local: local.data)
             if rows.isEmpty && !equivalent {
+                try await cloud.resolve(key, useCloud: false, context: context, expectedRevision: remote.revision)
+            }
+            if rows.isEmpty && !equivalent && cloud.conflicts.contains(key) {
                 rows = [CloudContentDifference(id: "baseline", label: "同步状态", cloud: "云端版本已更新", local: "同步基准或内部记录不同，请重新加载云端版本")]
             }
             revision = remote.revision
@@ -384,7 +399,7 @@ struct CloudConflictDetailsView: View {
         resolving = true; error = nil
         Task {
             defer { resolving = false }
-            do { try await cloud.resolve(key, useCloud: useCloud, context: context, expectedRevision: revision); dismiss() }
+            do { try await cloud.resolve(key, useCloud: useCloud, context: context, expectedRevision: revision, choices: Set(selections.filter { $0.value }.map(\.key)), selectedPaths: Set(selections.keys), expectedLocalFingerprint: localFingerprint); dismiss() }
             catch { self.error = error.localizedDescription }
         }
     }

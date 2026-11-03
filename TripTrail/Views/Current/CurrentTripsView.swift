@@ -1055,14 +1055,14 @@ struct TripEditorView: View {
 
     var body: some View {
         TripNavigationStack {
-            Form {
+            SmartEditorLayout(smart: trip == nil && creationMethod == "智能录入") {
                 if trip == nil {
                     Section {
-                        Picker("新建方式", selection: $creationMethod) {
-                            Text("智能录入").tag("智能录入")
-                            Text("普通新建").tag("普通新建")
-                        }.pickerStyle(.segmented)
+                        SmartCreationMethodTabs(selection: $creationMethod)
                     }
+                }
+                if trip == nil && creationMethod == "智能录入", let target = smartTrip {
+                    TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: true, embedded: true, onCreated: { _ in dismiss() })
                 }
                 if trip != nil {
                 Section {
@@ -1124,9 +1124,7 @@ struct TripEditorView: View {
                 target.licensePlate = licensePlate
                 smartTrip = target
             }
-            .cloudEditSheet(item: $smartTrip, onDismiss: {
-                if trip == nil { creationMethod = "普通新建" }
-            }) { target in
+            .cloudEditSheet(item: Binding(get: { trip == nil ? nil : smartTrip }, set: { smartTrip = $0 })) { target in
                 TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: trip == nil, onCreated: { _ in dismiss() })
             }
             .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {

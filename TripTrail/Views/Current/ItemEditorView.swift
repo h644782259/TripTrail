@@ -122,14 +122,11 @@ struct ItemEditorView: View {
 
     var body: some View {
         TripNavigationStack {
-            Form {
+            SmartEditorLayout(smart: item == nil && mode == .favorite && creationMethod == "智能录入") {
                 if item == nil {
                     Section {
                         if mode == .favorite {
-                            Picker("新建方式", selection: $creationMethod) {
-                                Text("智能录入").tag("智能录入")
-                                Text("普通新建").tag("普通新建")
-                            }.pickerStyle(.segmented)
+                            SmartCreationMethodTabs(selection: $creationMethod)
                         } else {
                             Button { showsSmartImport = true } label: { Label("智能录入", systemImage: "wand.and.stars") }
                         }
@@ -149,7 +146,12 @@ struct ItemEditorView: View {
                     }
                 }
 
-                if !(item == nil && mode == .favorite && creationMethod == "智能录入") {
+                if item == nil && mode == .favorite && creationMethod == "智能录入" {
+                    SingleItinerarySmartImportView(initialMode: smartImportMode, referenceDate: startTime, purpose: .favorite, embedded: true, onCancel: { creationMethod = "普通新建" }, onRecognized: { draft in
+                        applyRecognizedDraft(draft)
+                        creationMethod = "普通新建"
+                    })
+                } else {
                 Section(isFootprint ? "安排标题" : "安排名称") {
                     TextField("安排标题", text: $title).clearableText($title)
                         .accessibilityLabel("安排标题")
@@ -299,9 +301,6 @@ struct ItemEditorView: View {
             }
             .cloudEditSheet(isPresented: $showsFavoriteImport) {
                 if let day { FavoriteImportSelectionView(day: day) }
-            }
-            .onChange(of: creationMethod) { _, method in
-                if item == nil && mode == .favorite && method == "智能录入" { showsSmartImport = true }
             }
             .cloudEditSheet(isPresented: $showsSmartImport, onDismiss: {
                 if item == nil && mode == .favorite { creationMethod = "普通新建" }
@@ -615,6 +614,7 @@ enum SingleSmartImportMode: String, CaseIterable, Identifiable {
 }
 
 private struct SingleItinerarySmartImportView: View {
+    let embedded: Bool
     let referenceDate: Date
     let purpose: SmartArrangementRecognitionPurpose
     let onCancel: () -> Void
@@ -634,9 +634,11 @@ private struct SingleItinerarySmartImportView: View {
         initialMode: SingleSmartImportMode,
         referenceDate: Date,
         purpose: SmartArrangementRecognitionPurpose,
+        embedded: Bool = false,
         onCancel: @escaping () -> Void,
         onRecognized: @escaping (ItineraryScreenshotDraft) -> Void
     ) {
+        self.embedded = embedded
         self.referenceDate = referenceDate
         self.purpose = purpose
         self.onCancel = onCancel
@@ -645,40 +647,39 @@ private struct SingleItinerarySmartImportView: View {
     }
 
     var body: some View {
-        TripNavigationStack {
-            Form {
+        SmartImportNavigation(embedded: embedded) {
+            SmartImportLayout(embedded: embedded) {
                 Section {
-                    Picker("录入方式", selection: $mode) {
-                        ForEach(SingleSmartImportMode.allCases) { value in
-                            Text(value.rawValue).tag(value)
-                        }
-                    }
-                    .pickerStyle(.segmented)
+                    SmartImportModeTabs(imageMode: Binding(get: { mode == .image }, set: { mode = $0 ? .image : .text }))
                 }
 
                 if mode == .text {
-                    Section("安排内容") {
+                    Section {
                         ZStack(alignment: .topLeading) {
                             if inputText.isEmpty {
                                 Text("粘贴 1 个安排或地点的描述")
-                                    .foregroundStyle(.tertiary)
+                                    .font(.body).foregroundStyle(.tertiary)
                                     .padding(.horizontal, 5)
                                     .padding(.vertical, 8)
                                     .allowsHitTesting(false)
                             }
                             TextEditor(text: $inputText).clearableText($inputText, alignment: .topTrailing)
                                 .focused($isInputFocused)
-                                .frame(height: 220)
+                                .frame(height: embedded ? nil : 220)
+                                .frame(maxHeight: embedded ? .infinity : nil)
                                 .scrollContentBackground(.hidden)
                                 .clipped()
                         }
-                        .frame(height: 220)
+                        .frame(height: embedded ? nil : 220)
+                                .frame(maxHeight: embedded ? .infinity : nil)
                         .clipped()
                     }
                 } else {
-                    Section("安排截图") {
+                    Section {
                         Text("上传 1 个安排或地点的截图")
-                            .font(.subheadline).foregroundStyle(.secondary)
+                            .font(.body).foregroundStyle(.tertiary)
+                            .padding(.horizontal, 5).padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         imageSelectionGrid
                     }
                 }
@@ -701,18 +702,18 @@ private struct SingleItinerarySmartImportView: View {
                     requestImageSelection()
                 }
             }
-            .navigationTitle("智能录入")
+            .smartImportTitle(embedded: embedded)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消", action: onCancel)
+                if !embedded {
+                    ToolbarItem(placement: .cancellationAction) { Button("取消", action: onCancel) }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("完成") { isInputFocused = false }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .smartImportFooter(embedded: embedded) {
                 Button {
                     recognize()
                 } label: {
@@ -733,7 +734,7 @@ private struct SingleItinerarySmartImportView: View {
                 .disabled(isRecognizing || !hasInput)
                 .padding(.horizontal)
                 .padding(.vertical, 10)
-                .background(.bar)
+                .background(Color.clear)
             }
             .alert("智能录入", isPresented: Binding(
                 get: { errorMessage != nil },

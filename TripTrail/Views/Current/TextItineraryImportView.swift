@@ -9,6 +9,7 @@ struct TextItineraryImportView: View {
     let trip: Trip
     let referenceDate: Date
     let targetDay: TripDay?
+    let embedded: Bool
 
     @State private var imagePreviews: [UIImage?] = []
     @State private var imageMode = false
@@ -19,7 +20,8 @@ struct TextItineraryImportView: View {
     @State private var isRecognizing = false
     @FocusState private var isInputFocused: Bool
 
-    init(trip: Trip, referenceDate: Date, targetDay: TripDay? = nil, isCreatingTrip: Bool = false, onCreated: ((Trip) -> Void)? = nil) {
+    init(trip: Trip, referenceDate: Date, targetDay: TripDay? = nil, isCreatingTrip: Bool = false, embedded: Bool = false, onCreated: ((Trip) -> Void)? = nil) {
+        self.embedded = embedded
         self.onCreated = onCreated
         self.isCreatingTrip = isCreatingTrip
         self.trip = trip
@@ -49,20 +51,19 @@ struct TextItineraryImportView: View {
     }
 
     private var inputView: some View {
-        TripNavigationStack {
-            Form {
+        SmartImportNavigation(embedded: embedded) {
+            SmartImportLayout(embedded: embedded) {
                 Section {
-                    Picker("录入方式", selection: $imageMode) {
-                        Text("文字").tag(false)
-                        Text("截图").tag(true)
-                    }.pickerStyle(.segmented)
+                    SmartImportModeTabs(imageMode: $imageMode)
                 }
                 if imageMode {
-                    Section("安排截图") {
+                    Section {
                         VStack(alignment: .leading, spacing: 12) {
                             if imageItems.isEmpty {
                                 Text(targetDay == nil ? "上传多天行程，可包含多个安排" : "上传一天的行程，可包含多个安排")
-                                    .font(.subheadline).foregroundStyle(.secondary)
+                                    .font(.body).foregroundStyle(.tertiary)
+                                    .padding(.horizontal, 5).padding(.vertical, 8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {
                                 ForEach(imageItems.indices, id: \.self) { index in
@@ -109,39 +110,39 @@ struct TextItineraryImportView: View {
                     ZStack(alignment: .topLeading) {
                         if inputText.isEmpty {
                             Text(targetDay == nil ? "粘贴多天行程，可包含多个安排" : "粘贴一天的行程，可包含多个安排")
-                                .foregroundStyle(.tertiary)
+                                .font(.body).foregroundStyle(.tertiary)
                                 .padding(.horizontal, 5)
                                 .padding(.vertical, 8)
                                 .allowsHitTesting(false)
                         }
                         TextEditor(text: $inputText).clearableText($inputText, alignment: .topTrailing)
                             .focused($isInputFocused)
-                            .frame(height: 230)
+                            .frame(height: embedded ? nil : 230)
+                            .frame(maxHeight: embedded ? .infinity : nil)
                             .scrollContentBackground(.hidden)
                             .clipped()
                     }
-                    .frame(height: 230)
+                    .frame(height: embedded ? nil : 230)
+                            .frame(maxHeight: embedded ? .infinity : nil)
                     .clipped()
 
-                } header: {
-                    Text("安排内容")
                 }
                 }
             }
             .disabled(isRecognizing)
             .scrollDismissesKeyboard(.interactively)
-            .navigationTitle("智能录入")
+            .smartImportTitle(embedded: embedded)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("取消") { dismiss() }
+                if !embedded {
+                    ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
                 }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
                     Button("完成") { isInputFocused = false }
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .smartImportFooter(embedded: embedded) {
                 Button {
                     parseText()
                 } label: {
@@ -171,7 +172,7 @@ struct TextItineraryImportView: View {
                 )
                 .padding(.horizontal)
                 .padding(.vertical, 10)
-                .background(.bar)
+                .background(Color.clear)
             }
             .alert("文本识别", isPresented: Binding(
                 get: { importError != nil },
@@ -257,6 +258,95 @@ struct TextItineraryImportView: View {
             } catch {
                 importError = error.localizedDescription
             }
+        }
+    }
+}
+
+struct SmartImportNavigation<Content: View>: View {
+    let embedded: Bool
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        if embedded { content() } else { TripNavigationStack { content() } }
+    }
+}
+struct SmartImportLayout<Content: View>: View {
+    let embedded: Bool
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        if embedded { VStack(alignment: .leading, spacing: 16) { content() }.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top) }
+        else { Form { content() } }
+    }
+}
+extension View {
+    @ViewBuilder func smartImportTitle(embedded: Bool) -> some View {
+        if embedded { self } else { self.navigationTitle("智能录入") }
+    }
+}
+struct SmartImportModeTabs: View {
+    @Binding var imageMode: Bool
+    var body: some View {
+        HStack(spacing: 12) {
+            modeButton("文字", image: false)
+            modeButton("截图", image: true)
+        }
+    }
+    private func modeButton(_ title: String, image: Bool) -> some View {
+        Button { imageMode = image } label: {
+            VStack(spacing: 6) {
+                Text(title).font(.headline.weight(imageMode == image ? .semibold : .regular)).padding(.vertical, 9)
+                Capsule().fill(imageMode == image ? Color.tripLake : .clear).frame(height: 2)
+            }.frame(maxWidth: .infinity).contentShape(Rectangle())
+                .foregroundStyle(imageMode == image ? Color.tripLakeText : .secondary)
+        }.buttonStyle(.plain)
+        .accessibilityAddTraits(imageMode == image ? .isSelected : [])
+    }
+}
+
+extension View {
+    @ViewBuilder func smartImportFooter<Footer: View>(embedded: Bool, @ViewBuilder footer: () -> Footer) -> some View {
+        self.padding(embedded ? 12 : 0)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .safeAreaInset(edge: .bottom, spacing: 0, content: footer)
+            .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).stroke(Color.tripInk.opacity(0.12), lineWidth: 1))
+    }
+}
+
+struct SmartCreationMethodTabs: View {
+    @Binding var selection: String
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(["智能录入", "普通新建"], id: \.self) { method in
+                Button { selection = method } label: {
+                    HStack(spacing: 5) {
+                        if method == "智能录入" { Image(systemName: "wand.and.stars").font(.caption) }
+                        Text(method).font(.subheadline.weight(.medium))
+                    }
+                    .frame(maxWidth: .infinity).padding(.vertical, 9)
+                    .background(selection == method ? Color.tripSurface : .clear, in: RoundedRectangle(cornerRadius: 8))
+                    .contentShape(Rectangle())
+                }.buttonStyle(.plain)
+                .foregroundStyle(selection == method ? Color.tripLakeText : .secondary)
+                .accessibilityAddTraits(selection == method ? .isSelected : [])
+            }
+        }.padding(3).background(Color.tripMist.opacity(0.45), in: RoundedRectangle(cornerRadius: 10))
+    }
+}
+
+struct SmartEditorLayout<Content: View>: View {
+    let smart: Bool
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        if smart {
+            VStack(alignment: .leading, spacing: 16) { content() }
+                .padding(.horizontal, 24).padding(.top, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(Color(uiColor: .systemGroupedBackground))
+        } else {
+            Form { content() }
+                .scrollContentBackground(.hidden)
+                .background(Color(uiColor: .systemGroupedBackground))
         }
     }
 }

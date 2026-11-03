@@ -1064,7 +1064,7 @@ struct TripEditorView: View {
                         }.pickerStyle(.segmented)
                     }
                 }
-                if trip != nil || creationMethod == "智能录入" {
+                if trip != nil {
                 Section {
                     Button {
                         let target = trip ?? Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
@@ -1118,7 +1118,15 @@ struct TripEditorView: View {
                 }
             }
             .scrollDismissesKeyboard(.interactively)
-            .cloudEditSheet(item: $smartTrip) { target in
+            .onChange(of: creationMethod) { _, method in
+                guard trip == nil, method == "智能录入" else { return }
+                let target = Trip(title: title, destination: destination, startDate: startDate, endDate: endDate, note: note)
+                target.licensePlate = licensePlate
+                smartTrip = target
+            }
+            .cloudEditSheet(item: $smartTrip, onDismiss: {
+                if trip == nil { creationMethod = "普通新建" }
+            }) { target in
                 TextItineraryImportView(trip: target, referenceDate: startDate, isCreatingTrip: trip == nil, onCreated: { _ in dismiss() })
             }
             .alert("保存失败", isPresented: Binding(get: { saveError != nil }, set: { if !$0 { saveError = nil } })) {

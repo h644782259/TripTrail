@@ -149,12 +149,7 @@ struct ItemEditorView: View {
                     }
                 }
 
-                if item == nil && mode == .favorite && creationMethod == "智能录入" {
-                    Section {
-                        Button { showsSmartImport = true } label: { Label("开始智能录入", systemImage: "wand.and.stars") }
-                        Text("通过文字或截图识别收藏，识别后可继续编辑。").font(.footnote).foregroundStyle(.secondary)
-                    }
-                } else {
+                if !(item == nil && mode == .favorite && creationMethod == "智能录入") {
                 Section(isFootprint ? "安排标题" : "安排名称") {
                     TextField("安排标题", text: $title).clearableText($title)
                         .accessibilityLabel("安排标题")
@@ -305,7 +300,12 @@ struct ItemEditorView: View {
             .cloudEditSheet(isPresented: $showsFavoriteImport) {
                 if let day { FavoriteImportSelectionView(day: day) }
             }
-            .cloudEditSheet(isPresented: $showsSmartImport) {
+            .onChange(of: creationMethod) { _, method in
+                if item == nil && mode == .favorite && method == "智能录入" { showsSmartImport = true }
+            }
+            .cloudEditSheet(isPresented: $showsSmartImport, onDismiss: {
+                if item == nil && mode == .favorite { creationMethod = "普通新建" }
+            }) {
                 if mode == .itinerary, let day, let trip = day.trip {
                     TextItineraryImportView(trip: trip, referenceDate: day.date, targetDay: day, onCreated: { _ in dismiss() })
                 } else {
